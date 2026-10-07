@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+# Create a directory for one review's output and print its path.
+#
+#   review-results [label]     ->  ~/results/<yyyy-mm-dd-hhmm>[-<label>]
+#
+# ~/results is this container's own directory on the host, so whatever goes here survives the container.
+# A second call in the same minute gets a suffix instead of merging.
+
+set -euo pipefail
+
+label=${1:-}
+if [[ -n ${label} && ! ${label} =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
+    printf 'error: invalid label %s\n' "${label}" >&2
+    exit 1
+fi
+
+dir="${HOME}/results/$(date +%Y-%m-%d-%H%M)${label:+-${label}}"
+if [[ -e ${dir} ]]; then
+    n=2
+    while [[ -e "${dir}.${n}" ]]; do n=$((n + 1)); done
+    dir="${dir}.${n}"
+fi
+
+mkdir -p "${dir}"
+printf '%s\n' "${dir}"

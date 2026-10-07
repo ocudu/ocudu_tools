@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+# Git remote helper for push-disabled:// URLs. The entrypoint rewrites every push to a network remote to this scheme
+# (url.push-disabled://.pushInsteadOf), so a push from the box fails here with a message that says why.
+
+printf 'error: pushing is disabled in the review box; hand the result back as a patch (review-workspace patch)\n' >&2
+exit 1

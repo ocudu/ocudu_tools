@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+# Print the files a review covers, one per line, relative to the repo root.
+#
+#   review-scope [--cpp] diff [BASE]    changed since merge-base(BASE, HEAD), incl. uncommitted
+#   review-scope [--cpp] path <dir>...  tracked files under those paths
+#   review-scope [--cpp] all            every tracked file
+#
+# BASE defaults to $REVIEW_BASE, else origin/dev (OCUDU's integration branch).
+# --cpp keeps C/C++ sources and headers only. Runs in the current repo (cd ~/work/ocudu).
+# Every review skill takes its file list from here, so all of them agree on what "the diff", "this folder" and
+# "the whole project" mean.
+
+set -euo pipefail
+
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+usage() { sed -n '6,10s/^# \{0,1\}//p' "$0" >&2; exit 1; }
+
+cpp=0
+if [[ ${1:-} == --cpp ]]; then
+    cpp=1
+    shift
+fi
+[[ $# -ge 1 ]] || usage
+
+git rev-parse --show-toplevel >/dev/null 2>&1 || die "not in a git repo"
+cd "$(git rev-parse --show-toplevel)"
+
+list() {
+    case $1 in
+        diff)
+            local base=${2:-${REVIEW_BASE:-origin/dev}} mb
+            git rev-parse --verify -q "${base}^{commit}" >/dev/null || die "unknown base ${base}"
+            mb=$(git merge-base "${base}" HEAD)
+            # Committed changes on the branch plus anything not yet committed; deleted files have nothing left to
+            # review.
+            {
+                git diff --name-only --diff-filter=d "${mb}"
+                git ls-files --others --exclude-standard
+            } | sort -u
+            ;;
+        path)
+            shift
+            [[ $# -ge 1 ]] || usage
+            git ls-files -- "$@"
+            ;;
+        all)
+            git ls-files
+            ;;
+        *) usage ;;
+    esac
+}
+
+if [[ ${cpp} -eq 1 ]]; then
+    list "$@" | grep -E '\.(h|hh|hpp|c|cc|cpp|cxx|ipp|tpp)$' || true
+else
+    list "$@"
+fi

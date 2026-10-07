@@ -24,7 +24,12 @@ Or directly install **individual skills**:
 ```text
 /plugin install ci-triage@ocudu_tools
 /plugin install analyze-ran-log@ocudu_tools
+/plugin install ocudu-review-mechanical@ocudu_tools
 ```
+
+`ocudu-review-mechanical` reads the code guide from an `ocudu_docs` checkout next to your OCUDU checkout (or
+`OCUDU_CODE_GUIDE`), and needs `include-what-you-use`, `clang-format-21` and `jq`. `tools/code_review_box` runs it in a
+container that has all of that and leaves your checkout untouched.
 
 To get updates after the repo changes:
 

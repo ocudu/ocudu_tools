@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+# The writable copy of OCUDU that a review edits, and the patch it hands back.
+#
+#   review-workspace init [--ref <ref>] [--src <repo>] [--force]
+#                                                        (re)create ~/work/ocudu from <repo>
+#                                                        (default ~/repos/ocudu)
+#   review-workspace status                              what it was made from, what changed
+#   review-workspace patch <results-dir>                 write review.patch there
+#
+# The user's checkout is mounted read-only, so the review never touches it. init makes a repo that borrows its objects
+# (git alternates: instant, no copy) and reproduces exactly what the user has: the same HEAD, plus their uncommitted and
+# untracked files, committed as one extra commit. That state is recorded as refs/review/baseline; `patch` diffs the
+# workspace against it, so review.patch holds the review's changes and nothing else.
+#
+# With --ref, the workspace is that ref instead (a branch, a commit, origin/<mr-branch>), and the user's uncommitted
+# work is left out.
+#
+# The entrypoint runs init on every container start (with --ref when the box was started with
+# `review-box.sh run --ref <ref>`), so a session finds the workspace ready. Run it by hand only to switch to another
+# ref, with --force: that discards the current workspace.
+
+set -euo pipefail
+
+SRC="${HOME}/repos/ocudu"
+WS="${HOME}/work/ocudu"
+BASELINE=refs/review/baseline
+INFO="${WS}/.git/review-workspace"
+
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+    sed -n '6,12s/^# \{0,1\}//p' "$0" >&2
+    exit 1
+}
+
+cmd_init() {
+    local ref="" force=0
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --ref) ref=${2:?}; shift 2 ;;
+            --src) SRC=${2:?}; shift 2 ;;
+            --force) force=1; shift ;;
+            *) usage ;;
+        esac
+    done
+
+    local common objects sha origin
+    git -C "${SRC}" rev-parse --git-dir >/dev/null 2>&1 || die "${SRC} is not a git repo"
+    # Resolved before --force removes anything, so a typo never leaves no workspace at all.
+    sha=$(git -C "${SRC}" rev-parse --verify -q "${ref:-HEAD}^{commit}") ||
+        die "unknown ref ${ref:-HEAD}"
+    if [[ -e "${WS}" ]]; then
+        [[ ${force} -eq 1 ]] ||
+            die "${WS} exists; --force discards it (and any review edits not yet in a patch)"
+        rm -rf "${WS}"
+    fi
+
+    common=$(git -C "${SRC}" rev-parse --path-format=absolute --git-common-dir)
+    objects="${common}/objects"
+    [[ -d "${objects}" ]] ||
+        die "cannot read ${objects}; mount the main checkout, not a linked worktree"
+
+    git init -q "${WS}"
+    printf '%s\n' "${objects}" > "${WS}/.git/objects/info/alternates"
+
+    # The user's branches as local/*, and their view of the remote as origin/*. Objects already exist through the
+    # alternates, so this only writes refs.
+    git -C "${WS}" fetch -q --no-tags "${SRC}" \
+        '+refs/heads/*:refs/remotes/local/*' \
+        '+refs/remotes/origin/*:refs/remotes/origin/*'
+
+    # origin points at the real remote, so `git fetch origin` refreshes the base as
+    # ocudu-code-review expects. Needs the ssh agent.
+    origin=$(git -C "${SRC}" remote get-url origin 2>/dev/null || true)
+    if [[ -n "${origin}" ]]; then
+        git -C "${WS}" remote add origin "${origin}"
+    fi
+
+    git -C "${WS}" checkout -q -b review "${sha}"
+    [[ -n "${ref}" ]] || carry_local_changes
+
+    git -C "${WS}" update-ref "${BASELINE}" HEAD
+    {
+        printf 'source: %s\n' "${SRC}"
+        printf 'source_branch: %s\n' "$(git -C "${SRC}" branch --show-current || true)"
+        printf 'ref: %s\n' "${ref:-HEAD (with uncommitted changes)}"
+        printf 'commit: %s\n' "${sha}"
+        printf 'created: %s\n' "$(date -Iseconds)"
+    } > "${INFO}"
+
+    printf 'workspace: %s\n' "${WS}"
+    cat "${INFO}"
+}
+
+# Uncommitted and untracked files from the user's tree, so the review sees what they see.
+carry_local_changes() {
+    local diff untracked
+    diff=$(git -C "${SRC}" diff --binary HEAD)
+    if [[ -n "${diff}" ]]; then
+        printf '%s\n' "${diff}" | git -C "${WS}" apply --index --whitespace=nowarn
+    fi
+
+    untracked=$(git -C "${SRC}" ls-files --others --exclude-standard | wc -l)
+    if [[ ${untracked} -gt 0 ]]; then
+        git -C "${SRC}" ls-files -z --others --exclude-standard |
+            tar -C "${SRC}" --null -T - -cf - | tar -C "${WS}" -xf -
+        git -C "${WS}" add -A
+    fi
+
+    if ! git -C "${WS}" diff --cached --quiet; then
+        git -C "${WS}" -c user.name=review-box -c user.email=review-box@localhost \
+            commit -q --no-verify -m "review-box: uncommitted changes from ${SRC}"
+        printf 'carried over uncommitted changes (%d untracked files)\n' "${untracked}"
+    fi
+}
+
+cmd_status() {
+    [[ -r "${INFO}" ]] || die "no workspace; run: review-workspace init"
+    cat "${INFO}"
+    # Read-only: tracked changes against the baseline, then files not yet added.
+    printf '\nchanged since baseline:\n'
+    git -C "${WS}" diff --stat "${BASELINE}"
+    git -C "${WS}" ls-files --others --exclude-standard | sed 's/^/ new: /'
+}
+
+cmd_patch() {
+    [[ $# -eq 1 ]] || usage
+    local out=$1 patch lines
+    [[ -r "${INFO}" ]] || die "no workspace; run: review-workspace init"
+    mkdir -p "${out}"
+    patch="$(cd "${out}" && pwd)/review.patch"
+
+    # Staged so new files are included; the review may also have committed.
+    git -C "${WS}" add -A
+    git -C "${WS}" diff --cached --binary "${BASELINE}" > "${patch}"
+    lines=$(wc -l < "${patch}")
+
+    if [[ ${lines} -eq 0 ]]; then
+        rm -f "${patch}"
+        printf 'no changes against the baseline; no patch written\n'
+        return 0
+    fi
+
+    git -C "${WS}" diff --cached --stat "${BASELINE}"
+    printf '\npatch: %s\n' "${patch}"
+    if [[ -n "${REVIEW_BOX_HOST_RESULTS:-}" ]]; then
+        # Same file on the host: ~/results is bind-mounted from REVIEW_BOX_HOST_RESULTS.
+        printf 'on the host: git apply %s\n' \
+            "${REVIEW_BOX_HOST_RESULTS}${patch#"${HOME}/results"}"
+    fi
+}
+
+[[ $# -ge 1 ]] || usage
+cmd=$1; shift
+case ${cmd} in
+    init) cmd_init "$@" ;;
+    status) cmd_status "$@" ;;
+    patch) cmd_patch "$@" ;;
+    *) usage ;;
+esac

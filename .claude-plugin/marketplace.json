@@ -21,6 +21,11 @@
       "name": "ocudu-code-review",
       "description": "Review OCUDU C++ changes — a diff, a branch or a GitLab MR — for correctness and conventions, real-time-path safety, and security.",
       "source": "./skills/ocudu-code-review"
+    },
+    {
+      "name": "ocudu-review-mechanical",
+      "description": "Apply the OCUDU code guide to a diff, a folder or the whole tree — hex literals, include hygiene (iwyu) and every guide rule — fixing what it finds and writing a report plus a patch.",
+      "source": "./skills/ocudu-review-mechanical"
     }
   ]
 }

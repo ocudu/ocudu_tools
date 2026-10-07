@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push)",
+      "Bash(git push *)",
+      "Bash(git * push)",
+      "Bash(git * push *)",
+      "Bash(git config *pushurl*)",
+      "Bash(git config *pushInsteadOf*)",
+      "Bash(git config *pushinsteadof*)",
+      "Bash(glab mr create*)",
+      "Bash(glab mr note*)",
+      "Bash(glab mr approve*)",
+      "Bash(glab mr revoke*)",
+      "Bash(glab mr merge*)",
+      "Bash(glab mr update*)",
+      "Bash(glab mr close*)",
+      "Bash(glab mr reopen*)",
+      "Bash(glab mr rebase*)",
+      "Bash(glab mr delete*)",
+      "Bash(glab issue create*)",
+      "Bash(glab issue note*)",
+      "Bash(glab issue update*)",
+      "Bash(glab issue close*)",
+      "Bash(glab issue delete*)",
+      "Bash(glab api *-X*)",
+      "Bash(glab api *--method*)",
+      "Bash(glab api *-f *)",
+      "Bash(glab api *-F *)",
+      "Bash(glab api *--field*)",
+      "Bash(glab api *--input*)"
+    ]
+  }
+}

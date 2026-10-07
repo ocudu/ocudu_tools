@@ -1,0 +1,87 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+name: review-box
+
+# A repo is bind-mounted from the host when SRC_<NAME> is set in .env, and cloned into an anonymous volume (discarded
+# with the container) when it is not:
+#   ${SRC_X:+${SRC_X}:}<target>${SRC_X:+:ro}
+# expands to "<host path>:<target>:ro" or to a bare "<target>". Mounted repos are read-only: the review edits a
+# workspace copy, never the user's checkout.
+x-volumes:
+  ocudu: &vol-ocudu "${SRC_OCUDU:+${SRC_OCUDU}:}/home/dev/repos/ocudu${SRC_OCUDU:+:ro}"
+  ocudu_docs: &vol-ocudu-docs "${SRC_OCUDU_DOCS:+${SRC_OCUDU_DOCS}:}/home/dev/repos/ocudu_docs${SRC_OCUDU_DOCS:+:ro}"
+  3gpp_md: &vol-3gpp-md "${SRC_3GPP_MD:+${SRC_3GPP_MD}:}/home/dev/repos/3gpp_md${SRC_3GPP_MD:+:ro}"
+  ocudu_tools: &vol-ocudu-tools "${SRC_OCUDU_TOOLS:+${SRC_OCUDU_TOOLS}:}/home/dev/repos/ocudu_tools${SRC_OCUDU_TOOLS:+:ro}"
+
+services:
+  review-box:
+    image: review-box:latest
+    build:
+      context: image
+      args:
+        OS_VERSION: "${OS_VERSION:-26.04}"
+        HOST_UID: "${HOST_UID:-1000}"
+        HOST_GID: "${HOST_GID:-1000}"
+    init: true
+    stdin_open: true
+    tty: true
+    hostname: "${REVIEW_BOX_NAME:-review}"
+    working_dir: /home/dev/review
+    environment:
+      TERM: xterm-256color
+      SSH_AUTH_SOCK: /ssh-agent.sock
+      # Read-only checkout: stop git status and friends trying to refresh its index.
+      GIT_OPTIONAL_LOCKS: "0"
+      REVIEW_BASE: "${REVIEW_BASE:-origin/dev}"
+      # What the workspace is made from; empty means the checkout's HEAD + uncommitted.
+      REVIEW_REF: "${REVIEW_REF:-}"
+      REVIEW_BOX_HOST_RESULTS: "${REVIEW_BOX_HOST_RESULTS:-}"
+      # Where ocudu-review-mechanical finds things; outside the box it works them out from the checkout.
+      OCUDU_REPO: /home/dev/work/ocudu
+      OCUDU_BUILD_DIR: /home/dev/work/build
+      OCUDU_CODE_GUIDE: /home/dev/repos/ocudu_docs/docs/dev_guide/code_guide
+      REVIEW_RESULTS_DIR: /home/dev/results
+      REVIEW_RESULTS_HOST_DIR: "${REVIEW_BOX_HOST_RESULTS:-}"
+      CCACHE_DIR: /home/dev/.cache/ccache
+      CCACHE_BASEDIR: /home/dev
+      CCACHE_NOHASHDIR: "1"
+      CCACHE_MAXSIZE: "${CCACHE_MAXSIZE:-10G}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      GITLAB_TOKEN: "${GITLAB_TOKEN:-}"
+      SRC_OCUDU: "${SRC_OCUDU:-}"
+      SRC_OCUDU_DOCS: "${SRC_OCUDU_DOCS:-}"
+      SRC_3GPP_MD: "${SRC_3GPP_MD:-}"
+      SRC_OCUDU_TOOLS: "${SRC_OCUDU_TOOLS:-}"
+      CLONE_OCUDU: "${CLONE_OCUDU:-git@gitlab.com:ocudu/ocudu.git}"
+      CLONE_OCUDU_DOCS: "${CLONE_OCUDU_DOCS:-git@gitlab.com:ocudu/ocudu_docs.git}"
+      CLONE_3GPP_MD: "${CLONE_3GPP_MD:-git@gitlab.com:softwareradiosystems/3gpp_md.git}"
+      CLONE_OCUDU_TOOLS: "${CLONE_OCUDU_TOOLS:-git@gitlab.com:ocudu/ocudu_tools.git}"
+      REF_OCUDU: "${REF_OCUDU:-}"
+      REF_OCUDU_DOCS: "${REF_OCUDU_DOCS:-}"
+      REF_3GPP_MD: "${REF_3GPP_MD:-}"
+      REF_OCUDU_TOOLS: "${REF_OCUDU_TOOLS:-}"
+    volumes:
+      - *vol-ocudu
+      - *vol-ocudu-docs
+      - *vol-3gpp-md
+      - *vol-ocudu-tools
+      # The project the session starts in.
+      - "./project:/home/dev/review:ro"
+      # This container's own output directory; review-box.sh creates it first so Docker does not create it root-owned.
+      - "./results/${REVIEW_BOX_NAME:-review}:/home/dev/results"
+      # Host config, read-only; the entrypoint copies what it needs.
+      - "${HOME}/.claude:/host-claude:ro"
+      - "${HOME}/.claude.json:/host-claude.json:ro"
+      - "${HOME}/.gitconfig:/host-gitconfig:ro"
+      - "${SSH_AUTH_SOCK:-/dev/null}:/ssh-agent.sock"
+      # Shared with the host, so a target already built there is warm here.
+      - "${HOME}/.cache/ccache:/home/dev/.cache/ccache"
+      - "/etc/localtime:/etc/localtime:ro"
+      # Claude session state and the CLI (so an autoupdate outlives the container).
+      - "review-box-claude:/home/dev/.claude"
+      - "review-box-local:/home/dev/.local"
+
+volumes:
+  review-box-claude:
+  review-box-local:

@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+# Skills linked into ~/.claude/skills on start, one per line, as paths relative to $HOME.
+# Blank lines and # comments are ignored; a missing entry is reported and skipped.
+#
+#   repos/...  skills that live in a repo the box mounts or clones
+
+# Code-guide review. It lives in ocudu_tools so it also runs outside the box; docker-compose.yml points it at the
+# box's workspace, build tree, code guide and results directory.
+repos/ocudu_tools/skills/ocudu-review-mechanical
+
+# Existing ocudu_tools skill: correctness / realtime / security / deps review. The deep review builds on it rather than
+# restating its checklists.
+repos/ocudu_tools/skills/ocudu-code-review
+
+# Reading the standard, for protocol code.
+repos/3gpp_md/skills/spec-explorer
