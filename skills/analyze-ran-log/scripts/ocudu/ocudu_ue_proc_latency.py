@@ -10,7 +10,7 @@ Measures DU-MNG / MAC / SCHED / DU-F1 procedure stages for UE creation,
 Stages that a build does not log are skipped (reports only present stages). At info level, the MAC and scheduler
 procedures log only their done stage, so they have no latency; UE Create, UE Configuration and UE Delete have theirs.
 
-Usage: ocudu_ue_proc_latency.py <gnb.log|srsdu.log|run dir> [proc-filter-substr]
+Usage: ocudu_ue_proc_latency.py <gnb.log|srsdu.log|run dir> [proc-filter-substr, any case]
 """
 
 from __future__ import annotations
@@ -52,24 +52,32 @@ def report(proc: str, insts: list[procedures.Instance]) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Per-stage latencies of the DU UE procedures of an OCUDU log.")
     ap.add_argument("path", help="OCUDU log, or run directory holding one")
-    ap.add_argument("filter", nargs="?", help="keep the procedures whose name contains this text")
+    ap.add_argument("filter", nargs="?", help="keep the procedures whose name contains this text, in any case")
     args = ap.parse_args()
     try:
         path = run.find_log(args.path)
     except FileNotFoundError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-    filt = args.filter
+    filt = args.filter.lower() if args.filter else None
     with open(path, errors="replace") as f:
         found = procedures.instances(f)
     print(f"# log: {path}")
+    if not any(found.values()):
+        print("no DU UE procedure in the log: it is a CU log, or du_level and mac_level are below info")
+        return 0
+    shown = False
     for group, procs in procedures.GROUPS:
-        procs = [p for p in procs if found[p] and (not filt or filt in p)]
+        procs = [p for p in procs if found[p] and (not filt or filt in p.lower())]
         if not procs:
             continue
+        shown = True
         print(f"\n========== {group} ==========")
         for p in procs:
             report(p, found[p])
+    if not shown:
+        names = ", ".join(p for p in procedures.PROCEDURES if found[p])
+        print(f"no procedure of the log matches {args.filter!r}; the log has: {names}")
     return 0
 
 

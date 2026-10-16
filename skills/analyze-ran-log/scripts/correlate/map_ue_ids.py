@@ -156,6 +156,13 @@ def main():
     if len(sys.argv) != 2:
         print(f'Usage: {sys.argv[0]} <pcap_file>', file=sys.stderr)
         sys.exit(1)
+    if not os.path.isfile(sys.argv[1]):
+        hint = ''
+        if os.path.isdir(sys.argv[1]):
+            pcaps = sorted(n for n in os.listdir(sys.argv[1]) if n.endswith('.pcap'))
+            hint = f'; its pcaps: {", ".join(pcaps)}' if pcaps else '; it has no pcap'
+        print(f'error: {sys.argv[1]} is not a pcap file{hint}', file=sys.stderr)
+        sys.exit(1)
 
     # Stage for tshark (AppArmor restricts tshark to /tmp on Ubuntu); detect the
     # protocol from the original filename, falling back to probing the staged copy.

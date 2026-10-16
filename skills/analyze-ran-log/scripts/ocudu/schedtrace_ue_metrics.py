@@ -10,8 +10,9 @@ Decodes schedtrace_cell<N>.bin with the `parsers` package of this repo and print
 PRBs, retransmissions, HARQ-ACK outcomes, CQI, RI and SRs: a summary over the trace, then one row per period per UE,
 or the grants and reports themselves. Field names follow the METRICS "Scheduler UE" lines where they mean the same:
 dl_brate is of the ACKed TBS, dl_nok counts NACK and DTX reports, of which dl_dtx the latter, cqi and dl_ri are means
-of the reports and dl_mcs of the codewords, cqi and dl_mcs rounded half up as METRICS prints them. The trace has no UL CRC or buffer status, so UL throughput is of the scheduled new transmissions
-(ul_sched_brate), and HARQ timeouts without a report are in neither dl_ok nor dl_nok.
+of the reports and dl_mcs of the codewords, cqi and dl_mcs rounded half up as METRICS prints them. The trace has no
+UL CRC or buffer status, so UL throughput is of the scheduled new transmissions (ul_sched_brate), and HARQ timeouts
+without a report are in neither dl_ok nor dl_nok.
 
 Usage:
   python3 schedtrace_ue_metrics.py <path>                              # summary, then 1 s periods per UE
@@ -28,8 +29,8 @@ Options:
   --after <T>         Keep slots at or after T: an ISO time (2026-10-12T13:35:40 or 2026-10-12 13:35:40), a date, or
                       a time of day (13:35:40.5), compared to the same precision, UTC.
   --before <T>        Keep slots at or before T, as --after.
-  --period <S>        Seconds per row of the periods, finite and positive (default: 1), from whole multiples of it since the epoch,
-                      UTC, unlike METRICS periods, which end at the times of their lines.
+  --period <S>        Seconds per row of the periods, finite and positive (default: 1), from whole multiples of it
+                      since the epoch, UTC, unlike METRICS periods, which end at the times of their lines.
   --summary           Print only the summary per UE.
   --grants <K>        Print the grants or reports of kind dl, ul, harq or csi instead of the periods.
   --max-rows <N>      Period, grant or report rows printed at most per trace (default: 200).
