@@ -278,6 +278,10 @@ class StoreTest(unittest.TestCase):
         quiet = self.cache.open(write_log(self.dir / "quiet.log", log_level="warning"), LogMetricsSource())
         self.assertEqual(len(quiet.meta["notes"]), 1)
         self.assertIn("mac, du, rrc, cu, ngap at warning", quiet.meta["notes"][0])
+        # RLF is a warning of the DU manager, missing only below that.
+        self.assertNotIn("RLF", quiet.meta["notes"][0])
+        silent = self.cache.open(write_log(self.dir / "silent.log", log_level="error"), LogMetricsSource())
+        self.assertIn("RLF", silent.meta["notes"][0])
         verbose = self.cache.open(write_log(self.dir / "verbose.log", log_level="info"), LogMetricsSource())
         self.assertEqual(verbose.meta["notes"], [])
 

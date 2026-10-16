@@ -41,14 +41,15 @@ REPEAT_TYPES = frozenset({"warning", "error"})
 REPEAT_GAP_S = 1.0
 REPEAT_MAX_SPAN_S = 10.0
 _NUMBERS_RE = re.compile(r"\d+")
-# Log level options of the layers whose info lines hold the UE events, with the events they hold.
-_EVENT_LEVEL_OPTIONS = {
-    "mac": "random access, RLF",
-    "du": "UE creation and deletion",
-    "rrc": "RRC messages, reestablishment",
-    "cu": "handover",
-    "ngap": "handover preparation",
-}
+# Log level options of the layers that hold the UE events, with the level of their lines and the events they hold.
+_EVENT_LEVEL_OPTIONS = (
+    ("mac", "info", "random access"),
+    ("du", "info", "UE creation and deletion"),
+    ("du", "warning", "RLF"),
+    ("rrc", "info", "RRC messages, reestablishment"),
+    ("cu", "info", "handover"),
+    ("ngap", "info", "handover preparation"),
+)
 
 
 def _event_notes(path: Path) -> list[str]:
@@ -57,16 +58,20 @@ def _event_notes(path: Path) -> list[str]:
         cfg = config.from_log(f)
     if cfg is None:
         return []
-    info = config.LEVELS.index("info")
-    quiet = [(option, held) for option, held in _EVENT_LEVEL_OPTIONS.items() if config.LEVELS.index(cfg.level(option)) < info]
+    quiet = [
+        (option, held) for option, level, held in _EVENT_LEVEL_OPTIONS
+        if config.LEVELS.index(cfg.level(option)) < config.LEVELS.index(level)
+    ]
     if not quiet:
         return []
     by_level: dict[str, list[str]] = {}
     for option, _ in quiet:
-        by_level.setdefault(cfg.level(option), []).append(option)
+        options = by_level.setdefault(cfg.level(option), [])
+        if option not in options:
+            options.append(option)
     levels = "; ".join(f"{', '.join(options)} at {level}" for level, options in by_level.items())
     held = ", ".join(held for _, held in quiet)
-    return [f"Some UE events are not in the log, whose layers log below info ({levels}): {held}."]
+    return [f"Some UE events are not in the log, whose layers log below the level of their lines ({levels}): {held}."]
 
 
 def _parse_metrics_chunk(path: str, start: int, end: int, first_line: int) -> dict[str, Any]:
@@ -204,7 +209,7 @@ class LogMetricsSource:
     """
 
     name = "log_metrics"
-    version = f"7+parsers-{_parsers_version()}"
+    version = f"8+parsers-{_parsers_version()}"
 
     def accepts(self, path: Path) -> bool:
         try:
