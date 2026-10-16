@@ -9,8 +9,8 @@ schedtrace_ue_metrics.py — What the scheduler did for each UE, from OCUDU sche
 Decodes schedtrace_cell<N>.bin with the `parsers` package of this repo and prints, per UE, the throughput, MCS,
 PRBs, retransmissions, HARQ-ACK outcomes, CQI, RI and SRs: a summary over the trace, then one row per period per UE,
 or the grants and reports themselves. Field names follow the METRICS "Scheduler UE" lines where they mean the same:
-dl_brate is of the ACKed TBS, dl_nok counts NACK and DTX reports, of which dl_dtx the latter, and cqi and dl_ri are
-means. The trace has no UL CRC or buffer status, so UL throughput is of the scheduled new transmissions
+dl_brate is of the ACKed TBS, dl_nok counts NACK and DTX reports, of which dl_dtx the latter, cqi and dl_ri are means
+of the reports and dl_mcs of the codewords, cqi and dl_mcs rounded half up as METRICS prints them. The trace has no UL CRC or buffer status, so UL throughput is of the scheduled new transmissions
 (ul_sched_brate), and HARQ timeouts without a report are in neither dl_ok nor dl_nok.
 
 Usage:
@@ -28,7 +28,7 @@ Options:
   --after <T>         Keep slots at or after T: an ISO time (2026-10-12T13:35:40 or 2026-10-12 13:35:40), a date, or
                       a time of day (13:35:40.5), compared to the same precision, UTC.
   --before <T>        Keep slots at or before T, as --after.
-  --period <S>        Seconds per row of the periods (default: 1), from whole multiples of it since the epoch,
+  --period <S>        Seconds per row of the periods, finite and positive (default: 1), from whole multiples of it since the epoch,
                       UTC, unlike METRICS periods, which end at the times of their lines.
   --summary           Print only the summary per UE.
   --grants <K>        Print the grants or reports of kind dl, ul, harq or csi instead of the periods.
@@ -39,6 +39,7 @@ Options:
 from __future__ import annotations
 
 import argparse
+import math
 import mmap
 import multiprocessing
 import os
@@ -55,6 +56,7 @@ from parsers import schedtrace  # noqa: E402
 from parsers.log.search import iso_bound  # noqa: E402
 from parsers.ran.rnti import parse_any  # noqa: E402
 from parsers.schedtrace import grid, ue_metrics  # noqa: E402
+from parsers.schedtrace.ue_metrics import round_half_up  # noqa: E402
 
 # Traces from this size are read in parallel by default.
 PARALLEL_MIN_SIZE = 16 << 20
@@ -172,10 +174,10 @@ def print_summary(res: dict) -> None:
     for _, _, *values in res["agg"].ue_totals(duration):
         v = dict(zip(ue_metrics.UE_FIELDS, values))
         rows.append((v["rnti"], num(v["ue_index"]), mbps(v["dl_brate"]),
-                     mbps(v["dl_sched_brate"]), num(v["dl_mcs"]), num(v["dl_error_rate"]),
+                     mbps(v["dl_sched_brate"]), num(round_half_up(v["dl_mcs"])), num(v["dl_error_rate"]),
                      retx_pct(v["dl_nof_newtx"], v["dl_nof_retx"]), num(v["dl_nof_prbs"] / duration, 0),
                      mbps(v["ul_sched_brate"]), retx_pct(v["ul_nof_newtx"], v["ul_nof_retx"]),
-                     num(v["ul_nof_prbs"] / duration, 0), num(v["cqi"]), num(v["dl_ri"]), num(v["rsrp"]),
+                     num(v["ul_nof_prbs"] / duration, 0), num(round_half_up(v["cqi"])), num(v["dl_ri"]), num(v["rsrp"]),
                      num(v["sr_count"])))
     print_table(header, rows)
 
@@ -186,10 +188,10 @@ def print_periods(res: dict, max_rows: int) -> None:
     rows = []
     for t, _, *values in res["agg"].ue_rows():
         v = dict(zip(ue_metrics.UE_FIELDS, values))
-        rows.append((time_text(t)[11:23], v["rnti"], mbps(v["dl_brate"]), mbps(v["dl_sched_brate"]), num(v["dl_mcs"]),
-                     num(v["dl_nof_ok"]), num(v["dl_nof_nok"]), num(v["dl_nof_dtx"]), num(v["dl_nof_retx"]),
-                     num(v["dl_nof_prbs"]), mbps(v["ul_sched_brate"]), num(v["ul_nof_retx"]), num(v["ul_nof_prbs"]),
-                     num(v["cqi"]), num(v["dl_ri"]), num(v["sr_count"])))
+        rows.append((time_text(t)[11:23], v["rnti"], mbps(v["dl_brate"]), mbps(v["dl_sched_brate"]),
+                     num(round_half_up(v["dl_mcs"])), num(v["dl_nof_ok"]), num(v["dl_nof_nok"]), num(v["dl_nof_dtx"]),
+                     num(v["dl_nof_retx"]), num(v["dl_nof_prbs"]), mbps(v["ul_sched_brate"]), num(v["ul_nof_retx"]),
+                     num(v["ul_nof_prbs"]), num(round_half_up(v["cqi"])), num(v["dl_ri"]), num(v["sr_count"])))
     print_table(header, rows[:max_rows])
     if len(rows) > max_rows:
         print(f"... {len(rows) - max_rows} more, see --max-rows")
@@ -226,8 +228,8 @@ def main() -> int:
     rntis = [parse_any(r) for r in args.rnti]
     if None in rntis:
         ap.error(f"invalid RNTI in {args.rnti}, expected 4601, 0x4601 or 17921")
-    if args.period <= 0:
-        ap.error("--period must be positive")
+    if not math.isfinite(args.period) or args.period <= 0:
+        ap.error("--period must be finite and positive")
     opts = {"rntis": rntis, "ues": args.ue, "after": iso_bound(args.after), "before": iso_bound(args.before),
             "period": args.period,
             "grants": args.grants}
@@ -254,7 +256,7 @@ def main() -> int:
             print("no slots in the window")
             continue
         if (rntis or args.ue) and not res["agg"].ues:
-            print("no UE matches the filters")
+            print("no grants or reports of the filtered UEs in the window")
             continue
         print_summary(res)
         if args.summary:

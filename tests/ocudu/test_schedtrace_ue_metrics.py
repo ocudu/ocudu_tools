@@ -53,7 +53,13 @@ class SchedtraceUeMetricsTest(unittest.TestCase):
     def test_filter_without_ues(self):
         res = run(str(TRACE), "--rnti", "0x4700")
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn("no UE matches the filters", res.stdout)
+        self.assertIn("no grants or reports of the filtered UEs in the window", res.stdout)
+
+    def test_non_finite_period(self):
+        for period in ("inf", "nan", "0"):
+            res = run(str(TRACE), "--period", period)
+            self.assertEqual(res.returncode, 2, period)
+            self.assertIn("--period must be finite and positive", res.stderr, period)
 
     def test_window_with_date_and_space(self):
         # A date and time joined by a space, and a date, bound the slot of 2023-11-14T22:13:20 as ISO times.

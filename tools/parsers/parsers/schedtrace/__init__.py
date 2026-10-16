@@ -113,8 +113,9 @@ def events(data: bytes | memoryview, grid_only: bool = False) -> Iterator[dict[s
 
     Each has "timestamp_us" and "type", "CellStartEvent", "CellSlotEvent" or "CellStopEvent", with the fields of that
     event, e.g. "slot_tx", "latency_us", "inputs" and "decision" for a slot. An incomplete last event, e.g. of a
-    trace still being written, is left out, and so are the events from a corrupt size prefix, with a warning. grid_only leaves out the fields that grid.allocations() does not need,
-    except the slot, latency and input types, which is faster; some may be left anyway.
+    trace still being written, is left out, and so are the events from a corrupt size prefix, with a warning.
+    grid_only keeps only the fields of codegen.GRID_FIELDS, which is faster: those that grid.allocations() and
+    ue_metrics read, the timestamp, slot and latency of an event, and the type of each input.
     """
     root = _root(grid_only)
     view = memoryview(data)

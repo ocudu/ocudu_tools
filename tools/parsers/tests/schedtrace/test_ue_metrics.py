@@ -87,10 +87,10 @@ class UeMetricsTest(unittest.TestCase):
         e = slot(1000, csi)
         agg.add(1, e, ue_metrics.slot_items(e, self.cell))
         values = dict(zip(ue_metrics.UE_FIELDS, agg.ue_rows()[0][2:]))
-        # CQI 13.5 rounds to 14, as METRICS prints it.
-        self.assertEqual((values["cqi"], values["dl_ri"]), (14, 1.5))
+        # Unrounded, so that means over bins are not biased.
+        self.assertEqual((values["cqi"], values["dl_ri"]), (13.5, 1.5))
 
-    def test_dl_mcs_is_the_rounded_mean_of_every_codeword(self):
+    def test_dl_mcs_is_the_mean_of_every_codeword(self):
         two_cws = pdsch(0x4601, 20, 1000)
         two_cws["codewords"].append({"mcs_index": 23, "tb_size_bytes": 1500, "new_data": True, "rv_index": 0})
         e = slot(1000, ue_pdschs=[two_cws, pdsch(0x4601, 22, 1000)])
@@ -99,13 +99,13 @@ class UeMetricsTest(unittest.TestCase):
         agg = ue_metrics.Aggregator()
         agg.add(1, e, items)
         values = dict(zip(ue_metrics.UE_FIELDS, agg.ue_rows()[0][2:]))
-        # (20 + 23 + 22) / 3 = 21.67, and the TBS of both codewords.
-        self.assertEqual((values["dl_mcs"], values["dl_sched_brate"]), (22, 3500 * 8 / 0.01))
-        # 20.5 rounds up, as std::round of METRICS, not to the even 20 of round().
-        e = slot(1000, ue_pdschs=[pdsch(0x4601, 20, 1000), pdsch(0x4601, 21, 1000)])
-        agg = ue_metrics.Aggregator()
-        agg.add(1, e, ue_metrics.slot_items(e, self.cell))
-        self.assertEqual(dict(zip(ue_metrics.UE_FIELDS, agg.ue_rows()[0][2:]))["dl_mcs"], 21)
+        # (20 + 23 + 22) / 3, and the TBS of both codewords.
+        self.assertAlmostEqual(values["dl_mcs"], 65 / 3)
+        self.assertEqual(values["dl_sched_brate"], 3500 * 8 / 0.01)
+
+    def test_round_half_up_rounds_as_std_round(self):
+        # Halves round up, as std::round of METRICS, not to the even of round().
+        self.assertEqual([ue_metrics.round_half_up(v) for v in (20.5, 13.5, 21.49, 0.0, None)], [21, 14, 21, 0, None])
 
     def test_bin_size_and_totals(self):
         # 1 s bins: one bin with all 60 slots, each with a 1000 byte new transmission and its ACK.
