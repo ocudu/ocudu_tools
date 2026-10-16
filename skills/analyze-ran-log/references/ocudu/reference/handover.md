@@ -33,14 +33,14 @@ are at the scheduler/MAC level. To see the HO command body, enable
 
 | Step | Layer | Log line |
 |---|---|---|
-| 1 | CU-CP | `ue=N: "Handover Routine" initialized` (only if implemented; older builds may not log this) |
-| 2 | RRC  | `DCCH DL rrcReconfiguration` *and a continuation line containing `reconfigurationWithSync {`* |
+| 1 | CU-CP | `ue=N: Trigger intra-CU (intra-DU) handover on du=N` or `Trigger intra-CU (inter-DU) handover from source_du=N to target_du=N` |
+| 2 | RRC  | `DCCH DL rrcReconfiguration` (source UE); at `rrc_level: debug` its body holds `reconfigurationWithSync` |
 | 3 | CU-CP-F1 | `Tx PDU ... UEContextModificationRequest` to the DU (target cell config) |
 | 4 | DU-F1 | `Rx/Tx ... UEContextModificationResponse` |
 | 5 | SCHED | New `prach(...)` on the target pci with the new `tc-rnti` (CFRA preamble in CFRA tests) |
 | 6 | MAC  | `proc="MAC UE Reconfiguration": finished successfully` on the target pci |
 | 7 | RRC  | `DCCH UL rrcReconfigurationComplete` on the target cell |
-| 8 | CU-CP | `ue=N: "Handover Routine" finished successfully` |
+| 8 | CU-CP | `ue=N: "Intra CU Handover Target Routine" finished successfully` (target UE; `started...` at step 2). The source side, `"Intra CU Handover Routine"`, logs at debug only |
 
 Scheduler-only visibility (when RRC/CU layers are at warning):
 - `[METRICS] events=[..., {rnti=0xN slot=N.N type=ue_reconf}, ...]` —
@@ -53,12 +53,15 @@ Scheduler-only visibility (when RRC/CU layers are at warning):
 | Step | Layer | Log line |
 |---|---|---|
 | 1 | RRC | Measurement report decoded |
-| 2 | CU-CP | `"Handover Preparation Routine" initialized` |
+| 2 | NGAP | `ue=N ran_ue=N amf_ue=N: "Handover Preparation Procedure" started...` |
 | 3 | NGAP | `Tx PDU ue=N ran_ue=N: HandoverRequired` |
 | 4 | NGAP | `Rx PDU ... HandoverCommand` |
 | 5 | RRC | `DCCH DL rrcReconfiguration` (carrying the target's `reconfigurationWithSync`) |
 | 6 | NGAP | `Tx PDU ... UplinkRanStatusTransfer` (source→AMF; the target receives the matching `DownlinkRANStatusTransfer`) |
 | 7 | CU-CP | UEContextRelease after the handover completes on the target |
+
+Target side: NGAP `Rx PDU amf_ue=N: HandoverRequest`, `Tx PDU ...: HandoverRequestAcknowledge`, then
+`Tx PDU: HandoverNotify` once the UE completes the handover.
 
 ## Diagnosing failures
 

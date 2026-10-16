@@ -21,7 +21,11 @@ _CRNTI_RE = re.compile(r"c-rnti=0x([0-9a-fA-F]+)")
 _BUILD_RE = re.compile(r"commit (\S+) on branch (\S+)")
 # Older builds print the pci of a slot event in the event, not in the header.
 _SLOT_EVENTS_RE = re.compile(r"Processed slot events(?: pci=(\d+))?:$")
-_NGAP_HO_RE = re.compile(r"\bHandoverRe(?:quired|quest)\b")
+# PDUs only: NGAP also names HandoverRequest in its line of the target cell of one.
+_NGAP_HO_RE = re.compile(r"PDU\b.*: HandoverRe(?:quired|quest)$")
+_BANNER_RE = re.compile(r"==== (.+) started ===")
+# CU-CP line of an intra-CU handover completed, at info on the target side. The source side finishes at debug.
+_INTRA_CU_HO_DONE = '"Intra CU Handover Target Routine" finished successfully'
 # Warnings expected in healthy runs: per-UE creation latency instrumentation and host notes.
 BENIGN_WARNINGS = (
     "DRM KMS polling is enabled",
@@ -43,6 +47,8 @@ class LogSummary:
 
     build_commit: str | None = None
     build_branch: str | None = None
+    # Application of the "==== <app> started ===" banner: "gNB", "DU" or "CU".
+    app: str | None = None
     first_ts: str | None = None
     last_ts: str | None = None
     # Whether the workers stopped successfully.
@@ -59,9 +65,12 @@ class LogSummary:
     # (time, UE index) of each successful Initial Context Setup.
     init_ctx_done: list[tuple[str, str]] = field(default_factory=list)
     rrc_reconfigs: int = 0
-    # Handovers, as reconfigurationWithSync in RRC bodies.
+    # Handovers completed, counted on the target side: intra-CU ones and NGAP ones, by their HandoverNotify. Xn and
+    # conditional inter-CU ones have no info line of completion.
     ho_count: int = 0
-    # NGAP HandoverRequired and HandoverRequest messages.
+    # reconfigurationWithSync in RRC bodies, which RRC logs at debug.
+    reconf_with_sync_count: int = 0
+    # NGAP HandoverRequired and HandoverRequest PDUs.
     ngap_handover_count: int = 0
     reest_count: int = 0
     # E1AP bearer context procedures, counted on the CU-CP side only.
@@ -108,7 +117,7 @@ def summarize(lines: Iterable[str]) -> LogSummary:
         if not raw or raw[0] not in "0123456789":
             # The handover marker is the ASN.1 or JSON brace of the reconfigurationWithSync of an RRC body.
             if "reconfigurationWithSync" in raw and "{" in raw:
-                out.ho_count += 1
+                out.reconf_with_sync_count += 1
             # The scheduler prints its slot events one per continuation line at debug.
             if slot_events_ts is not None:
                 if raw.startswith("- PRACH: "):
@@ -145,8 +154,12 @@ def summarize(lines: Iterable[str]) -> LogSummary:
                 if len(out.warnings) < MAX_KEPT_LINES:
                     out.warnings.append((ts, layer, msg.strip()))
 
-        if layer == "GNB" and "Built in" in msg and (bm := _BUILD_RE.search(msg)):
-            out.build_commit, out.build_branch = bm.group(1), bm.group(2)
+        # The CU application logs its build and banner as CU.
+        if layer in ("GNB", "CU"):
+            if "Built in" in msg and (bm := _BUILD_RE.search(msg)):
+                out.build_commit, out.build_branch = bm.group(1), bm.group(2)
+            elif out.app is None and (am := _BANNER_RE.search(msg)):
+                out.app = am.group(1)
 
         if layer == "NGAP":
             if "NGSetupResponse" in msg:
@@ -155,6 +168,8 @@ def summarize(lines: Iterable[str]) -> LogSummary:
                 out.ng_setup = "failure"
             if _NGAP_HO_RE.search(msg):
                 out.ngap_handover_count += 1
+            elif msg.startswith("Tx PDU") and msg.endswith(": HandoverNotify"):
+                out.ho_count += 1
 
         if layer == "CU-CP" and "Connection to AMF" in msg and "established" in msg:
             out.amf_connected_ts = ts
@@ -180,6 +195,9 @@ def summarize(lines: Iterable[str]) -> LogSummary:
 
         if layer == "CU-CP" and '"Initial Context Setup Routine" finished successfully' in msg:
             out.init_ctx_done.append((ts, um.group(1) if (um := _UE_RE.search(msg)) else "?"))
+
+        if layer == "CU-CP" and _INTRA_CU_HO_DONE in msg:
+            out.ho_count += 1
 
         if layer == "CU-CP" and '"UE Removal Routine" finished successfully' in msg:
             out.ue_releases.append((ts, um.group(1) if (um := _UE_RE.search(msg)) else "?"))

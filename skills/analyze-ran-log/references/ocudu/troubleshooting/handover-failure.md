@@ -24,13 +24,23 @@ test catalogue, and the scheduler-only visibility notes, see
    ```
    If both are `warning`, skip directly to step 4 (pcap) — the gNB log alone
    won't show the HO command body.
-2. Count handovers:
+2. Count handovers completed (info; intra-CU by the target routine, NGAP by
+   the target's `HandoverNotify`) and attempted (NGAP `HandoverRequired` on
+   the source):
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --pattern "reconfigurationWithSync \{" --count
+   python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --layer CU-CP --pattern 'Handover Target Routine" finished' --count
+   python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --layer NGAP --pattern 'Tx PDU.*HandoverNotify' --count
+   python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --layer NGAP --pattern 'Tx PDU.*HandoverRequired' --count
    ```
-3. Per-UE HO timeline (info-level only):
+   Intra-CU triggers minus target finishes = intra-CU HOs that did not complete:
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --pattern "Handover Routine" --max-lines 30
+   python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --layer CU-CP --pattern 'Trigger intra-CU' --count
+   ```
+   `reconfigurationWithSync` (`--layer RRC --pattern reconfigurationWithSync`)
+   is in RRC bodies at `rrc_level: debug` only.
+3. Per-UE HO timeline (info):
+   ```bash
+   python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --pattern 'Trigger .*handover|Handover.*(Routine|Procedure)' --max-lines 30
    ```
 4. Use the F1AP/NGAP PCAP for the HO command body — handoff to the `pcap` type:
    - F1AP HO trace: UEContextModificationRequest with `reconfigurationWithSync`.

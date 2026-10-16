@@ -57,7 +57,7 @@ DU DU-F1 DU-F1-U DU-MNG GTPU UDP-GW IO-EPOLL
 
 | Question | Command |
 |---|---|
-| "How many handovers?" | `--pattern reconfigurationWithSync --count` |
+| "How many handovers?" | `--layer CU-CP --pattern 'Handover Target Routine" finished' --count` (intra-CU); `--layer NGAP --pattern 'Tx PDU.*HandoverNotify' --count` (NGAP, target) |
 | "When did the UE attach?" | `--layer RRC --pattern "DCCH UL rrcSetupComplete"` |
 | "All PRACH events" | `--layer SCHED --pattern "prach\("` |
 | "Cells configured?" | `--pattern "Cell creation idx="` |

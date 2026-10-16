@@ -3,7 +3,8 @@
 # SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
 # SPDX-License-Identifier: BSD-3-Clause-Open-MPI
 
-"""Tests of the procedure count note and the METRICS rows of ocudu_log_summary.py, on logs without a configuration.
+"""Tests of the procedure counts and their note and the METRICS rows of ocudu_log_summary.py, on logs without a
+configuration.
 
 Usage:
     python3 test_ocudu_log_summary.py
@@ -52,6 +53,21 @@ class OcuduLogSummaryTest(unittest.TestCase):
         out = self.summary(QUIET_LOG)
         self.assertIn("NOTE: no info or debug lines of RRC, NGAP, CU-CP, CU-CP-E1", out)
         self.assertNotIn("NOTE", self.summary(QUIET_LOG + VERBOSE_LINES))
+
+    def test_no_note_without_cu_loggers_or_ues(self):
+        # A DU has no CU loggers.
+        du = "2026-09-29T21:31:58.240299 [GNB     ] [I] ==== DU started ===\n"
+        self.assertNotIn("NOTE", self.summary(QUIET_LOG + du))
+        # RRC logs nothing at info without UEs.
+        no_ue = "".join(line + "\n" for line in VERBOSE_LINES.splitlines()
+                        if "RRC" not in line and "UE created" not in line)
+        no_ue += "2026-07-06T17:14:10.400000 [CU-CP   ] [I] Connection to AMF on 127.0.0.1:38412 established\n"
+        self.assertNotIn("NOTE", self.summary(QUIET_LOG + no_ue))
+
+    def test_handovers_at_info(self):
+        ho = ('2026-07-06T17:14:11.000000 [CU-CP   ] [I] ue=1: "Intra CU Handover Target Routine" finished '
+              "successfully\n")
+        self.assertIn("Handovers completed : 1", self.summary(QUIET_LOG + VERBOSE_LINES + ho))
 
     def test_metrics_rows_leave_out_the_worker_lines(self):
         out = self.summary(QUIET_LOG)

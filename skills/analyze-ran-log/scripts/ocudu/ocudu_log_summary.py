@@ -79,8 +79,8 @@ def parse_cfg(cfg_path: Path, gnb_log: Path) -> dict:
 
 
 def parse_gnb_log(gnb_log: Path) -> dict:
-    """The summary.LogSummary of a log, with the procedure loggers without info or debug lines (silent_loggers), and
-    metrics_rows and last_metrics of METRICS rows only.
+    """The summary.LogSummary of a log, with the procedure loggers expected but without info or debug lines
+    (silent_loggers), and metrics_rows and last_metrics of METRICS rows only.
     """
     if not gnb_log.exists():
         return {**vars(summary.LogSummary()), "silent_loggers": list(PROCEDURE_LOGGERS)}
@@ -98,7 +98,13 @@ def parse_gnb_log(gnb_log: Path) -> dict:
 
     with open(gnb_log, encoding="utf-8", errors="replace") as f:
         out = vars(summary.summarize(scan(f)))
-    return {**out, **rows, "silent_loggers": [name for name in PROCEDURE_LOGGERS if name not in verbose]}
+    silent = [name for name in PROCEDURE_LOGGERS if name not in verbose]
+    # A DU has no CU loggers, and RRC logs nothing at info until a UE connects, which CU-CP logs at info.
+    if out["app"] == "DU":
+        silent = []
+    elif "CU-CP" in verbose and not out["ue_creates"]:
+        silent = [name for name in silent if name != "RRC"]
+    return {**out, **rows, "silent_loggers": silent}
 
 
 def parse_stdout(stdout_log: Path) -> dict:
@@ -262,7 +268,8 @@ def summarize(path_str: str) -> None:
     # ----- Procedures -----
     print("=== Procedures ===")
     print(f"  RRC reconfigs       : {log['rrc_reconfigs']}")
-    print(f"  Handovers (Reconf w/Sync) : {log['ho_count']}")
+    print(f"  Handovers completed : {log['ho_count']} (intra-CU and NGAP, on the target)")
+    print(f"  Reconf w/Sync       : {log['reconf_with_sync_count']} (RRC bodies, rrc_level debug)")
     print(f"  NGAP handover msgs  : {log['ngap_handover_count']}")
     print(f"  Reestablishments    : {log['reest_count']}")
     print(f"  Bearer setups       : {log['bearer_setups']}")
