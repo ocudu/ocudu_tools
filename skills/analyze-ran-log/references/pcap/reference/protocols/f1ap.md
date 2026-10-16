@@ -92,6 +92,13 @@ reject appears as `UEContextReleaseCommand`, `SRBID=0`, `RRCContainer: 09e0` →
 Distinguish reject-in-release from a normal release by the container: a bare
 release has no `RRCContainer`; a reject carries the short CCCH `rrcReject`.
 
+The opposite gotcha: the `UEContextSetupRequest` of a handover target has no
+`RRCContainer`, yet `nr-rrc.rrcReconfiguration_element` fires on it, from the
+source's configuration inside `CUtoDURRCInformation` →
+`HandoverPreparationInformation`, which is never sent to the UE. Match RRC
+messages with `f1ap.RRCContainer` present; `f1ap_messages.py` reports `rrc` only
+for a message with an RRC container.
+
 ## Parsing scripts
 
 ```bash
@@ -108,6 +115,6 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/pcap/f1ap_ue_ids.py <f1ap.pcap>
 # NAS type is named from tshark's decode (ciphered post-security NAS shows '-').
 python3 ${CLAUDE_SKILL_DIR}/scripts/pcap/f1ap_messages.py <f1ap.pcap>
 python3 ${CLAUDE_SKILL_DIR}/scripts/pcap/f1ap_messages.py <f1ap.pcap> --ue 640   # one UE by CU or DU F1AP id
-python3 ${CLAUDE_SKILL_DIR}/scripts/pcap/f1ap_messages.py <f1ap.pcap> --rnti 4601 # by C-RNTI: 4601, 0x4601 or 17921
+python3 ${CLAUDE_SKILL_DIR}/scripts/pcap/f1ap_messages.py <f1ap.pcap> --rnti 4601 # whole UE context of a C-RNTI: 4601, 0x4601 or 17921
 python3 ${CLAUDE_SKILL_DIR}/scripts/pcap/f1ap_messages.py <f1ap.pcap> --nas      # only NAS-bearing msgs
 ```

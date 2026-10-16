@@ -31,8 +31,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--around", type=float, help="centre epoch for the window")
     ap.add_argument("--window-ms", type=int, default=2000,
                     help="full window width in ms (centred on --around). Default 2000.")
-    ap.add_argument("--ue", help="filter to events of this UE: a protocol UE id as the pcap has it, e.g. an F1AP or "
-                                 "NGAP id, or an RNTI in decimal or 0x hex, e.g. 17921 or 0x4601, for MAC")
+    ap.add_argument("--ue", help="filter to events with this id in any protocol, so pair it with --protocols: a "
+                                 "protocol UE id as the pcap has it, e.g. an F1AP or NGAP id, or an RNTI in decimal "
+                                 "or 0x hex, e.g. 17921 or 0x4601, for MAC; a bare 4601 is decimal")
     ap.add_argument("--protocols", default="ngap,f1ap,e1ap,mac,rlc",
                     help="comma-separated subset to include")
     ap.add_argument("--json", action="store_true")

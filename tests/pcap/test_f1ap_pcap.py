@@ -77,9 +77,11 @@ class F1apPcapTest(unittest.TestCase):
         nof_ue_messages = len(run_json("f1ap_messages.py", "--ue", "0"))
         self.assertGreater(nof_ue_messages, 1)
         self.assertEqual(run_json("f1ap_messages.py", "--ue", "17921"), [])
+        # All messages of the UE context, not only those that name the C-RNTI.
         records = run_json("f1ap_messages.py", "--rnti", "4601")
-        self.assertTrue(records)
-        self.assertTrue(all(r["crnti"] == "17921" for r in records))
+        self.assertEqual(records, run_json("f1ap_messages.py", "--ue", "0"))
+        self.assertEqual(sum(r["crnti"] == "17921" for r in records), 1)
+        self.assertEqual(run_json("f1ap_messages.py", "--rnti", "4602"), [])
 
     def test_invalid_rnti(self):
         proc = subprocess.run([sys.executable, str(SCRIPTS_DIR / "f1ap_ue_ids.py"), str(PCAP), "--rnti", "zz"],

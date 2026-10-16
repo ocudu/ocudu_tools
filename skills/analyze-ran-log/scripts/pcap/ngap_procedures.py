@@ -28,7 +28,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("pcap", help="path to ngap.pcap")
     ap.add_argument("--ue", help="filter to one RAN-UE-NGAP-ID")
-    ap.add_argument("--failures-only", action="store_true", help="only show unsuccessful outcomes / with cause")
+    ap.add_argument("--failures-only", action="store_true",
+                    help="only show unsuccessful outcomes; successful ones may also carry a cause")
     ap.add_argument("--json", action="store_true", help="emit JSON")
     args = ap.parse_args(argv)
 
