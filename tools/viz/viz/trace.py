@@ -55,11 +55,10 @@ def group_trace(trace: dict[str, Any], by: str, max_lanes: int, limit: int) -> d
     merged: dict[Any, dict[str, Any]] = {}
     # Merged lane and index in its contexts of each lane.
     lane_of: dict[Any, tuple[Any, int]] = {}
-    # A failed creation has the DU UE index or RNTI of another UE, so it keeps its own row.
-    failed = {ev["lane"] for ev in trace["events"] if ev["type"] == "ue_create_failed" and ev["lane"] is not None}
     for lane in trace["lanes"]:
         keys = lane_keys(lane)
-        value = keys.get(by) if not lane.get("failed") and lane["lane"] not in failed else None
+        # A failed creation has the DU UE index or RNTI of another UE, so it keeps its own row.
+        value = keys.get(by) if not lane.get("failed") else None
         key = f"{by}={value}" if value is not None else lane["lane"]
         if key not in merged:
             merged[key] = {**lane, "lane": key, "ids": {}, "contexts": []}
@@ -238,26 +237,20 @@ def _join(sources: list[tuple[int, Store]], lanes: dict[int, list[dict[str, Any]
     their DU UE index or RNTI is of another UE.
     """
     stores = dict(sources)
-    failed_lanes = {source: _failed_lanes(store) for source, store in sources}
     joined = ues_util.combine(*(
-        _contexts(source, [lane for lane in ls if lane["lane"] not in failed_lanes[source]], stores[source].lane_links())
+        _contexts(source, [lane for lane in ls if not lane["failed"]], stores[source].lane_links())
         for source, ls in lanes.items()
     ))
     failed = [
         ues_util.Ue(f"{source}:{lane['lane']}", lane["t_start"], lane["t_end"], False,
                     {k: [v] for k, v in lane_keys(lane).items()}, [(source, lane["lane"])], lane["t_start"])
-        for source, ls in lanes.items() for lane in ls if lane["lane"] in failed_lanes[source]
+        for source, ls in lanes.items() for lane in ls if lane["failed"]
     ]
     return joined, failed
 
 
 def _lanes(store: Store) -> list[dict[str, Any]]:
     return store.trace(None, None, _ALL, 0)["lanes"]
-
-
-def _failed_lanes(store: Store) -> set[int]:
-    """The lanes of the failed UE creations of a store."""
-    return {ev["lane"] for ev in store.events(types=["ue_create_failed"], limit=_ALL)["events"] if ev["lane"] is not None}
 
 
 def _contexts(source: int, lanes: list[dict[str, Any]], links: dict[int, dict[str, Any]]) -> list[ues_util.Context]:

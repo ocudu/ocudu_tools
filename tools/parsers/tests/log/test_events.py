@@ -36,6 +36,7 @@ LINES = {
     "rrc_setup_timeout": '2026-10-05T20:09:24.415087 [RRC     ] [W] ue=201 c-rnti=0x46d4: "RRC Setup Procedure" timed out after 2000ms',
     "warning_rnti": "2026-10-05T20:11:10.204373 [MAC     ] [W] [  468.12] UL rnti=0x5ec8 lcid=0x3a CE: Discarding PDU. Cause: C-RNTI in C-RNTI CE is not associated with any existing UE.",
     "warning": "2026-07-30T21:10:11.000000 [SCHED   ] [W] UE creation (ue=4): latency1=500us",
+    "warning_crnti": "2026-04-21T03:21:49.090373 [DU-F1   ] [W] ue=3 crnti=0x4601: F1 UE context failed to be created.",
     "error": "2026-07-30T21:10:12.000000 [PHY     ] [E] [   300.1] Something failed",
     "noise": "2026-07-30T21:10:13.000000 [RRC     ] [I] ue=0 c-rnti=0x4601: DCCH DL rrcReconfiguration",
     "wrong_layer": '2026-07-30T21:10:14.000000 [MAC     ] [I] ue=0 rnti=0x4601 proc="UE Create": Procedure started....',
@@ -165,6 +166,8 @@ class EventsTest(unittest.TestCase):
         w = parse("warning_rnti")
         self.assertEqual((w["type"], w["ue"], w["rnti"]), ("warning", None, "0x5ec8"))
         self.assertEqual((parse("warning")["ue"], parse("warning")["rnti"]), (4, None))
+        w = parse("warning_crnti")
+        self.assertEqual((w["type"], w["ue"], w["rnti"]), ("warning", 3, "0x4601"))
         # The RA-RNTI of a random access is no UE's.
         self.assertEqual((parse("warning_ra_rnti")["ue"], parse("warning_ra_rnti")["rnti"]), (None, None))
 
@@ -276,6 +279,13 @@ class EventsTest(unittest.TestCase):
         self.assertEqual(assigned, [0, 1, 1, 2, 2, 3, 3, 0, 0, 1, 1, 1])
         self.assertEqual([(lane.du_ue, lane.created, lane.deleted, lane.failed) for lane in tracker.lanes],
                          [(1, True, False, False), (2, True, True, False), (5, False, False, True), (2, False, False, True)])
+        # A creation without RNTI whose warning logs one, of a live UE, and whose failure logs none.
+        self.assertEqual(tracker.assign(ev(13, "ue_create", "DU-MNG", ue=1)), 4)
+        self.assertEqual(tracker.assign(ev(14, "warning", "DU-F1", ue=1, rnti="0x1")), 4)
+        self.assertEqual(tracker.assign(ev(15, "ue_create_failed", "DU-MNG", ue=1)), 4)
+        self.assertEqual(tracker.lanes[4].failed, True)
+        self.assertEqual(tracker.assign(ev(16, "conres", "MAC", ue=1, rnti="0x1")), 0)
+        self.assertEqual(tracker.assign(ev(17, "rrc_setup_timeout", "RRC", ue=3, rnti="0x1")), 0)
         # A failure of no ongoing creation changes nothing.
         self.assertIsNone(tracker.assign(ev(12, "ue_create_failed", "DU-MNG", ue=4, rnti="0x4")))
 

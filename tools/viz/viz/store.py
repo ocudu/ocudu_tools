@@ -23,7 +23,7 @@ from .filters import FilterError, compile_filter
 from .sources.base import ProgressFn, SourceType, column_type, column_value
 
 # Bumped when the database layout changes, part of the cache key.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 # Time series windows up to this many points are returned at full resolution.
 MAX_FULL_RES_POINTS = 50_000
 # Split values returned when none are selected.
@@ -289,7 +289,7 @@ class EventStoreWriter:
         self._flush()
         self._conn.execute(f"CREATE INDEX idx_events ON events ({_TS})")
         # A lane spans the events of one UE context; created but never deleted ones last until the end of the log. A
-        # failed creation leaves no context.
+        # failed creation leaves no context; its lane is failed.
         self._conn.execute(
             f"""
             CREATE TABLE lanes AS SELECT
@@ -300,7 +300,8 @@ class EventStoreWriter:
                 i.rnti,
                 i.label,
                 i.cu_ue,
-                MAX(e.type = 'ue_create') AND NOT MAX(e.type IN ('ue_delete', 'ue_create_failed')) AS open
+                MAX(e.type = 'ue_create') AND NOT MAX(e.type IN ('ue_delete', 'ue_create_failed')) AS open,
+                MAX(e.type = 'ue_create_failed') AS failed
             FROM events e LEFT JOIN lane_info i ON i.lane = e.lane WHERE e.lane IS NOT NULL GROUP BY e.lane
             """
         )
@@ -658,7 +659,7 @@ class Store:
         """Returns the UE lanes active in a time window, in start order, and the events of the window in those lanes
         or in no lane.
 
-        Open lanes have no deletion and last until the end of the log. At most max_lanes lanes and limit events are
+        Open lanes have no deletion and last until the end of the log. Failed lanes are of a failed UE creation. At most max_lanes lanes and limit events are
         returned; total_lanes and total_events count all of them.
         """
         empty = {"lanes": [], "total_lanes": 0, "events": [], "total_events": 0, "truncated": False}
@@ -670,9 +671,10 @@ class Store:
             where = "t_start <= ? AND (t_end >= ? OR open)"
             total_lanes = conn.execute(f"SELECT COUNT(*) FROM lanes WHERE {where}", (hi, lo)).fetchone()[0]
             lanes = [
-                {"lane": r[0], "t_start": r[1], "t_end": r[2], "ue": r[3], "rnti": r[4], "label": r[5], "cu_ue": r[6], "open": bool(r[7])}
+                {"lane": r[0], "t_start": r[1], "t_end": r[2], "ue": r[3], "rnti": r[4], "label": r[5], "cu_ue": r[6], "open": bool(r[7]),
+                 "failed": bool(r[8])}
                 for r in conn.execute(
-                    f"SELECT lane, t_start, t_end, ue, rnti, label, cu_ue, open FROM lanes WHERE {where} ORDER BY t_start, lane LIMIT ?",
+                    f"SELECT lane, t_start, t_end, ue, rnti, label, cu_ue, open, failed FROM lanes WHERE {where} ORDER BY t_start, lane LIMIT ?",
                     (hi, lo, max_lanes),
                 )
             ]

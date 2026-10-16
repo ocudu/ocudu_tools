@@ -254,7 +254,8 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
   RNTI, by DU UE index, and for CU-CP events by the RNTI of the RRC messages of their CU-CP UE index. A UE created
   without RNTI, e.g. a handover target, gets it from its first `UE Configuration` line, within its lifetime only,
   since DU UE indexes are soon reused while RNTIs and protocol UE ids are not. A failed creation, e.g. on a DU UE index
-  or C-RNTI clash, closes its lane, which is not open, and gives the index and RNTI back to the UE it clashed with.
+  or C-RNTI clash, closes its lane, which is not open but `failed`, whatever window is read, and gives the index and
+  RNTI back to the UE it clashed with.
   `GET /api/trace?source&t0&t1&max_lanes&limit` returns the UE contexts active in a window and its events.
 - The trace has a filter like the plots (D6), over the event fields type, category, layer, level, ue, rnti, cause and
   text, evaluated by SQLite over the events of the window, with the UE index and RNTI of their lane for events
@@ -328,8 +329,9 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
   without one, which is rare, joins the context starting nearest its creation, within 1 s, i.e. its
   InitialULRRCMessageTransfer or UEContextSetup. The UEs are indexed by RNTI and by creation time, so that joining
   takes n log n. Log lanes of a random access of no UE, i.e. a PRACH only, are expected to have no context. Log lanes of no context keep their own row. The lane of a failed
-  creation, a lane with a `ue_create_failed` event, joins no UE and is a UE of its own (`failed` in the trace), since
-  its DU UE index or RNTI is of another UE; grouping keeps it in its own row too. A trace of a log of a run with an F1AP pcap also shows
+  creation, a `failed` lane of its store, i.e. one with a `ue_create_failed` event, joins no UE and is a UE of its own
+  (`failed` in the trace), since its DU UE index or RNTI is of another UE; grouping keeps it in its own row too, also in
+  a window that ends before the failure. A trace of a log of a run with an F1AP pcap also shows
   its events on these UE contexts, the ones it has events in. RNTIs are compared as logs print them
   (`parsers.ran.rnti`). The F1AP gNB-DU-UE-F1AP-ID is not the DU UE index of the logs, so they are not compared. A
   trace row shows the DU UE index, RNTI and protocol identifiers of its UE.

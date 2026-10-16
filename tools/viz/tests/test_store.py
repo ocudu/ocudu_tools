@@ -219,7 +219,9 @@ class StoreTest(unittest.TestCase):
         store = self.cache.open(path, LogMetricsSource())
         self.cache.open_events(store, LogMetricsSource())
         lanes = store.trace()["lanes"]
-        self.assertEqual([(lane["ue"], lane["open"]) for lane in lanes], [(0, True), (1, False)])
+        self.assertEqual([(lane["ue"], lane["open"], lane["failed"]) for lane in lanes], [(0, True, False), (1, False, True)])
+        # The lane is failed also in a window that ends before the failure.
+        self.assertEqual([lane["failed"] for lane in store.trace(None, lanes[1]["t_start"])["lanes"]], [False, True])
 
     def test_repeated_warnings(self):
         late = "[OFH     ] [W] Real-time timing worker woke up late, skipped '{}' symbols."

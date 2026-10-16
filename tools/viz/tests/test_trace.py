@@ -7,8 +7,8 @@ from viz.filters import FilterError
 from viz.trace import RunTrace, filter_trace, group_trace, join_lanes, lane_keys
 
 
-def lane(lane_id, t_start, t_end, ue=None, rnti=None, label=None, open_=False):
-    return {"lane": lane_id, "t_start": t_start, "t_end": t_end, "ue": ue, "rnti": rnti, "label": label, "open": open_}
+def lane(lane_id, t_start, t_end, ue=None, rnti=None, label=None, open_=False, failed=False):
+    return {"lane": lane_id, "t_start": t_start, "t_end": t_end, "ue": ue, "rnti": rnti, "label": label, "open": open_, "failed": failed}
 
 
 def event(t, lane_id, category="rrc", ev_type="x"):
@@ -23,9 +23,6 @@ class FakeStore:
 
     def lane_links(self):
         return self._links
-
-    def events(self, types=None, limit=None):
-        return {"events": [e for e in self._events if types is None or e["type"] in types]}
 
     def trace(self, t0, t1, max_lanes, limit):
         lo = -float("inf") if t0 is None else t0
@@ -70,7 +67,7 @@ class JoinTest(unittest.TestCase):
     def test_failed_creation_joins_no_ue(self):
         # A creation of DU UE index 7 failing on the C-RNTI of the first UE, while that UE is alive.
         log = FakeStore(
-            [lane(0, 9.9, 20.5, ue=0, rnti="0x4601"), lane(1, 15.0, 15.1, ue=7, rnti="0x4601"), lane(2, 16.0, 30.0, ue=7, rnti="0x4602")],
+            [lane(0, 9.9, 20.5, ue=0, rnti="0x4601"), lane(1, 15.0, 15.1, ue=7, rnti="0x4601", failed=True), lane(2, 16.0, 30.0, ue=7, rnti="0x4602")],
             [event(9.9, 0, "ra", "prach"), event(15.0, 1, "lifecycle", "ue_create"), event(15.1, 1, "failure", "ue_create_failed"),
              event(16.0, 2, "lifecycle", "ue_create")],
         )
@@ -82,9 +79,11 @@ class JoinTest(unittest.TestCase):
                          {"7:0": False, "7:1": False, "3:1": True})
         by_ue = trace.trace(None, None, 300, 100, group_by="du_ue")
         self.assertEqual([lane["lane"] for lane in by_ue["lanes"]], ["du_ue=0", "3:1", "du_ue=7"])
-        # Also in the trace of a log alone, whose lanes do not say which failed.
+        # Also in the trace of a log alone, and in a window that ends before the failure.
         alone = group_trace(log.trace(None, None, 300, 100), "du_ue", 300, 100)
         self.assertEqual([lane["lane"] for lane in alone["lanes"]], ["du_ue=0", 1, "du_ue=7"])
+        before = group_trace(log.trace(None, 15.05, 300, 100), "rnti", 300, 100)
+        self.assertEqual([lane["lane"] for lane in before["lanes"]], ["rnti=0x4601", 1, "rnti=0x4602"])
 
     def test_trace_lanes_have_the_ids_of_the_run(self):
         trace = RunTrace((7, F1AP), [(3, LOG)]).trace(None, None, 300, 100, {7})

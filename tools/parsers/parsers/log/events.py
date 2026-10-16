@@ -102,7 +102,7 @@ _ENTRY_START_RE = re.compile(ENTRY_START_PATTERN)
 _LEVEL_EVENTS = {"W": "warning", "E": "error"}
 # UE identifiers of the warning and error lines that no pattern recognizes, in one pass over the message.
 # Not the RA-RNTI or MsgB-RNTI of a random access, which is no UE's.
-_GENERIC_IDS_RE = re.compile(r"\bue=(?P<ue>\d+)\b|(?<![\w-])(?:c-|tc-)?rnti=(?P<rnti>0x[0-9a-fA-F]+)\b")
+_GENERIC_IDS_RE = re.compile(r"\bue=(?P<ue>\d+)\b|(?<![\w-])(?:c-|tc-|c)?rnti=(?P<rnti>0x[0-9a-fA-F]+)\b")
 _BODY_KEYS = {(p.layer, p.level) for p in EVENT_PATTERNS if p.in_body}
 # Patterns of each logger, in EVENT_PATTERNS order.
 _PATTERNS_BY_LAYER: dict[str, list[EventPattern]] = {}
@@ -300,6 +300,9 @@ class UeTracker:
             if lane is None:
                 lane = self._by_rnti.get(rnti) or self._new_lane(t, rnti)
             if lane.rnti is None:
+                # A creation that gets its RNTI from its own events, e.g. a failure warning, gives it back if it fails.
+                if du and (creating := self._creating.get(ue)) and creating[0] is lane and creating[2] is None:
+                    self._creating[ue] = (lane, creating[1], self._by_rnti.get(rnti))
                 lane.rnti = rnti
                 self._by_rnti[rnti] = lane
             if du and ue is not None and lane.du_ue is None:
@@ -318,8 +321,10 @@ class UeTracker:
     def _fail_creation(self, ue: int | None, rnti: str | None) -> UeLane | None:
         """Closes the lane of a failed creation and gives its DU UE index and RNTI back to the UEs that held them."""
         lane, prev_du, prev_rnti = self._creating.pop(ue, (None, None, None)) if ue is not None else (None, None, None)
-        if lane is None or lane.rnti != rnti:
+        # The failure of a creation without RNTI logs none, though its events can give the lane one.
+        if lane is None or (rnti is not None and lane.rnti != rnti):
             return None
+        rnti = lane.rnti
         lane.created, lane.failed = False, True
         if self._by_du_ue.get(ue) is lane:
             del self._by_du_ue[ue]
