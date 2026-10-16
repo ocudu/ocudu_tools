@@ -53,6 +53,9 @@ class SearchTest(unittest.TestCase):
             ["2026-07-27T15:45:00.000000 [SCHED   ] [D] [  10.1] Processed slot events pci=1:",
              "- PRACH: slot=10.1 preamble=12 ra-rnti=0x10b temp_crnti=0x10b ta_cmd=3"]))
         self.assertEqual(found(search.Filter(pci="1", layer="SCHED")), ["[SCHED   ]"])
+        # The C-RNTI of the MAC and DU-F1, printed as crnti.
+        self.assertTrue(search.Filter(rnti="4601").matches(
+            ["2026-07-27T15:45:00.000000 [DU-F1   ] [W] ue=0 crnti=0x4601: F1 UE context failed to be created"]))
 
     def test_time_bounds(self):
         self.assertEqual(found(search.Filter(after="15:45:02", before="15:45:02.9")), ["[SCHED   ]"])

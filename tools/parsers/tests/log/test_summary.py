@@ -120,6 +120,9 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual((r.failed_pdcch, r.cell_records), (1 + 4, 2))
         # Records of another format, e.g. of srsRAN, have no cell metrics to roll up.
         self.assertEqual(metrics_json.rollup([{"cell_metrics": {}, "ue_container": []}]).cell_records, 0)
+        # Nor those of an Amarisoft UE, whose cells are a dict, nor records that are not objects.
+        other = metrics_json.rollup([{"message": "stats", "cells": {"0": {"dl_bitrate": 0}}}, "stats", 3, {"cells": ["0"]}])
+        self.assertEqual((other.records, other.cell_records), (4, 0))
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "metrics.json"
             path.write_text(json.dumps(records))

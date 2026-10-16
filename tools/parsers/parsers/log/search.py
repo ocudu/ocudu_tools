@@ -30,8 +30,8 @@ class Filter:
     level: str | None = None
     # UE index, matched as a "ue=N" token.
     ue: str | None = None
-    # RNTI in any form of ran.rnti.parse_any(), e.g. 4601, 0x4601 or 17921, matched as "rnti=0x", "c-rnti=0x" or
-    # "tc-rnti=0x" tokens.
+    # RNTI in any form of ran.rnti.parse_any(), e.g. 4601, 0x4601 or 17921, matched as "rnti=0x", "c-rnti=0x",
+    # "tc-rnti=0x" or "crnti=0x" tokens.
     rnti: str | None = None
     # PCI, matched as a "pci=N" token.
     pci: str | None = None
@@ -52,7 +52,7 @@ class Filter:
         # Hex digits without the leading zeros, which logs may or may not print.
         digits = rnti[2:].lstrip("0") or "0" if rnti else ""
         # Not the RA-RNTI or MsgB-RNTI of a random access, which is no UE's.
-        self._rnti = re.compile(rf"(?<![\w-])(?:c-|tc-)?rnti=0x0*{digits}\b", re.IGNORECASE) if rnti else None
+        self._rnti = re.compile(rf"(?<![\w-])(?:c-|tc-|c)?rnti=0x0*{digits}\b", re.IGNORECASE) if rnti else None
         self._pci = re.compile(rf"\bpci={re.escape(self.pci)}\b") if self.pci is not None else None
         self._pattern = re.compile(self.pattern, re.IGNORECASE | re.MULTILINE) if self.pattern else None
 

@@ -75,7 +75,9 @@ def rollup(records: Iterable[Any]) -> MetricsRollup:
     out = MetricsRollup()
     for obj in records:
         out.records += 1
-        cells = obj.get("cells") or []
+        # Other formats have records of other shapes, e.g. the "cells" of an Amarisoft UE are a dict by cell index.
+        cells = obj.get("cells") if isinstance(obj, dict) else None
+        cells = [cell for cell in cells if isinstance(cell, dict)] if isinstance(cells, list) else []
         out.cell_records += bool(cells)
         for cell in cells:
             cm = cell.get("cell_metrics", {})

@@ -31,7 +31,8 @@ _MAX_LOOKBACK = 1 << 20
 # Characters of the text of a line kept for each line of scan_lines().
 MAX_TEXT = 500
 _UE_RE = re.compile(r"(?<![\w-])ue=(\d+)")
-_RNTI_RE = re.compile(r"(?<![\w])(?:c-|tc-)?rnti=(0x[0-9a-fA-F]+)")
+# The UE RNTI tokens of search.Filter, not the RA-RNTI or MsgB-RNTI of a random access, which is no UE's.
+_RNTI_RE = re.compile(r"(?<![\w-])(?:c-|tc-|c)?rnti=(0x[0-9a-fA-F]+)")
 
 
 @dataclass(frozen=True)

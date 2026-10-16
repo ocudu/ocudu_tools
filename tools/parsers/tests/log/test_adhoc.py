@@ -72,6 +72,15 @@ class AdhocTest(unittest.TestCase):
         self.assertEqual(rows[3][0], epoch("2026-10-12T13:35:41.001500"))
         self.assertEqual(rows[3][4:], (None, None, None, None))
 
+    def test_lines_take_the_rnti_of_a_ue(self):
+        self.path.write_text(
+            "2026-10-12T13:35:41.000000 [SCHED   ] [D] RAR allocation for ra-rnti=0x10b was postponed.\n"
+            "2026-10-12T13:35:41.000500 [SCHED   ] [I] Processed slot events pci=1: prach(ra-rnti=0x10b preamble=1 tc-rnti=0x4601)\n"
+            "2026-10-12T13:35:41.001000 [MAC     ] [I] ue=0 crnti=0x4602: proc started\n")
+        rows = adhoc.scan_lines(str(self.path), 0, self.path.stat().st_size, 1, adhoc.Spec(None, filter="rnti"))
+        # Not the RA-RNTI of a random access, which is no UE's.
+        self.assertEqual([row[-1] for row in rows], [None, "0x4601", "0x4602"])
+
     def test_lines_of_long_entries_take_the_time_of_their_entry(self):
         log = []
         for s in range(2):
