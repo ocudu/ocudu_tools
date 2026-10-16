@@ -35,8 +35,8 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/pcap/f1ap_messages.py <f1ap.pcap> | grep rrc
 # The NGAP messages of one UE; --ue matches the id in every protocol, so keep one protocol per id
 python3 ${CLAUDE_SKILL_DIR}/scripts/pcap/correlate_run.py <run-dir> --protocols ngap --ue <ran-ngap-id>
 
-# Its F1AP ids and C-RNTI, for the F1AP and MAC messages of the same UE
-python3 ${CLAUDE_SKILL_DIR}/scripts/correlate/ue_table.py <run-dir> --where ran_ngap=<id>
+# Its F1AP ids and C-RNTI, for the F1AP and MAC messages of the same UE: ue_table.py --where ran_ngap=<id>, see
+# correlate/ue-identity-map.md
 python3 ${CLAUDE_SKILL_DIR}/scripts/pcap/correlate_run.py <run-dir> --protocols f1ap --ue <du-f1ap-id>
 ```
 

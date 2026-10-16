@@ -22,8 +22,8 @@ against, see `../reference/handover.md`.
 # Inter-CU HO triggers (HandoverPreparation / HandoverResourceAllocation)
 tshark -r ngap.pcap -Y 'ngap.procedureCode == 12 || ngap.procedureCode == 13'
 
-# The F1AP ids and C-RNTI of each context of the UE, source and target, from its RAN UE NGAP id
-python3 ${CLAUDE_SKILL_DIR}/scripts/correlate/ue_table.py <run-dir> --where ran_ngap=<id>
+# The F1AP ids and C-RNTI of each context of the UE, source and target, from its RAN UE NGAP id: ue_table.py
+# --where ran_ngap=<id>, see correlate/ue-identity-map.md
 
 # Its messages in 1 s around the HO; --ue matches the id in every protocol, so keep one protocol per id
 python3 ${CLAUDE_SKILL_DIR}/scripts/pcap/correlate_run.py <run-dir> \
