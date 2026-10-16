@@ -4,7 +4,7 @@
 import unittest
 
 from parsers.pcap import messages
-from parsers.pcap.contexts import ContextTracker, ue_contexts
+from parsers.pcap.contexts import ContextTracker, UeContext, ue_contexts, ue_trace
 
 
 def msg(epoch, code, outcome="initiating", du=None, cu=None, crnti=None):
@@ -67,3 +67,25 @@ class ContextTrackerTest(unittest.TestCase):
         links = tracker.contexts[0].links
         self.assertEqual(set(links), {"nas", "teid", "ho_rnti"})
         self.assertEqual((len(next(iter(links["nas"]))), links["teid"], links["ho_rnti"]), (16, {"38f10041": 2.0}, {"0x4602": 3.0}))
+
+
+class UeTraceTest(unittest.TestCase):
+    def test_handovers_and_reestablishments(self):
+        contexts = [
+            # The UEContextSetupResponse of a handover target names its own C-RNTI too.
+            UeContext(0, 1.0, 5.0, rnti="0x4601", links={"ho_rnti": {"0x4601": 1.0, "0x4610": 4.9}}),
+            # Another UE, which reuses the target C-RNTI long after the handover.
+            UeContext(1, 9.0, 12.0, rnti="0x4610"),
+            # The handover target, created before the source's rrcReconfiguration names it.
+            UeContext(2, 4.8, 8.0, rnti="0x4610"),
+            # The reestablishment of the target, then one naming its C-RNTI long after it ended.
+            UeContext(3, 8.5, 10.0, rnti="0x4620", links={"reest_rnti": {"0x4610": 8.5}}),
+            UeContext(4, 20.0, 21.0, rnti="0x4630", links={"reest_rnti": {"0x4610": 20.0}}),
+        ]
+        self.assertEqual([c.id for c in ue_trace(contexts, "0x4601")], [0, 2, 3])
+        self.assertEqual([c.id for c in ue_trace(contexts, "17921")], [0, 2, 3])
+        # Only the contexts that continue those of the C-RNTI, not those they continue.
+        self.assertEqual([c.id for c in ue_trace(contexts, "0x4620")], [3])
+        # Both contexts of a reused C-RNTI, without the reestablishment requested long after both ended.
+        self.assertEqual([c.id for c in ue_trace(contexts, "0x4610")], [2, 3, 1])
+        self.assertEqual(ue_trace(contexts, "0x4602"), [])

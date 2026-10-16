@@ -36,17 +36,18 @@ class Capture:
     pdus: list[dict[str, Any]] = field(default_factory=list)
 
 
-def read(tshark: Tshark, pcap: str | os.PathLike[str]) -> Capture:
+def read(tshark: Tshark, pcap: str | os.PathLike[str], *, proto: str | None = None, force: bool = False) -> Capture:
     """Reads a pcap: its protocol from its first frame, then all its frames in one pass with the fields of that
     protocol only, since each field adds to the time of a pass. A pcap without frames, e.g. of a process that wrote only
-    its header, has the protocol of its file name, see run.pcap_proto().
+    its header, has the protocol of its file name, see run.pcap_proto(). proto, e.g. "f1ap", is the protocol of a
+    capture whose first frame is of another, e.g. TCP. force runs tshark even on a cache hit.
     """
     first = tshark.run(["-r", str(tshark.stage(pcap)), "-c", "1", "-T", "fields", "-e", "frame.protocols"])
     if not first:
-        return Capture(run.pcap_proto(pcap), "")
+        return Capture(proto or run.pcap_proto(pcap), "")
     frame_protocols = first[0]
     tokens = frame_protocols.split(":")
-    proto = next((PROTOCOLS[d] for d in PROTOCOLS if d in tokens), None)
+    proto = proto or next((PROTOCOLS[d] for d in PROTOCOLS if d in tokens), None)
     rrc_types = f1ap.valid_rrc_types(tshark, pcap) if proto == "f1ap" else []
     if proto in ("mac", "rlc"):
         proto_fields = frames.pdu_fields(proto)
@@ -62,7 +63,7 @@ def read(tshark: Tshark, pcap: str | os.PathLike[str]) -> Capture:
     cap = Capture(proto, frame_protocols)
     # The fields are part of the tag, since they depend on the protocol, the tshark build and this code.
     tag = f"capture-{proto}-" + hashlib.sha256("\0".join(names).encode()).hexdigest()[:16]
-    for values in tshark.iter_fields(pcap, names, tag=tag):
+    for values in tshark.iter_fields(pcap, names, tag=tag, force=force):
         row = dict(zip(names, values))
         if (summary := frames.summary(row)) is not None:
             cap.frames.append(summary)

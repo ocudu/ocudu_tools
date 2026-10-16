@@ -33,6 +33,7 @@ MESSAGE_FIELDS = [
     "f1ap.C_RNTI",
     "f1ap.SRBID",
     "f1ap.RRCContainer",
+    "f1ap.HandoverPreparationInformation",
 ]
 NAS_FIELDS = [
     # The names before tshark 4.2, which later builds keep as aliases of nas-5gs.*.
@@ -130,6 +131,7 @@ def carried(row: dict[str, str], rrc_types: list[str]) -> dict[str, str | None]:
         "srbid": row["f1ap.SRBID"] or None,
         "rrc_container": row["f1ap.RRCContainer"] or None,
         "rrc_elements": {m: row[_rrc_field(m)] for m in rrc_types},
+        "handover_preparation": bool(row.get("f1ap.HandoverPreparationInformation")),
     }
     return {
         "rrc": resolve_rrc(detail),
@@ -165,7 +167,12 @@ def resolve_rrc(row: dict[str, Any]) -> str | None:
     if not row["rrc_container"]:
         return None
     for name, val in row["rrc_elements"].items():
-        if val:
+        occurrences = len(val.split(",")) if val else 0
+        # The source's RRCReconfiguration in a HandoverPreparationInformation adds one rrcReconfiguration, of its
+        # criticalExtensions, to those of the container.
+        if name == "rrcReconfiguration" and row.get("handover_preparation"):
+            occurrences -= 1
+        if occurrences > 0:
             return name
     # tshark does not dissect the container of a UEContextReleaseCommand.
     code = to_int(row["code"])

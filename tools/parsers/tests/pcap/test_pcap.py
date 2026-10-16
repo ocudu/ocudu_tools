@@ -103,6 +103,21 @@ class F1apDecodeTest(unittest.TestCase):
         row.update({"f1ap.procedureCode": "5", "nr-rrc.rrcReconfiguration_element": "1"})
         self.assertIsNone(f1ap.carried(row, ["rrcReconfiguration"])["rrc"])
 
+    def test_rrc_container_beside_a_handover_preparation(self):
+        # tshark lists one rrcReconfiguration of the source's RRCReconfiguration, of its criticalExtensions, and two of
+        # a container's message, of its c1 and its criticalExtensions.
+        types = ["rrcReconfiguration", "securityModeCommand"]
+        row = dict.fromkeys(f1ap.rrc_fields(types), "")
+        row.update({"f1ap.procedureCode": "5", "f1ap.SRBID": "1", "f1ap.RRCContainer": "0102",
+                    "f1ap.HandoverPreparationInformation": "08", "nr-rrc.rrcReconfiguration_element": "1",
+                    "nr-rrc.securityModeCommand_element": "1,1"})
+        self.assertEqual(f1ap.carried(row, types)["rrc"], "securityModeCommand")
+        row.update({"nr-rrc.rrcReconfiguration_element": "1,1,1", "nr-rrc.securityModeCommand_element": ""})
+        self.assertEqual(f1ap.carried(row, types)["rrc"], "rrcReconfiguration")
+        # Without one, a single rrcReconfiguration is the container's.
+        row.update({"f1ap.HandoverPreparationInformation": "", "nr-rrc.rrcReconfiguration_element": "1"})
+        self.assertEqual(f1ap.carried(row, types)["rrc"], "rrcReconfiguration")
+
 
 class UeIdsTest(unittest.TestCase):
     def test_ngap_ue_ids_attach_the_amf_id(self):
@@ -232,6 +247,24 @@ class RunDirTest(unittest.TestCase):
             (self.dir / name).write_bytes(b"x")
         pcaps = run.find_pcaps(self.dir)
         self.assertEqual((pcaps["mac"].name, pcaps["rlc"].name), ("gnb_mac.pcap", "du_rlc.pcapng"))
+
+    def test_pcaps_of_the_component_dir(self):
+        # Retina writes the f1ap.pcap of a split DU in the directory of its component, the others in its run directory.
+        run_dir = self.dir / "ocudu-du-1-1" / "2026-09-29_21-31-50"
+        run_dir.mkdir(parents=True)
+        for path in (run_dir / "rlc.pcap", run_dir / "f1ap.pcap", run_dir.parent / "f1ap.pcap", run_dir.parent / "mac.pcap"):
+            path.write_bytes(b"x")
+        pcaps = run.find_pcaps(run_dir)
+        # The run directory's own pcap first.
+        self.assertEqual((pcaps["rlc"], pcaps["f1ap"], pcaps["mac"]),
+                         (run_dir / "rlc.pcap", run_dir / "f1ap.pcap", run_dir.parent.resolve() / "mac.pcap"))
+        (run_dir / "f1ap.pcap").unlink()
+        self.assertEqual(run.find_pcaps(run_dir)["f1ap"], run_dir.parent.resolve() / "f1ap.pcap")
+        self.assertEqual(run.resolve(run_dir / "rlc.pcap")["siblings"], ["mac", "f1ap"])
+        # Only a run directory, by its name, has pcaps in its parent.
+        other = self.dir / "ocudu-du-1-1" / "pcaps"
+        other.mkdir()
+        self.assertEqual(run.find_pcaps(other), dict.fromkeys(run.PROTOCOLS))
 
     def test_check_empty_pcap(self):
         (self.dir / "mac.pcap").write_bytes(b"")

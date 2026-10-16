@@ -11,6 +11,7 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..correlate.ues import CREATION_SLACK_S, RNTI_SLACK_S
 from ..ran.rnti import normalize as normalize_rnti
 from .messages import UE_ID_FIELDS
 
@@ -125,3 +126,39 @@ def ue_contexts(proto: str, msgs: list[dict[str, Any]]) -> list[UeContext]:
     for msg in msgs:
         tracker.assign(msg)
     return tracker.contexts
+
+
+def ue_trace(contexts: list[UeContext], rnti: str) -> list[UeContext]:
+    """The F1AP contexts of a C-RNTI, e.g. "0x4601" or "17921", and those that continue them, in start order: the
+    targets of their handovers and the contexts that reestablish them, and so on. The contexts need the C-RNTIs and
+    links of capture.read() messages.
+
+    A handover target is the context of the target C-RNTI created nearest the message naming it, within
+    CREATION_SLACK_S. A reestablishment continues the latest context of its old C-RNTI alive at its request, within
+    RNTI_SLACK_S.
+    """
+    by_rnti: dict[str, list[UeContext]] = {}
+    for ctx in contexts:
+        if ctx.rnti:
+            by_rnti.setdefault(ctx.rnti, []).append(ctx)
+    reestablished_by: dict[int, list[UeContext]] = {}
+    for ctx in contexts:
+        for old_rnti, t in ctx.links.get("reest_rnti", {}).items():
+            olds = [c for c in by_rnti.get(old_rnti, ()) if c is not ctx and c.t_start <= t <= c.t_end + RNTI_SLACK_S]
+            if old_rnti != ctx.rnti and olds:
+                reestablished_by.setdefault(max(olds, key=lambda c: c.t_start).id, []).append(ctx)
+    found = {ctx.id: ctx for ctx in by_rnti.get(normalize_rnti(rnti), ())}
+    todo = list(found.values())
+    while todo:
+        ctx = todo.pop()
+        nexts = list(reestablished_by.get(ctx.id, ()))
+        # The UEContextSetupResponse of a handover target names its own C-RNTI as newUE-Identity too.
+        for new_rnti, t in ctx.links.get("ho_rnti", {}).items():
+            near = [c for c in by_rnti.get(new_rnti, ()) if c is not ctx and abs(c.t_start - t) <= CREATION_SLACK_S]
+            if new_rnti != ctx.rnti and near:
+                nexts.append(min(near, key=lambda c: abs(c.t_start - t)))
+        for nxt in nexts:
+            if nxt.id not in found:
+                found[nxt.id] = nxt
+                todo.append(nxt)
+    return sorted(found.values(), key=lambda c: (c.t_start, c.id))

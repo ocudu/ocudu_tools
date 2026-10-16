@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,8 @@ PCAP_NAMES = tuple(f"{proto}.pcap" for proto in PROTOCOLS)
 OCUDU_PREFIXES = ("gnb", "du", "cu", "cu_cp", "cu_up")
 # Dissectors of the pcaps, one of which tshark binds on the first frame of each.
 KNOWN_DISSECTORS = ("ngap", "f1ap", "e1ap", "mac-nr", "rlc-nr")
+# Name of a Retina run directory, e.g. 2026-09-29_21-31-50, under the directory of its component, e.g. ocudu-du-1-1.
+RUN_SUBDIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
 
 
 def pcap_proto(path: str | os.PathLike[str]) -> str | None:
@@ -32,16 +35,19 @@ def pcap_proto(path: str | os.PathLike[str]) -> str | None:
 
 def find_pcaps(run_dir: str | os.PathLike[str]) -> dict[str, Path | None]:
     """The pcaps of a run directory by protocol, e.g. "mac", None for the missing ones. Of several pcaps of a protocol,
-    <proto>.pcap, else one of an OCUDU prefix, else the first by name.
+    <proto>.pcap, else one of an OCUDU prefix, else the first by name. A protocol missing from a Retina run directory,
+    see RUN_SUBDIR_RE, is looked for in its parent, the directory of its component, e.g. the f1ap.pcap of a split DU.
     """
     p = Path(run_dir)
     if not p.is_dir():
         raise FileNotFoundError(f"not a directory: {p}")
     out: dict[str, Path | None] = dict.fromkeys(PROTOCOLS)
-    for full in sorted(p.glob("*.pcap*"), key=_preference):
-        proto = pcap_proto(full)
-        if proto is not None and out[proto] is None and full.is_file():
-            out[proto] = full
+    dirs = [p, p.resolve().parent] if RUN_SUBDIR_RE.match(p.resolve().name) else [p]
+    for d in dirs:
+        for full in sorted(d.glob("*.pcap*"), key=_preference):
+            proto = pcap_proto(full)
+            if proto is not None and out[proto] is None and full.is_file():
+                out[proto] = full
     return out
 
 
