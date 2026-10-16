@@ -42,7 +42,7 @@ cross-checked against the UE side.
 
 Usage:
     python3 correlate_radio.py <test-or-run-dir> [--gnb PATH] [--ue PATH]
-        [--kind pusch|pucch|pdsch|pdcch|prach] [--rnti 0xXXXX]
+        [--kind pusch|pucch|pdsch|pdcch|prach] [--rnti 4601|0x4601|17921]
         [--only anomalies|all] [--max-rows 200]
 """
 
@@ -56,6 +56,10 @@ from pathlib import Path
 
 import utils
 import resolve
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "_lib"))
+
+from parsers.ran.rnti import normalize, parse_any  # noqa: E402
 
 # SFN wraps every 1024 frames (~10.24 s), so an "SFN.slot" string recurs over a
 # run. Sources share UTC, so we disambiguate same-(slot,rnti) events by pairing
@@ -105,7 +109,7 @@ def parse_gnb_phy(gnb_log, kind, rnti_filter):
                 continue
             rest = m.group("rest")
             rm = utils.GNB_RNTI_RE.search(rest)
-            rnti = utils.norm_rnti(rm.group("rnti")) if rm else None
+            rnti = normalize(rm.group("rnti")) if rm else None
             if rnti_filter and rnti != rnti_filter:
                 continue
             crc = utils.GNB_CRC_RE.search(rest)
@@ -130,7 +134,7 @@ def parse_ue_phy(ue_log, kind, rnti_filter, ref_date):
         m = utils.UE_PHY_RE.match(line)
         if not m or m.group("kind") != kind:
             continue
-        rnti = utils.norm_rnti(m.group("rnti"))
+        rnti = normalize(m.group("rnti"), bare_hex=True)
         if rnti_filter and rnti != rnti_filter:
             continue
         try:
@@ -276,10 +280,15 @@ def main(argv=None) -> int:
     ap.add_argument("--ue", help="explicit ue.log path")
     ap.add_argument("--kind", default="pusch",
                     choices=["pusch", "pucch", "pdsch", "pdcch", "prach"])
-    ap.add_argument("--rnti", help="restrict to one RNTI (e.g. 0x4601)")
+    ap.add_argument("--rnti", help="restrict to one RNTI, in any form: 4601 (hex as logs print it), 0x4601, "
+                                   "or 17921 (decimal as F1AP pcaps hold it)")
     ap.add_argument("--only", default="anomalies", choices=["anomalies", "all"])
     ap.add_argument("--max-rows", type=int, default=200)
     args = ap.parse_args(argv)
+
+    rnti_filter = parse_any(args.rnti) if args.rnti else None
+    if args.rnti and rnti_filter is None:
+        ap.error(f"invalid RNTI {args.rnti!r}, expected 4601, 0x4601 or 17921")
 
     gnb_log, ue_log = resolve_logs(args.path, args.gnb, args.ue)
     if gnb_log is None and ue_log is None:
@@ -287,7 +296,6 @@ def main(argv=None) -> int:
         return 1
     print(f"gNB log : {gnb_log}")
     print(f"UE  log : {ue_log}")
-    rnti_filter = utils.norm_rnti(args.rnti) if args.rnti else None
 
     # Date anchor for the UE log's HH:MM:SS clock (UE/gNB share UTC). Prefer the
     # gNB first-event date; fall back to the UE log's `# Started on` header.

@@ -155,6 +155,9 @@ def main(argv=None) -> int:
         if not sep:
             print(f"Error: --where needs k=v, got {w!r}", file=sys.stderr)
             return 1
+        if key == "rnti" and parse_any(value) is None:
+            print(f"Error: invalid RNTI {value!r} in --where, expected 4601, 0x4601 or 17921", file=sys.stderr)
+            return 1
         where.append((key, parse_value(value)))
 
     workers = args.j

@@ -152,19 +152,6 @@ UE_PHY_RE = re.compile(
 UE_SEQIDX_RE = re.compile(r"sequence_index=(?P<seq>\d+)")
 
 
-def norm_rnti(rnti: str) -> str | None:
-    """Normalise an RNTI to lower-case 0x form. UE logs print bare hex (e.g. 4601)."""
-    if not rnti or rnti == "-":
-        return None
-    r = rnti.lower()
-    if not r.startswith("0x"):
-        r = "0x" + r
-    try:
-        return hex(int(r, 16))
-    except ValueError:
-        return None
-
-
 # --------------------------------------------------------------------------
 # testbed.json — a Python repr (OrderedDict/NodeInfo), NOT JSON.
 # --------------------------------------------------------------------------

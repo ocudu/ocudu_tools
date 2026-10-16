@@ -17,6 +17,10 @@ nothing — this is a config artifact, not a fast run. Check the summary's
 L2 traces suppressed, the per-stage latencies are simply unavailable from that
 log. Note this also means a monolithic gNB log can look CU-only at a glance when
 only `rrc`/`cu` are at `info`.
+At `info`, `MAC UE Creation`, `MAC UE Reconfiguration`, `MAC UE Removal` and
+`Sched UE Config` log only their `done` stage, so the profiler prints `no latency`
+for them: their starts need `mac_level=debug`. `UE Create`, `UE Configuration` and
+`UE Delete` have their latencies at `info`.
 
 Reconstructs every UE-lifecycle procedure instance and reports per-stage and
 total latency (n, mean, p50, p90, p99, max), grouped into CREATION

@@ -32,9 +32,11 @@ Options:
   --rnti <RNTI>         Filter by `rnti=0x..` / `c-rnti=0x..` tokens. Any form:
                         4601 (hex), 0x4601, or 17921 (decimal, as pcaps hold it).
   --pci <N>             Filter by `pci=N` token.
-  --after <ts>          Only include lines at or after the timestamp. Accepts
-                        either a full ISO-8601 timestamp or a `HH:MM:SS.mmm`
-                        partial — the partial form is matched against the time
+  --after <ts>          Only include lines at or after the time: an ISO
+                        timestamp, date and time joined by T or a space
+                        (2026-10-12T13:35:40 or "2026-10-12 13:35:40"), a date
+                        (2026-10-12), or a time of day (13:35:40.5), compared
+                        to the same precision, the time of day to the time
                         portion only.
   --before <ts>         Symmetric to --after.
   --pattern <regex>     Additional regex pattern (searched across the entire
@@ -87,8 +89,8 @@ def parse_args(argv=None):
     ap.add_argument("--ue", help="Match `ue=N` in the message")
     ap.add_argument("--rnti", help="Match `rnti=0x..` tokens; 4601, 0x4601 or 17921")
     ap.add_argument("--pci", help="Match `pci=N` in the message")
-    ap.add_argument("--after", help="Start timestamp (ISO or HH:MM:SS.mmm)")
-    ap.add_argument("--before", help="End timestamp (ISO or HH:MM:SS.mmm)")
+    ap.add_argument("--after", help="Start time: ISO timestamp (T or space), date, or HH:MM:SS[.ffffff]")
+    ap.add_argument("--before", help="End time: ISO timestamp (T or space), date, or HH:MM:SS[.ffffff]")
     ap.add_argument("--pattern", help="Regex pattern (full block, multiline, IGNORECASE)")
     ap.add_argument("--count", action="store_true", help="Print count only")
     ap.add_argument("--max-lines", type=int, default=200,
@@ -107,6 +109,10 @@ def search(args):
 
     if args.count:
         print(len(matches))
+        return
+    # On stderr, so that the output of no match stays empty.
+    if not matches:
+        print("no entries match the filters", file=sys.stderr)
         return
 
     output_lines = 0

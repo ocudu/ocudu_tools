@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import datetime
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -38,6 +39,14 @@ LEVEL_OPTIONS = ("all", "lib", "rrc", "ngap", "f1ap", "e1ap", "cu", "pdcp", "mac
                  "gtpu", "f1u", "sdap", "ofh", "fapi", "e2ap", "config")
 # Node types of config.AppConfig, as shown.
 NODE_TYPES = {"gNB": "monolithic gNB", "CU": "CU (CP+UP)"}
+# Loggers of the procedure counts, which log them at info or debug.
+PROCEDURE_LOGGERS = ("RRC", "NGAP", "CU-CP", "CU-CP-E1")
+# Entry headers of info or debug lines of the procedure loggers, and of METRICS rows, which have no level, unlike
+# the start and stop lines of the metrics workers.
+_VERBOSE_RE = re.compile(r"\[(RRC|NGAP|CU-CP|CU-CP-E1)\s*\] \[[ID]\] ")
+_METRICS_ROW_RE = re.compile(r"\d \[METRICS\s*\] (?!\[[A-Z]\] )")
+# Characters of a line that hold its entry header.
+_HEADER_LEN = 64
 
 
 def parse_cfg(cfg_path: Path, gnb_log: Path) -> dict:
@@ -70,10 +79,26 @@ def parse_cfg(cfg_path: Path, gnb_log: Path) -> dict:
 
 
 def parse_gnb_log(gnb_log: Path) -> dict:
+    """The summary.LogSummary of a log, with the procedure loggers without info or debug lines (silent_loggers), and
+    metrics_rows and last_metrics of METRICS rows only.
+    """
     if not gnb_log.exists():
-        return vars(summary.LogSummary())
+        return {**vars(summary.LogSummary()), "silent_loggers": list(PROCEDURE_LOGGERS)}
+    verbose: set[str] = set()
+    rows = {"metrics_rows": 0, "last_metrics": None}
+
+    def scan(lines):
+        for raw in lines:
+            if len(verbose) < len(PROCEDURE_LOGGERS) and (m := _VERBOSE_RE.search(raw, 0, _HEADER_LEN)):
+                verbose.add(m.group(1))
+            if m := _METRICS_ROW_RE.search(raw, 0, _HEADER_LEN):
+                rows["metrics_rows"] += 1
+                rows["last_metrics"] = raw[m.end() :].rstrip("\r\n")
+            yield raw
+
     with open(gnb_log, encoding="utf-8", errors="replace") as f:
-        return vars(summary.summarize(f))
+        out = vars(summary.summarize(scan(f)))
+    return {**out, **rows, "silent_loggers": [name for name in PROCEDURE_LOGGERS if name not in verbose]}
 
 
 def parse_stdout(stdout_log: Path) -> dict:
@@ -253,6 +278,11 @@ def summarize(path_str: str) -> None:
     if muted:
         print(f"  NOTE: {', '.join(muted)} logged at 'warning' — the above procedure "
               f"counts are unreliable (layers silent). Infer HO from SCHED PRACH on the "
+              f"target cell / metrics 'ue_reconf' events, or enable info logging.")
+    elif not cfg["log_levels"] and log["silent_loggers"]:
+        # Without the levels of a configuration, a logger without info or debug lines is taken as logged at warning.
+        print(f"  NOTE: no info or debug lines of {', '.join(log['silent_loggers'])} — the above procedure "
+              f"counts are unreliable (likely logged at 'warning'). Infer HO from SCHED PRACH on the "
               f"target cell / metrics 'ue_reconf' events, or enable info logging.")
     print()
 

@@ -52,7 +52,7 @@ gnb.log: 2026-04-29T14:27:21.281595 [PHY] [I] [  123.14] PUSCH: rnti=0x4601 ... 
 
 Notes and caveats:
 - **RNTI printing differs**: UE prints bare hex (`4601`), gNB prints `0x4601`.
-  Normalise with `utils.norm_rnti`.
+  Normalise with `parsers.ran.rnti.normalize` (`bare_hex=True` for the UE log).
 - **SFN wraps every 1024 frames (~10.24 s)**, so an `SFN.slot` *string* recurs
   across a run. To pair correctly, disambiguate same-`(slot,rnti)` events by
   nearest wall-clock within a tolerance well below one wrap (`correlate_radio.py`

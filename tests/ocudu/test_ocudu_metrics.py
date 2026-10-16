@@ -81,6 +81,12 @@ class OcuduMetricsTest(unittest.TestCase):
         self.assertEqual(res.returncode, 1)
         self.assertIn("unknown layer", res.stderr)
 
+    def test_invalid_rnti(self):
+        cmd = [sys.executable, str(SCRIPT), str(self.log), "--layer", "sched_ue", "--where", "rnti=zz"]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("invalid RNTI", res.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

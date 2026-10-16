@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -83,8 +84,20 @@ class UeTableTest(unittest.TestCase):
     def test_rnti_in_any_form(self):
         ids = {"rnti": ["0x4601"]}
         for rnti in ("4601", "0x4601", "17921"):
-            self.assertTrue(self.script.matches(ids, [("rnti", rnti)]), rnti)
-        self.assertFalse(self.script.matches(ids, [("rnti", "4602")]))
+            self.assertTrue(self.script.matches(ids, [self.script.where_item(f"rnti={rnti}")]), rnti)
+        self.assertFalse(self.script.matches(ids, [self.script.where_item("rnti=4602")]))
+
+    def test_invalid_where(self):
+        for item, message in (("rnti=zz", "invalid RNTI"), ("rnit=4601", "is not one of"), ("rnti", "takes k=v")):
+            res = subprocess.run([sys.executable, str(SCRIPT), str(self.dir), "--where", item], capture_output=True,
+                                 text=True)
+            self.assertEqual(res.returncode, 2, item)
+            self.assertIn(message, res.stderr, item)
+
+    def test_contexts_in_both_sources(self):
+        ues = [SimpleNamespace(parts=[("f1ap.pcap", 1), ("gnb.log", 2)]), SimpleNamespace(parts=[("gnb.log", 3)])]
+        self.assertEqual(self.script.nof_in_both(ues, Path("f1ap.pcap"), Path("gnb.log")), 1)
+        self.assertEqual(self.script.nof_in_both(ues, None, Path("gnb.log")), 0)
 
 
 if __name__ == "__main__":

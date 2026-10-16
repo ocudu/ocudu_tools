@@ -117,13 +117,24 @@ def is_other_artifact(path: Path) -> bool:
     return pcap_proto(path) is not None or path.suffix in OTHER_SUFFIXES
 
 
+def where_item(item: str) -> tuple[str, str]:
+    """The identifier and value of a --where k=v, an RNTI as logs print it. Raises ValueError if invalid."""
+    name, sep, value = item.partition("=")
+    name, value = name.strip(), value.strip()
+    if not sep:
+        raise ValueError(f"--where takes k=v, not {item!r}")
+    if name not in ID_COLUMNS:
+        raise ValueError(f"--where key {name!r} is not one of {', '.join(ID_COLUMNS)}")
+    if name == "rnti":
+        rnti = parse_rnti(value)
+        if rnti is None:
+            raise ValueError(f"invalid RNTI {value!r} in --where, expected 4601, 0x4601 or 17921")
+        value = rnti
+    return name, value
+
+
 def matches(ids: dict[str, list[str]], where: list[tuple[str, str]]) -> bool:
-    for name, value in where:
-        if name == "rnti":
-            value = parse_rnti(value) or value
-        if value not in ids.get(name, ()):
-            return False
-    return True
+    return all(value in ids.get(name, ()) for name, value in where)
 
 
 def times(t_start: float, t_end: float, is_open: bool) -> dict[str, str]:
@@ -143,6 +154,11 @@ def row(ue: Ue, names: dict[str, str]) -> dict[str, str]:
         **{name: ",".join(ue.ids.get(name, [])) or "-" for name in ID_COLUMNS},
         "sources": "+".join(kinds),
     }
+
+
+def nof_in_both(ues: list[Ue], f1ap: Path | None, log: Path) -> int:
+    """The UE contexts with parts of both the F1AP pcap and the log, as the sources column shows them."""
+    return sum(1 for ue in ues if f1ap and {f1ap.name, log.name} <= {source for source, _ in ue.parts})
 
 
 def short(values: list[str]) -> str:
@@ -174,12 +190,10 @@ def main(argv=None) -> int:
     ap.add_argument("--csv", action="store_true")
     args = ap.parse_args(argv)
 
-    where = []
-    for item in args.where:
-        name, sep, value = item.partition("=")
-        if not sep:
-            ap.error(f"--where takes k=v, not {item!r}")
-        where.append((name.strip(), value.strip()))
+    try:
+        where = [where_item(item) for item in args.where]
+    except ValueError as e:
+        ap.error(str(e))
 
     after, before = iso_bound(args.after), iso_bound(args.before)
     try:
@@ -232,7 +246,7 @@ def main(argv=None) -> int:
 
     print(f"run: {run_dir}")
     print(f"sources: {', '.join([f1ap.name] if f1ap else ['(no f1ap.pcap)']) }, {log.name}" + "".join(f", {c.name}" for c in cores))
-    joined = sum(1 for ue in ues if "du_f1ap" in ue.ids and "du_ue" in ue.ids)
+    joined = nof_in_both(ues, f1ap, log)
     nof_traces = sum(1 for tr in traces if any(k not in ra_only for k in tr.ues))
     print(f"UE contexts: {len(ues) - len(ra_only)} ({joined} in both the pcap and the log), UE traces: {nof_traces}, "
           f"random accesses of no UE: {len(ra_only)}" + ("" if args.with_ra else " (hidden, see --with-ra)"))

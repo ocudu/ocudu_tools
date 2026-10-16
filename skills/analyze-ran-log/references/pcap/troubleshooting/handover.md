@@ -22,10 +22,17 @@ against, see `../reference/handover.md`.
 # Inter-CU HO triggers (HandoverPreparation / HandoverResourceAllocation)
 tshark -r ngap.pcap -Y 'ngap.procedureCode == 12 || ngap.procedureCode == 13'
 
-# Source/target context lifecycle in one timeline
+# The F1AP ids and C-RNTI of each context of the UE, source and target, from its RAN UE NGAP id
+python3 ${CLAUDE_SKILL_DIR}/scripts/correlate/ue_table.py <run-dir> --where ran_ngap=<id>
+
+# Its messages in 1 s around the HO; --ue matches the id in every protocol, so keep one protocol per id
 python3 ${CLAUDE_SKILL_DIR}/scripts/pcap/correlate_run.py <run-dir> \
-    --ue <ngap-ran-ue-id> --window-ms 1000
+    --protocols ngap --ue <ran-ngap-id> --around <epoch> --window-ms 1000
+python3 ${CLAUDE_SKILL_DIR}/scripts/pcap/correlate_run.py <run-dir> \
+    --protocols f1ap --ue <du-f1ap-id> --around <epoch> --window-ms 1000
 ```
+
+`--window-ms` applies only with `--around`.
 
 ## Cross-references
 

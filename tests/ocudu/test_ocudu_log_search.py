@@ -114,6 +114,12 @@ class OcuduLogSearchTest(unittest.TestCase):
         self.assertIn("[SCHED   ] [D] [    91.0] Processed slot events pci=1:", output)
         self.assertIn("- RLC Buffer State: ue=0 lcid=0 pending_bytes=302", output)
 
+    def test_no_match_message_on_stderr(self):
+        proc = subprocess.run([sys.executable, str(SCRIPT), self.tmpdir.name, "--pattern", "no such text"],
+                              capture_output=True, text=True, check=True)
+        self.assertEqual(proc.stdout, "")
+        self.assertIn("no entries match the filters", proc.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
