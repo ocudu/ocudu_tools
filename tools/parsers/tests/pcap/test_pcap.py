@@ -24,6 +24,9 @@ class FakeTshark:
     def iter_fields(self, pcap, fields, **kwargs):
         return iter(self.rows)
 
+    def valid_fields(self, pcap, fields):
+        return list(fields)
+
 
 class ValuesTest(unittest.TestCase):
     def test_epoch_to_iso(self):
@@ -83,12 +86,22 @@ class F1apDecodeTest(unittest.TestCase):
         return {"code": code, "srbid": srbid, "rrc_container": container, "rrc_elements": elements or {}}
 
     def test_resolve_rrc(self):
-        self.assertEqual(f1ap.resolve_rrc(self.row("12", elements={"rrcSetup": "", "rrcRelease": "1"})), "rrcRelease")
+        self.assertEqual(f1ap.resolve_rrc(self.row("12", container="0102", elements={"rrcSetup": "", "rrcRelease": "1"})),
+                         "rrcRelease")
         self.assertIsNone(f1ap.resolve_rrc(self.row("12")))
         self.assertEqual(f1ap.resolve_rrc(self.row("11", container="00")), "rrcSetupRequest")
         self.assertEqual(f1ap.resolve_rrc(self.row("6", srbid="0", container="00")), "rrcReject")
         self.assertEqual(f1ap.resolve_rrc(self.row("6", srbid="1", container="0102")), "rrcRelease?")
         self.assertIsNone(f1ap.resolve_rrc(self.row("1", container="00")))
+
+    def test_rrc_outside_an_rrc_container_is_not_carried(self):
+        # The UEContextSetupRequest of a handover target, whose HandoverPreparationInformation holds the source's
+        # rrcReconfiguration.
+        self.assertIsNone(f1ap.resolve_rrc(self.row("5", elements={"rrcReconfiguration": "1"})))
+        fields = f1ap.rrc_fields(["rrcReconfiguration"])
+        row = dict.fromkeys(fields, "")
+        row.update({"f1ap.procedureCode": "5", "nr-rrc.rrcReconfiguration_element": "1"})
+        self.assertIsNone(f1ap.carried(row, ["rrcReconfiguration"])["rrc"])
 
 
 class UeIdsTest(unittest.TestCase):
@@ -331,6 +344,17 @@ class F1apPcapTest(unittest.TestCase):
         self.assertEqual(cap.pdus, [])
         # The NAS PDUs of the attach, which NGAP carries too, link the context to its NGAP one.
         self.assertTrue(any("nas" in m["links"] for m in cap.messages))
+
+    def test_cause_and_nas_fields_unknown_to_tshark_are_skipped(self):
+        expected = (messages.messages(self.tshark, F1AP_PCAP, "f1ap"), f1ap.messages(self.tshark, F1AP_PCAP),
+                    capture.read(self.tshark, F1AP_PCAP).messages)
+        causes = messages.cause_fields
+        with mock.patch.object(messages, "cause_fields", lambda proto: [*causes(proto), "f1ap.unknownCause"]), \
+                mock.patch.object(f1ap, "NAS_FIELDS", [*f1ap.NAS_FIELDS, "nas_5gs.unknown_type"]):
+            tshark = Tshark(self.tmp.name, cache=False)
+            got = (messages.messages(tshark, F1AP_PCAP, "f1ap"), f1ap.messages(tshark, F1AP_PCAP),
+                   capture.read(tshark, F1AP_PCAP).messages)
+        self.assertEqual(got, expected)
 
     def test_without_cache(self):
         tshark = Tshark(self.tmp.name, cache=False)

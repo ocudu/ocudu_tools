@@ -5,12 +5,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from collections import defaultdict
 from typing import Any
 
 from ._ues import ue_ids_by_key
-from .messages import cause, cause_fields
+from .messages import cause, valid_cause_fields
 from .tshark import Tshark
 from .values import epoch_to_iso, first
 
@@ -21,7 +22,6 @@ PROCEDURE_FIELDS = [
     "ngap.RAN_UE_NGAP_ID",
     "ngap.AMF_UE_NGAP_ID",
     "ngap.unsuccessfulOutcome_element",
-    *cause_fields("ngap"),
 ]
 
 
@@ -45,9 +45,12 @@ def procedures(
     if failures_only:
         unsuccess = "ngap.unsuccessfulOutcome_element"
         display_filter = f"({display_filter}) && ({unsuccess})" if display_filter else unsuccess
-    tag = f"ngap-proc-v3-{ue or 'all'}-{int(failures_only)}"
+    fields = PROCEDURE_FIELDS + valid_cause_fields(tshark, pcap, "ngap")
+    # The fields are part of the tag, since they depend on the tshark build and this code.
+    digest = hashlib.sha256("\0".join(fields).encode()).hexdigest()[:16]
+    tag = f"ngap-proc-{digest}-{ue or 'all'}-{int(failures_only)}"
     by_ue: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for values in tshark.iter_fields(pcap, PROCEDURE_FIELDS, display_filter=display_filter, tag=tag):
+    for values in tshark.iter_fields(pcap, fields, display_filter=display_filter, tag=tag):
         frame, epoch, code, ran_id, amf_id, unsucc = values[:6]
         ran_id, amf_id = first(ran_id), first(amf_id)
         by_ue[ran_id or "(no-ran-ue-id)"].append({
@@ -57,6 +60,6 @@ def procedures(
             "procedureCode": code,
             "amfUeId": amf_id or None,
             "failure": bool(unsucc),
-            "cause": cause("ngap", dict(zip(PROCEDURE_FIELDS, values))),
+            "cause": cause("ngap", dict(zip(fields, values))),
         })
     return dict(by_ue)

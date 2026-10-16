@@ -44,22 +44,25 @@ CAUSE_GROUPS = {
 }
 
 
-def messages(tshark: Tshark, pcap: str | os.PathLike[str], proto: str) -> list[dict[str, Any]]:
+def messages(tshark: Tshark, pcap: str | os.PathLike[str], proto: str, *, force: bool = False) -> list[dict[str, Any]]:
     """The messages of a pcap of proto, "ngap", "f1ap" or "e1ap", in file order.
 
     Each has "frame", "epoch", "code", "procedure" (its name), "outcome" ("initiating", "successful" or
     "unsuccessful"), "info" (the tshark summary, naming the message), the UE identifiers of UE_ID_FIELDS by label, None
     when absent, "cause", and for F1AP "old_du_ue_f1ap_id", the old gNB-DU UE F1AP ID of a reestablishment, or None.
+    force runs tshark even on a cache hit.
     """
-    names = fields(proto)
+    names = fields(proto, valid_cause_fields(tshark, pcap, proto))
     # The fields are part of the tag, since they depend on the protocol and this code.
     tag = f"{proto}-messages-" + hashlib.sha256("\0".join(names).encode()).hexdigest()[:16]
-    rows = (dict(zip(names, values)) for values in tshark.iter_fields(pcap, names, tag=tag))
+    rows = (dict(zip(names, values)) for values in tshark.iter_fields(pcap, names, tag=tag, force=force))
     return [m for row in rows if (m := message(proto, row)) is not None]
 
 
-def fields(proto: str) -> list[str]:
-    """The tshark fields of the messages of proto, read by message()."""
+def fields(proto: str, causes: list[str] | None = None) -> list[str]:
+    """The tshark fields of the messages of proto, read by message(), with the cause fields causes, by default all of
+    cause_fields().
+    """
     return [
         "frame.number",
         "frame.time_epoch",
@@ -67,7 +70,7 @@ def fields(proto: str) -> list[str]:
         f"{proto}.successfulOutcome_element",
         f"{proto}.unsuccessfulOutcome_element",
         "_ws.col.Info",
-        *cause_fields(proto),
+        *(cause_fields(proto) if causes is None else causes),
         *(f for _, f in UE_ID_FIELDS[proto]),
     ]
 
@@ -76,6 +79,11 @@ def cause_fields(proto: str) -> list[str]:
     """The tshark fields of the causes of proto, read by cause()."""
     # tshark names the CHOICE index of a Cause IE <proto>.Cause, and that of the cause of a list item <proto>.cause.
     return [f"{proto}.Cause", f"{proto}.cause", *_group_fields(proto)]
+
+
+def valid_cause_fields(tshark: Tshark, pcap: str | os.PathLike[str], proto: str) -> list[str]:
+    """The cause_fields() of proto that this tshark build knows."""
+    return tshark.valid_fields(pcap, cause_fields(proto))
 
 
 def _group_fields(proto: str) -> list[str]:

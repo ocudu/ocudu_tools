@@ -50,10 +50,10 @@ def read(tshark: Tshark, pcap: str | os.PathLike[str]) -> Capture:
     rrc_types = f1ap.valid_rrc_types(tshark, pcap) if proto == "f1ap" else []
     if proto in ("mac", "rlc"):
         proto_fields = frames.pdu_fields(proto)
-    elif proto == "f1ap":
-        proto_fields = messages.fields(proto) + f1ap.rrc_fields(rrc_types)
     elif proto is not None:
-        proto_fields = messages.fields(proto)
+        proto_fields = messages.fields(proto, messages.valid_cause_fields(tshark, pcap, proto))
+        if proto == "f1ap":
+            proto_fields += f1ap.rrc_fields(rrc_types, f1ap.valid_nas_fields(tshark, pcap))
     else:
         proto_fields = []
     if proto in messages.LINK_FIELDS:
