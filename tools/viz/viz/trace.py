@@ -55,9 +55,11 @@ def group_trace(trace: dict[str, Any], by: str, max_lanes: int, limit: int) -> d
     merged: dict[Any, dict[str, Any]] = {}
     # Merged lane and index in its contexts of each lane.
     lane_of: dict[Any, tuple[Any, int]] = {}
+    # A failed creation has the DU UE index or RNTI of another UE, so it keeps its own row.
+    failed = {ev["lane"] for ev in trace["events"] if ev["type"] == "ue_create_failed" and ev["lane"] is not None}
     for lane in trace["lanes"]:
         keys = lane_keys(lane)
-        value = keys.get(by)
+        value = keys.get(by) if not lane.get("failed") and lane["lane"] not in failed else None
         key = f"{by}={value}" if value is not None else lane["lane"]
         if key not in merged:
             merged[key] = {**lane, "lane": key, "ids": {}, "contexts": []}
@@ -124,10 +126,11 @@ class RunTrace:
         self._sources = [anchor, *logs]
         lanes = {source: _lanes(store) for source, store in self._sources}
         self._labels = {(source, lane["lane"]): lane["label"] for source, ls in lanes.items() for lane in ls}
-        stores = dict(self._sources)
-        self._lanes = ues_util.combine(*(_contexts(source, ls, stores[source].lane_links()) for source, ls in lanes.items()))
+        joined, failed = _join(self._sources, lanes)
+        self._lanes = sorted(joined + failed, key=lambda ue: (ue.t_start, ue.key))
+        self._failed = {ue.key for ue in failed}
         core_contexts = [ctx for source, store in cores for ctx in _contexts(source, _lanes(store), store.lane_links())]
-        traces = ues_util.ue_traces(self._lanes, core_contexts)
+        traces = ues_util.ue_traces(joined, core_contexts)
         self._cores = dict(cores)
         # Identifiers of the UE of each NGAP and E1AP lane, as (source, lane), see UE_IDS.
         self._core_ids = {part: {k: tr.ids[k] for k in UE_IDS if k in tr.ids} for tr in traces for part in tr.cores}
@@ -182,7 +185,7 @@ class RunTrace:
         lanes = [
             {"lane": lane.key, "t_start": lane.t_start, "t_end": lane.t_end, "ue": _int(lane.first("du_ue")),
              "rnti": lane.first("rnti"), "label": self._labels.get(lane.parts[0]), "cu_ue": _int(lane.first("cu_ue")),
-             "open": lane.open, "ids": {k: v for k, v in lane.ids.items() if k != "ue_trace"}}
+             "open": lane.open, "ids": {k: v for k, v in lane.ids.items() if k != "ue_trace"}, "failed": lane.key in self._failed}
             for lane in active[:max_lanes]
         ]
         return {
@@ -222,14 +225,39 @@ def _limited(trace: dict[str, Any], max_lanes: int, limit: int) -> dict[str, Any
 
 
 def join_lanes(anchor: tuple[int, Store], logs: list[tuple[int, Store]]) -> list[ues_util.Ue]:
-    """The UEs of a run from the UE contexts of its F1AP pcap, then of its logs, see parsers.correlate.ues.combine().
-    UE keys are "<source id>:<lane id>".
+    """The UEs of a run from the UE contexts of its F1AP pcap, then of its logs, see parsers.correlate.ues.combine(),
+    and the failed UE creations of its logs, UEs of their own. UE keys are "<source id>:<lane id>".
     """
-    return ues_util.combine(*(_contexts(source, _lanes(store), store.lane_links()) for source, store in [anchor, *logs]))
+    sources = [anchor, *logs]
+    joined, failed = _join(sources, {source: _lanes(store) for source, store in sources})
+    return sorted(joined + failed, key=lambda ue: (ue.t_start, ue.key))
+
+
+def _join(sources: list[tuple[int, Store]], lanes: dict[int, list[dict[str, Any]]]) -> tuple[list[ues_util.Ue], list[ues_util.Ue]]:
+    """The UEs that the lanes of each source join, see join_lanes(), and the failed UE creations, which join none, since
+    their DU UE index or RNTI is of another UE.
+    """
+    stores = dict(sources)
+    failed_lanes = {source: _failed_lanes(store) for source, store in sources}
+    joined = ues_util.combine(*(
+        _contexts(source, [lane for lane in ls if lane["lane"] not in failed_lanes[source]], stores[source].lane_links())
+        for source, ls in lanes.items()
+    ))
+    failed = [
+        ues_util.Ue(f"{source}:{lane['lane']}", lane["t_start"], lane["t_end"], False,
+                    {k: [v] for k, v in lane_keys(lane).items()}, [(source, lane["lane"])], lane["t_start"])
+        for source, ls in lanes.items() for lane in ls if lane["lane"] in failed_lanes[source]
+    ]
+    return joined, failed
 
 
 def _lanes(store: Store) -> list[dict[str, Any]]:
     return store.trace(None, None, _ALL, 0)["lanes"]
+
+
+def _failed_lanes(store: Store) -> set[int]:
+    """The lanes of the failed UE creations of a store."""
+    return {ev["lane"] for ev in store.events(types=["ue_create_failed"], limit=_ALL)["events"] if ev["lane"] is not None}
 
 
 def _contexts(source: int, lanes: list[dict[str, Any]], links: dict[int, dict[str, Any]]) -> list[ues_util.Context]:

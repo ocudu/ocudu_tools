@@ -24,6 +24,9 @@ class FakeStore:
     def lane_links(self):
         return self._links
 
+    def events(self, types=None, limit=None):
+        return {"events": [e for e in self._events if types is None or e["type"] in types]}
+
     def trace(self, t0, t1, max_lanes, limit):
         lo = -float("inf") if t0 is None else t0
         hi = float("inf") if t1 is None else t1
@@ -63,6 +66,25 @@ class JoinTest(unittest.TestCase):
         self.assertEqual((first.t_start, first.first("du_ue")), (9.9, "0"))
         self.assertEqual(target.ids, {"du_f1ap": ["1"], "cu_f1ap": ["1"], "rnti": ["0x4602"], "du_ue": ["1"]})
         self.assertEqual(unjoined.ids, {"du_ue": ["5"], "rnti": ["0x4609"]})
+
+    def test_failed_creation_joins_no_ue(self):
+        # A creation of DU UE index 7 failing on the C-RNTI of the first UE, while that UE is alive.
+        log = FakeStore(
+            [lane(0, 9.9, 20.5, ue=0, rnti="0x4601"), lane(1, 15.0, 15.1, ue=7, rnti="0x4601"), lane(2, 16.0, 30.0, ue=7, rnti="0x4602")],
+            [event(9.9, 0, "ra", "prach"), event(15.0, 1, "lifecycle", "ue_create"), event(15.1, 1, "failure", "ue_create_failed"),
+             event(16.0, 2, "lifecycle", "ue_create")],
+        )
+        lanes = {lane.key: lane for lane in join_lanes((7, F1AP), [(3, log)])}
+        self.assertEqual(lanes["7:0"].ids["du_ue"], ["0"])
+        self.assertEqual((lanes["3:1"].parts, lanes["3:1"].open, lanes["3:1"].ids), ([(3, 1)], False, {"du_ue": ["7"], "rnti": ["0x4601"]}))
+        trace = RunTrace((7, F1AP), [(3, log)])
+        self.assertEqual({lane["lane"]: lane["failed"] for lane in trace.trace(None, None, 300, 100)["lanes"]},
+                         {"7:0": False, "7:1": False, "3:1": True})
+        by_ue = trace.trace(None, None, 300, 100, group_by="du_ue")
+        self.assertEqual([lane["lane"] for lane in by_ue["lanes"]], ["du_ue=0", "3:1", "du_ue=7"])
+        # Also in the trace of a log alone, whose lanes do not say which failed.
+        alone = group_trace(log.trace(None, None, 300, 100), "du_ue", 300, 100)
+        self.assertEqual([lane["lane"] for lane in alone["lanes"]], ["du_ue=0", 1, "du_ue=7"])
 
     def test_trace_lanes_have_the_ids_of_the_run(self):
         trace = RunTrace((7, F1AP), [(3, LOG)]).trace(None, None, 300, 100, {7})

@@ -18,7 +18,7 @@ from .ues import Context, Ue, UeTrace, combine, ue_traces
 
 def log_contexts(path: str | os.PathLike[str], source: str | None = None) -> list[Context]:
     """The UE contexts of an OCUDU log, as events.UeTracker assigns its events, with their DU and CU-CP UE indexes and
-    RNTI.
+    RNTI. Failed creations are left out, since their DU UE index or RNTI is of another UE.
 
     source names the log in the contexts, by default its file name.
     """
@@ -30,7 +30,7 @@ def log_contexts(path: str | os.PathLike[str], source: str | None = None) -> lis
     return [
         Context(source, lane.id, _epoch(lane.t_start), _epoch(lane.t_end or lane.t_start),
                 {"du_ue": lane.du_ue, "cu_ue": lane.cu_ue, "rnti": lane.rnti}, lane.created and not lane.deleted)
-        for lane in tracker.lanes
+        for lane in tracker.lanes if not lane.failed
     ]
 
 

@@ -215,7 +215,7 @@ _CU_UP_LOGGERS = frozenset({"CU-UP", "CU-UP-E1", "CU-F1-U", "SDAP", "GTPU"})
 
 @dataclass
 class UeLane:
-    """One UE context of the DU, from its random access or creation to its deletion."""
+    """One UE context of the DU, from its random access or creation to its deletion or failed creation."""
 
     id: int
     du_ue: int | None
@@ -224,6 +224,8 @@ class UeLane:
     t_end: datetime | float | None = None
     created: bool = False
     deleted: bool = False
+    # Whether its creation failed, which closes it.
+    failed: bool = False
     # CU-CP UE index, from the CU events of its RNTI, which differs from the DU one.
     cu_ue: int | None = None
 
@@ -318,7 +320,7 @@ class UeTracker:
         lane, prev_du, prev_rnti = self._creating.pop(ue, (None, None, None)) if ue is not None else (None, None, None)
         if lane is None or lane.rnti != rnti:
             return None
-        lane.created = False
+        lane.created, lane.failed = False, True
         if self._by_du_ue.get(ue) is lane:
             del self._by_du_ue[ue]
             # The clash is often with a live UE of the same index, which the creation must not end.

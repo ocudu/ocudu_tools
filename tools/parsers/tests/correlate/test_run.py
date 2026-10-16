@@ -9,13 +9,15 @@ from parsers.correlate.run import log_contexts
 from parsers.correlate.ues import Context, combine
 
 # A UE attaching, and a handover target created without its RNTI, which it gets from its configuration before its
-# contention-free random access.
+# contention-free random access, and a creation failing on its C-RNTI, of no context.
 LOG = """\
 2026-07-30T20:53:14.400000 [SCHED   ] [I] [    34.6] Processed slot events pci=1: prach(ra-rnti=0x10b preamble=23 tc-rnti=0x4601)
 2026-07-30T20:53:14.482176 [DU-MNG  ] [I] ue=0 rnti=0x4601 proc="UE Create": Procedure started....
 2026-07-30T20:53:20.100000 [DU-MNG  ] [I] ue=1 proc="UE Create": Procedure started....
 2026-07-30T20:53:20.100100 [DU-MNG  ] [I] ue=1 rnti=0x4602 proc="UE Configuration": Procedure started....
 2026-07-30T20:53:20.200000 [SCHED   ] [I] [    50.6] Processed slot events pci=1: prach(ra-rnti=0x10b preamble=63 tc-rnti=0x4602)
+2026-07-30T20:53:21.000000 [DU-MNG  ] [I] ue=5 rnti=0x4602 proc="UE Create": Procedure started....
+2026-07-30T20:53:21.000100 [DU-MNG  ] [W] ue=5 rnti=0x4602 proc="UE Create": Procedure failed. Cause: UE already existed with same ue_index or C-RNTI.
 2026-07-30T20:53:25.816892 [DU-MNG  ] [I] ue=0 proc="UE Delete": Procedure finished successfully.
 """
 

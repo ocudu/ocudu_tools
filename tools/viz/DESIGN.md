@@ -248,12 +248,13 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
   collapsed in the worker of each chunk, so runs end at chunk edges. On the 485 MB log, 3.2M events become 11k rows,
   and the events phase takes 3.5 s instead of 8 s.
 - The `+ trace` widget shows the events per UE on the time axis of the tab: one bar per UE context, from its random
-  access or creation to its deletion, with a glyph per event, and a last row, `common`, with the events of no UE. Each UE has its own
+  access or creation to its deletion or failed creation, with a glyph per event, and a last row, `common`, with the events of no UE. Each UE has its own
   row, labelled with its DU UE index and RNTI, in start order. The trace shows 25 UE rows at a time and scrolls over the
   others with its own scrollbar, keeping the time axis and the row of events of no UE in view. Events are assigned to UE contexts by `parsers.log.events.UeTracker` while they are parsed: by
   RNTI, by DU UE index, and for CU-CP events by the RNTI of the RRC messages of their CU-CP UE index. A UE created
   without RNTI, e.g. a handover target, gets it from its first `UE Configuration` line, within its lifetime only,
-  since DU UE indexes are soon reused while RNTIs and protocol UE ids are not.
+  since DU UE indexes are soon reused while RNTIs and protocol UE ids are not. A failed creation, e.g. on a DU UE index
+  or C-RNTI clash, closes its lane, which is not open, and gives the index and RNTI back to the UE it clashed with.
   `GET /api/trace?source&t0&t1&max_lanes&limit` returns the UE contexts active in a window and its events.
 - The trace has a filter like the plots (D6), over the event fields type, category, layer, level, ue, rnti, cause and
   text, evaluated by SQLite over the events of the window, with the UE index and RNTI of their lane for events
@@ -266,7 +267,8 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
   row, labelled `–`. Each row lists the values of all the identifiers of the lanes it merges (`ids`)
   and the span and identifiers of each (`contexts`), which its events point to (`context`), so that hovering shows
   the ones of the hovered event or time.
-- Most UE events are info lines, so logs whose layers log below info lack them. The log levels come from the
+- Most UE events are info lines, so logs whose layers log below info lack them; RLFs are warnings of the DU manager
+  (`du`), so only logs below warning lack them. The log levels come from the
   configuration echo at the top of the log (`parsers.log.config`), and `/api/sources` reports a note naming the quiet
   layers and the events they hide, shown in the event bar and the trace.
 
@@ -325,7 +327,9 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
   an RNTI joins the F1AP UE context with that C-RNTI whose lifetime, with 2 s of slack, overlaps it, and a log lane
   without one, which is rare, joins the context starting nearest its creation, within 1 s, i.e. its
   InitialULRRCMessageTransfer or UEContextSetup. The UEs are indexed by RNTI and by creation time, so that joining
-  takes n log n. Log lanes of a random access of no UE, i.e. a PRACH only, are expected to have no context. Log lanes of no context keep their own row. A trace of a log of a run with an F1AP pcap also shows
+  takes n log n. Log lanes of a random access of no UE, i.e. a PRACH only, are expected to have no context. Log lanes of no context keep their own row. The lane of a failed
+  creation, a lane with a `ue_create_failed` event, joins no UE and is a UE of its own (`failed` in the trace), since
+  its DU UE index or RNTI is of another UE; grouping keeps it in its own row too. A trace of a log of a run with an F1AP pcap also shows
   its events on these UE contexts, the ones it has events in. RNTIs are compared as logs print them
   (`parsers.ran.rnti`). The F1AP gNB-DU-UE-F1AP-ID is not the DU UE index of the logs, so they are not compared. A
   trace row shows the DU UE index, RNTI and protocol identifiers of its UE.
@@ -458,14 +462,15 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
 - `SchedtraceSource` reads the `schedtrace_cell<N>.bin` of OCUDU with `parsers.schedtrace`, on request like MAC and RLC
   pcaps (traces of a few minutes are hundreds of MB). Its records are the events, the text a summary line and the
   detail the decoded event. Its views are the `grid` panel and plots and tables of its datasets.
-- Its datasets are the per-UE metrics of `parsers.schedtrace.ue_metrics`: `ue_metrics`, aggregates per UE and 10 ms
-  bin, named as the fields of the METRICS `Scheduler UE` lines where they mean the same (e.g. `dl_brate`, the ACKed
-  DL TBS, `dl_error_rate`, `cqi`), so that a plot of either reads the same; `cell_metrics`, the scheduler latency,
-  PRBs and UEs of the cell per bin; and one row per grant or report, `dl_grants`, `ul_grants`, `harq_acks` and
-  `csi_reports`, for exact values. 10 ms bins, one radio frame, keep the scheduler dynamics that METRICS periods of a
-  second average out. The trace has no UL CRC or buffer status, so UL rates are of scheduled new transmissions
-  (`ul_sched_brate`). Workers sum the bins of their chunk and the server process merges the sums, as for the grid
-  occupancy, and every row links to its slot event. New plots of a trace show `ue_metrics.dl_brate` split by RNTI.
+- Its datasets are the per-UE metrics of `parsers.schedtrace.ue_metrics`: `ue_metrics`, aggregates per UE and 10 ms bin,
+  named as the fields of the METRICS `Scheduler UE` lines where they mean the same (e.g. `dl_brate`, the ACKed DL TBS,
+  `dl_error_rate`, `cqi`), so that a plot of either reads the same, though means unrounded, as statistics over bins
+  need, where METRICS rounds `dl_mcs` and `cqi`; `cell_metrics`, the scheduler latency, PRBs and UEs of the cell per
+  bin; and one row per grant or report, `dl_grants`, `ul_grants`, `harq_acks` and `csi_reports`, for exact values. 10 ms
+  bins, one radio frame, keep the scheduler dynamics that METRICS periods of a second average out. The trace has no UL
+  CRC or buffer status, so UL rates are of scheduled new transmissions (`ul_sched_brate`). Workers sum the bins of their
+  chunk and the server process merges the sums, as for the grid occupancy, and every row links to its slot event. New
+  plots of a trace show `ue_metrics.dl_brate` split by RNTI.
 - `parsers.schedtrace.grid` places the allocations of a slot as rectangles of symbols and CRBs. The trace has no
   VRB-to-PRB interleaving, RBG configuration or SRS frequency resources, so VRBs map to PRBs one to one, RBGs have the
   configuration 1 size of the BWP, and SRS is left out. PDSCHs of DCI format 1_0 in a common search space are placed

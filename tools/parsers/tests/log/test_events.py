@@ -274,8 +274,8 @@ class EventsTest(unittest.TestCase):
             ]
         ]
         self.assertEqual(assigned, [0, 1, 1, 2, 2, 3, 3, 0, 0, 1, 1, 1])
-        self.assertEqual([(lane.du_ue, lane.created, lane.deleted) for lane in tracker.lanes],
-                         [(1, True, False), (2, True, True), (5, False, False), (2, False, False)])
+        self.assertEqual([(lane.du_ue, lane.created, lane.deleted, lane.failed) for lane in tracker.lanes],
+                         [(1, True, False, False), (2, True, True, False), (5, False, False, True), (2, False, False, True)])
         # A failure of no ongoing creation changes nothing.
         self.assertIsNone(tracker.assign(ev(12, "ue_create_failed", "DU-MNG", ue=4, rnti="0x4")))
 
