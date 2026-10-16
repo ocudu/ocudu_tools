@@ -106,7 +106,8 @@ with open("gnb.log") as f:
 error lines as generic `warning` and `error` events, with the `ue=` and RNTI of their message if any. Records have `timestamp`, `type`, `category`, `layer`, `level`,
 `ue`, `rnti`, `cause` and `text`. Records of category `events.BINDING` (`ue_config`) are not events: they give
 `events.UeTracker` the RNTI of a UE created without it, e.g. a handover target. A failed UE creation, e.g. on a UE
-index or C-RNTI clash, closes its context and leaves the UE it clashed with as it was.
+index or C-RNTI clash, closes its context (`UeLane.failed`) and leaves the UE it clashed with as it was; that context is
+not open and joins no UE of `parsers.correlate`.
 
 | Category    | Types                                                              |
 |-------------|--------------------------------------------------------------------|
@@ -157,22 +158,24 @@ print(overview.summarise(tshark, pcaps["ngap"]))
 events = timeline.run_events(tshark, "run_dir", ["ngap", "f1ap"], ue="0")
 ```
 
-`tshark` reads pcaps through a link or copy in the work directory, since the AppArmor profile of `tshark` on Ubuntu
-only lets it read under `/tmp`, and dissects the MAC and RLC PDUs of `mac.pcap` and `rlc.pcap` through the
-`mac_nr_udp` and `rlc_nr_udp` heuristics. A pcap whose last record is cut short, e.g. by a crash, gives its complete
-records, with a warning. Field extractions are cached in the work directory by pcap path, size and mtime, and a tag, by
-default the fields and filter. `run.find_pcaps()` finds the pcaps of each protocol by file name, `<proto>.pcap` or with
-a prefix, e.g. `gnb_f1ap.pcap`.
-`run.check_pcap()` checks that one of the known dissectors binds the first frame of a pcap. `messages.messages()` lists
-the NGAP, F1AP or E1AP messages of a pcap with their procedure, outcome, UE identifiers and cause, as
-`<group>:<value>` named by the value tables of tshark, e.g. `protocol:unspecified`, `frames.summaries()`
-the one-line tshark summary of each frame and `frames.decode()` decodes one frame. `frames.time_span()` reads the time
-span of a classic pcap from its complete packets' headers, without `tshark`, and gives None for pcapng. `capture.read()`
-gives the protocol, the frame summaries and the messages or PDUs of a pcap in one pass over its frames, after reading
-its first frame for the protocol, or its file name for a pcap without frames.
-`contexts.ContextTracker` assigns the NGAP, F1AP or E1AP messages to UE contexts, by their UE identifiers until the
-release of the context, with the C-RNTI of the F1AP ones and the links between contexts, given the messages of
-`capture.read()`, which carry them; the messages of `messages.messages()` give contexts without either.
+`tshark` reads pcaps through a link or copy in the work directory, since the AppArmor profile of `tshark` on Ubuntu only
+lets it read under `/tmp`, and dissects the MAC and RLC PDUs of `mac.pcap` and `rlc.pcap` through the `mac_nr_udp` and
+`rlc_nr_udp` heuristics. A pcap whose last record is cut short, e.g. by a crash, gives its complete records, with a
+warning. Field extractions are cached in the work directory by pcap path, size and mtime, and a tag, by default the
+fields and filter. `run.find_pcaps()` finds the pcaps of each protocol by file name, `<proto>.pcap` or with a prefix,
+e.g. `gnb_f1ap.pcap`. `run.check_pcap()` checks that one of the known dissectors binds the first frame of a pcap.
+`messages.messages()` lists the NGAP, F1AP or E1AP messages of a pcap with their procedure, outcome, UE identifiers and
+cause, as `<group>:<value>` named by the value tables of tshark, e.g. `protocol:unspecified`, `frames.summaries()` the
+one-line tshark summary of each frame and `frames.decode()` decodes one frame. The `rrc` of an F1AP message is the RRC
+message of its RRC container, None without one, e.g. for the `UEContextSetupRequest` of a handover target, whose
+`HandoverPreparationInformation` holds the source's `rrcReconfiguration`. RRC, NAS and cause fields that a `tshark`
+build does not know are left out of extractions, so those values are None. `frames.time_span()` reads the time span of a
+classic pcap from its complete packets' headers, without `tshark`, and gives None for pcapng. `capture.read()` gives the
+protocol, the frame summaries and the messages or PDUs of a pcap in one pass over its frames, after reading its first
+frame for the protocol, or its file name for a pcap without frames. `contexts.ContextTracker` assigns the NGAP, F1AP or
+E1AP messages to UE contexts, by their UE identifiers until the release of the context, with the C-RNTI of the F1AP ones
+and the links between contexts, given the messages of `capture.read()`, which carry them; the messages of
+`messages.messages()` give contexts without either.
 
 ### Scheduler event traces
 
@@ -205,11 +208,11 @@ append. `schedtrace.version()` reads the version in the header of the contents o
 The decoder is standard-library only: `schedtrace.schema` reads the FlatBuffers schemas of `schedtrace/fbs/`, copies of
 `lib/scheduler/trace/fbs` of OCUDU, and `schedtrace.flatbuf` decodes buffers with them. FlatBuffers' Python code
 generator does not support the vectors of unions of the schemas (`CellSlotEvent.inputs`). Decoding uses
-`schedtrace/_generated.py`, which `schedtrace.codegen` compiles from the schemas into one function per table and
-struct, about 2.3 times faster than `schedtrace.flatbuf`. With `grid_only=True`, `read()`, `events()` and `event_at()`
-decode only the fields of `codegen.GRID_FIELDS`, those that `grid.allocations()` needs and the slot, latency and input
-types, 1.6 times faster again. When OCUDU changes the schemas, copy them from an OCUDU tree, its working tree or a
-revision, and regenerate it:
+`schedtrace/_generated.py`, which `schedtrace.codegen` compiles from the schemas into one function per table and struct,
+about 2.3 times faster than `schedtrace.flatbuf`. With `grid_only=True`, `read()`, `events()` and `event_at()` decode
+only the fields of `codegen.GRID_FIELDS`, those that `grid.allocations()` and `ue_metrics` read, the timestamp, slot and
+latency of an event and the type of each input, 1.6 times faster again. When OCUDU changes the schemas, copy them from
+an OCUDU tree, its working tree or a revision, and regenerate it:
 
 ```bash
 python -m parsers.schedtrace.codegen --ocudu ~/srs/ocudu [--rev origin/dev]
@@ -228,16 +231,16 @@ of their CCEs (TS 38.211 7.3.2.2). `skills/analyze-ran-log/scripts/ocudu/schedtr
 `schedtrace.ue_metrics` gives the per-UE metrics of a trace: `slot_items()` the DL and UL grants, HARQ-ACK and CSI
 reports and SRs of a slot, per UE, a DL grant with the MCS of its first and second codeword (`mcs`, `mcs2`) and the TBS
 of both, and `Aggregator` their sums per UE and 10 ms bin, as rows named after the fields of the METRICS `Scheduler UE`
-lines where they mean the same (`dl_brate` from the ACKed TBS, `dl_mcs` as the mean of every codeword rounded half away
-from zero, `dl_nof_ok`, `dl_nof_nok` of the NACK and DTX reports, `dl_error_rate`, `cqi` and `dl_ri` as means of a bin,
-`sr_count`), plus the scheduler latency, PRBs and UEs of the cell per bin.
-Aggregators of parts of a trace merge; `Aggregator(bin_s=1)` gives 1 s bins, the length of the default METRICS period,
-and `ue_totals()` the totals of each UE over a span. Bins start at whole multiples of `bin_s` since the epoch, while a
-METRICS period ends at the time of its line, so a 1 s bin overlaps two METRICS periods. Bins are whole microseconds, at
-least one: `Aggregator.bin_s` holds the size rounded to them.
-`skills/analyze-ran-log/scripts/ocudu/schedtrace_ue_metrics.py` prints them. The trace has no UL CRC or buffer status:
-UL rates are of scheduled new transmissions (`ul_sched_brate`), and `ul_layers` is of the PUSCHs, not the RI of SRS.
-HARQ processes that time out without a report, or have no feedback, have no trace event, so they count in neither
+lines where they mean the same (`dl_brate` from the ACKed TBS, `dl_mcs` as the mean of every codeword, `dl_nof_ok`,
+`dl_nof_nok` of the NACK and DTX reports, `dl_error_rate`, `cqi` and `dl_ri` as means of a bin, all means unrounded
+(METRICS prints `dl_mcs` and `cqi` rounded half away from zero, as `ue_metrics.round_half_up()` does), `sr_count`), plus
+the scheduler latency, PRBs and UEs of the cell per bin. Aggregators of parts of a trace merge; `Aggregator(bin_s=1)`
+gives 1 s bins, the length of the default METRICS period, and `ue_totals()` the totals of each UE over a span. Bins
+start at whole multiples of `bin_s` since the epoch, while a METRICS period ends at the time of its line, so a 1 s bin
+overlaps two METRICS periods. Bins are whole microseconds, at least one: `Aggregator.bin_s` holds the size rounded to
+them. `skills/analyze-ran-log/scripts/ocudu/schedtrace_ue_metrics.py` prints them. The trace has no UL CRC or buffer
+status: UL rates are of scheduled new transmissions (`ul_sched_brate`), and `ul_layers` is of the PUSCHs, not the RI of
+SRS. HARQ processes that time out without a report, or have no feedback, have no trace event, so they count in neither
 `dl_nof_ok` nor `dl_nof_nok`, unlike in METRICS.
 
 ```python
@@ -260,7 +263,7 @@ for t, record, *values in agg.ue_rows():
 PDSCH lines of the slot decisions, optionally in the lines matching a regex and split by the nearest value of another
 key before each value in its line. Values with a unit are scaled as METRICS fields are. Ranges of
 `chunks.chunk_ranges()` scan independently. Without a key, `scan_lines()` gives the lines matching the regex, with their
-text, logger, level, UE index and RNTI.
+text, logger, level, UE index and RNTI, the first token of those the RNTI filter of `search` matches.
 
 ```python
 import os
@@ -289,14 +292,15 @@ with open(log, errors="replace") as f:
     s = summary.summarize(f)                              # build, NG setup, cells, UE lifecycle, counters
 with open(log, errors="replace") as f:
     found = procedures.instances(f)                      # per procedure, its instances with stage times
-mac = found["MAC UE Creation"]
-print(procedures.stats(procedures.latencies(mac, "start", "done")))
+# MAC UE Creation and the other MAC and scheduler procedures log their start at debug only.
+create = found["UE Create"]
+print(procedures.stats(procedures.latencies(create, "start", "done")))
 ```
 
 Search entries are a timestamped line and its continuation lines, so filters match ASN.1 bodies too, and the
 configuration echo is left out unless asked for. Time bounds are ISO dates or timestamps, with "T" or a space, or times
 of day, compared to the same precision; `search.iso_bound()` gives a bound the "T" form. An RNTI filter matches `rnti=`,
-`c-rnti=` and `tc-rnti=` tokens, not `ra-rnti=` or `temp_crnti=`. Procedures are the `proc="..."` traces of the DU
+`c-rnti=`, `tc-rnti=` and `crnti=` tokens, not `ra-rnti=` or `temp_crnti=`. Procedures are the `proc="..."` traces of the DU
 (`PROCEDURES`): stages that a build does not log are skipped. `console.summarize()` reads the console output of an
 application, `metrics_json.rollup()` its `metrics.json`, and `config.parse_config()` also gives the cell, AMF, duplex
 and pcap options. The `ocudu_log_search.py`, `ocudu_log_summary.py` and `ocudu_ue_proc_latency.py` scripts of the
