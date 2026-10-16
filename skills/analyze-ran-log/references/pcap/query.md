@@ -21,7 +21,7 @@ Use a helper script first when one fits. They live in
 | "How many F1AP / NGAP / E1AP messages of each type?" | `extract_proc_codes.py <pcap> --proto <ngap\|f1ap\|e1ap>` |
 | "What happened around epoch T across all 5 pcaps?" | `correlate_run.py <run-dir> --around <epoch> --window-ms 2000` |
 | "Which F1AP / NGAP / E1AP UEs are in this capture?" | `f1ap_ue_ids.py <f1ap.pcap>` (likewise `ngap_ue_ids.py` / `e1ap_ue_ids.py`, each on its own protocol pcap) |
-| "What F1AP messages did UE X exchange?" | `f1ap_messages.py <f1ap.pcap> --ue <cu or du F1AP id>` or `--rnti <C-RNTI>` (4601, 0x4601 or 17921), which keeps every message of the UE contexts of that C-RNTI, up to their release; `f1ap_ue_ids.py` takes the same filters |
+| "What F1AP messages did UE X exchange?" | `f1ap_messages.py <f1ap.pcap> --ue <cu or du F1AP id>` or `--rnti <C-RNTI>` (4601, 0x4601 or 17921), which keeps every message of the UE contexts of that C-RNTI and of the later contexts of the same UE after its handovers and reestablishments, under other C-RNTIs, up to their release; `f1ap_ue_ids.py` takes the same filters but keeps only the UEs that hold that C-RNTI |
 
 Otherwise hand-craft a minimal `tshark` filter:
 

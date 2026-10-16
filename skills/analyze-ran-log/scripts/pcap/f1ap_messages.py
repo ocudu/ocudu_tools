@@ -25,7 +25,8 @@ See references/pcap/reference/protocols/f1ap.md § "RRC PDUs inside F1AP contain
 Usage:
     f1ap_messages.py <f1ap.pcap>
     f1ap_messages.py <f1ap.pcap> --ue 640      # messages of this CU or DU F1AP id
-    f1ap_messages.py <f1ap.pcap> --rnti 4601   # messages of the UE contexts of this C-RNTI: 4601, 0x4601, 17921
+    f1ap_messages.py <f1ap.pcap> --rnti 4601   # messages of the UE of this C-RNTI, through handovers and
+                                               # reestablishments: 4601, 0x4601, 17921
     f1ap_messages.py <f1ap.pcap> --rrc         # only rows carrying an RRC message
     f1ap_messages.py <f1ap.pcap> --nas         # only rows carrying a NAS message
     f1ap_messages.py <f1ap.pcap> --json
@@ -39,7 +40,7 @@ import sys
 from pathlib import Path
 
 import utils
-from parsers.pcap import contexts, f1ap, messages
+from parsers.pcap import capture, contexts, f1ap
 from parsers.ran.rnti import parse_any
 
 
@@ -47,9 +48,10 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("pcap", help="path to f1ap.pcap")
     ap.add_argument("--ue", help="keep the messages of this gNB-CU or gNB-DU UE F1AP id")
-    ap.add_argument("--rnti", help="keep the messages of the UE contexts of this C-RNTI, from their first message to "
-                                   "their release, in any form: 4601 (hex as logs print it), 0x4601, or 17921 "
-                                   "(decimal as the pcap holds it)")
+    ap.add_argument("--rnti", help="keep the messages of the UE contexts of this C-RNTI and of those that continue "
+                                   "them through handovers and reestablishments under other C-RNTIs, from their "
+                                   "first message to their release, given in any form: 4601 (hex as logs print it), "
+                                   "0x4601, or 17921 (decimal as the pcap holds it)")
     ap.add_argument("--rrc", action="store_true", help="only rows that carry an RRC message")
     ap.add_argument("--nas", action="store_true", help="only rows that carry a NAS message")
     ap.add_argument("--limit", type=int, default=0,
@@ -76,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
         records = [x for x in records if args.ue in (x["cu_ue_f1ap_id"], x["du_ue_f1ap_id"])]
     if rnti:
         try:
-            frames = _rnti_frames(pcap, records, rnti, args.no_cache)
+            frames = _rnti_frames(pcap, rnti, args.no_cache)
         except utils.TsharkError as e:
             print(f"error: {e}", file=sys.stderr)
             return 1
@@ -113,18 +115,18 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _rnti_frames(pcap: Path, records: list[dict], rnti: str, force: bool) -> set[int]:
-    """Frames of the UE contexts whose C-RNTI is rnti, given the records of f1ap.messages()."""
+def _rnti_frames(pcap: Path, rnti: str, force: bool) -> set[int]:
+    """Frames of the UE contexts whose C-RNTI is rnti, and of the contexts that continue them through handovers and
+    reestablishments.
+    """
     # Only the messages that name the C-RNTI hold it, e.g. InitialULRRCMessageTransfer, and the F1AP ids of the UE
     # are reused by later UEs once its context is released.
-    crntis = {x["frame"]: x["crnti"] for x in records}
     tracker = contexts.ContextTracker("f1ap")
     frames_of: dict[int, set[int]] = {}
-    for msg in messages.messages(utils.TSHARK, pcap, "f1ap", force=force):
-        msg["crnti"] = crntis.get(msg["frame"])
+    for msg in capture.read(utils.TSHARK, pcap, proto="f1ap", force=force).messages:
         if (ctx := tracker.assign(msg)) is not None:
             frames_of.setdefault(ctx.id, set()).add(msg["frame"])
-    return {f for ctx in tracker.contexts if ctx.rnti == rnti for f in frames_of[ctx.id]}
+    return {f for ctx in contexts.ue_trace(tracker.contexts, rnti) for f in frames_of[ctx.id]}
 
 
 if __name__ == "__main__":
