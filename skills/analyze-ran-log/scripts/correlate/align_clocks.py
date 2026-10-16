@@ -97,7 +97,7 @@ def main(argv=None) -> int:
     ap.add_argument("--pcap", help="an NGAP pcap (defaults to the gNB component's ngap.pcap)")
     args = ap.parse_args(argv)
 
-    gnb_log, ue_log = correlate_radio.resolve_logs(args.path, args.gnb, args.ue)
+    gnb_log, ue_log, _ = correlate_radio.resolve_logs(args.path, args.gnb, args.ue)
     pcap = Path(args.pcap) if args.pcap else None
     if pcap is None and gnb_log is not None:
         cand = gnb_log.parent / "ngap.pcap"
@@ -143,13 +143,16 @@ def main(argv=None) -> int:
             gp, up, key = best
             slot, rnti = key
             print("[UE <-> gNB]  first co-identified PUSCH")
-            print(f"   slot {slot}  rnti {rnti}")
+            print(f"   slot {slot}  rnti {correlate_radio.shown_rnti(rnti)}")
             print(f"   ue.log  : {up['ts']}")
             print(f"   gnb.log : {gp['ts']}")
             if gp["dt"] and up["dt"]:
                 d_ms = (gp["dt"] - up["dt"]).total_seconds() * 1000
                 print(f"   Δ = {d_ms:+.1f} ms  (gNB decode-log latency; SFN.slot identical -> "
                       f"no PHY SFN offset ✓)")
+        elif not correlate_radio.has_phy(gnb_log):
+            print(f"[UE <-> gNB]  no PHY lines in {gnb_log.name} (a CU log, or phy_level below info); "
+                  "pass a gNB or DU log with --gnb")
         else:
             print("[UE <-> gNB]  (no co-identified PUSCH found)")
         print()

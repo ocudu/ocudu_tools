@@ -139,6 +139,11 @@ def inventory_component(comp_dir: Path) -> dict:
         info["configs"] += sorted(c.name for c in run_dir.glob("ocudu_*.yml"))
         for g in PCAP_GLOBS:
             info["pcaps"] += sorted(p.name for p in run_dir.glob(g) if p.is_file())
+        # A split DU writes its f1ap.pcap in the component directory rather than in its run directory.
+        if run_dir != comp_dir:
+            for g in PCAP_GLOBS:
+                info["pcaps"] += sorted(f"../{p.name}" for p in comp_dir.glob(g)
+                                        if p.is_file() and p.name not in info["pcaps"])
     elif role == "ue":
         if (run_dir / "ue.log").is_file():
             info["logs"].append("ue.log")

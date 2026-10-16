@@ -72,22 +72,43 @@ MATCH_TOL = timedelta(seconds=0.5)
 # Locate the gnb.log and ue.log for a run/test dir (or take them explicitly)
 # --------------------------------------------------------------------------
 
+# OCUDU roles in the order their logs are picked, those with a PHY first.
+OCUDU_ROLES = ("gnb", "du", "odu", "cu", "cu-cp", "cu-up", "ocu")
+
+
 def resolve_logs(path_str, gnb_arg, ue_arg):
+    """(gNB log, UE log, other OCUDU logs of the role of the gNB log) of a run, each None or empty when absent."""
     gnb = Path(gnb_arg) if gnb_arg else None
     ue = Path(ue_arg) if ue_arg else None
     if gnb and ue:
-        return gnb, ue
+        return gnb, ue, []
     inv = resolve.build_inventory(path_str)
+    ocudu = []
     for c in inv["components"]:
         rd = Path(c["run_dir"])
-        if gnb is None and c["role"] in ("gnb", "du", "cu", "cu-cp", "cu-up", "odu", "ocu"):
-            for n in resolve.OCUDU_LOG_NAMES:
-                if (rd / n).is_file():
-                    gnb = rd / n
-                    break
+        if c["role"] in OCUDU_ROLES:
+            log = next((rd / n for n in resolve.OCUDU_LOG_NAMES if (rd / n).is_file()), None)
+            if log:
+                ocudu.append((OCUDU_ROLES.index(c["role"]), log))
         if ue is None and c["role"] == "ue" and (rd / "ue.log").is_file():
             ue = rd / "ue.log"
-    return gnb, ue
+    others = []
+    if gnb is None and ocudu:
+        best = min(rank for rank, _ in ocudu)
+        same = [log for rank, log in ocudu if rank == best]
+        gnb, others = same[0], same[1:]
+    return gnb, ue, others
+
+
+def shown_rnti(rnti) -> str:
+    """RNTI as gNB PHY lines print it, without padding, e.g. 0x44, from its normalized form."""
+    return f"0x{int(rnti, 16):x}" if rnti else "-"
+
+
+def has_phy(gnb_log) -> bool:
+    """Whether a gNB or DU log has a PHY radio event line."""
+    with open(gnb_log, errors="replace") as f:
+        return any("[PHY" in line[:40] and utils.GNB_PHY_RE.match(line) for line in f)
 
 
 # --------------------------------------------------------------------------
@@ -290,11 +311,17 @@ def main(argv=None) -> int:
     if args.rnti and rnti_filter is None:
         ap.error(f"invalid RNTI {args.rnti!r}, expected 4601, 0x4601 or 17921")
 
-    gnb_log, ue_log = resolve_logs(args.path, args.gnb, args.ue)
+    gnb_log, ue_log, others = resolve_logs(args.path, args.gnb, args.ue)
     if gnb_log is None and ue_log is None:
         print("error: could not locate gnb.log or ue.log", file=sys.stderr)
         return 1
+    if gnb_log and not has_phy(gnb_log):
+        print(f"error: no PHY lines in {gnb_log} (a CU log, or phy_level below info); pass a gNB or DU log with --gnb",
+              file=sys.stderr)
+        return 1
     print(f"gNB log : {gnb_log}")
+    for o in others:
+        print(f"  other : {o} (UE events on its cells read gnb-missing; rerun with --gnb)")
     print(f"UE  log : {ue_log}")
 
     # Date anchor for the UE log's HH:MM:SS clock (UE/gNB share UTC). Prefer the
@@ -328,7 +355,7 @@ def main(argv=None) -> int:
         return 0
     print(f"\n  {'slot':>9}  {'rnti':<8} {'status':<18} {'crc':<3} {'sinr':<8} ue_ts / gnb_ts")
     for r in shown[: args.max_rows]:
-        print(f"  {r['slot']:>9}  {str(r['rnti']):<8} {r['status']:<18} "
+        print(f"  {r['slot']:>9}  {shown_rnti(r['rnti']):<8} {r['status']:<18} "
               f"{str(r['crc'] or '-'):<3} {str(r['sinr'] or '-'):<8} "
               f"{r['ue_ts'] or '-'} / {r['gnb_ts'] or '-'}")
     if len(shown) > args.max_rows:
