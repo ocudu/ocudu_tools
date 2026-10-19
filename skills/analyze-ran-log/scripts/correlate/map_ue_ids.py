@@ -24,6 +24,7 @@ The protocol is auto-detected from the filename (ngap/f1ap/e1ap) or by
 probing the first packets with tshark.
 """
 
+import argparse
 import os
 import shutil
 import subprocess
@@ -36,7 +37,8 @@ import utils
 def _stage_for_tshark(pcap_file):
     """Copy the pcap under the shared /tmp cache if outside /tmp (Ubuntu AppArmor
     restricts tshark reads to /tmp). Pass through if already under /tmp."""
-    src = os.path.abspath(pcap_file)
+    # A symlink under /tmp to a file elsewhere is still denied, so its target is checked.
+    src = os.path.realpath(pcap_file)
     if src.startswith("/tmp/"):
         return src
     dst = utils.cache_path(src, "stage", suffix="pcap")
@@ -97,7 +99,7 @@ def _detect_protocol(orig_name, probe_path=None):
             if proto in line.lower():
                 return proto
     raise SystemExit(
-        f'Cannot detect protocol in {orig_name!r}. '
+        f'error: cannot detect protocol in {orig_name!r}. '
         'File name or content must contain ngap, f1ap, or e1ap.'
     )
 
@@ -106,7 +108,14 @@ def _run_tshark(pcap_file, fields):
     args = ['tshark', '-r', pcap_file, '-T', 'fields']
     for f in fields:
         args += ['-e', f]
-    result = subprocess.run(args, capture_output=True, text=True)
+    try:
+        result = subprocess.run(args, capture_output=True, text=True)
+    except OSError as e:
+        raise SystemExit(f'error: cannot run tshark: {e}')
+    if result.returncode != 0:
+        # Warnings, e.g. on unreadable preferences, come before the error.
+        err = result.stderr.strip().splitlines()
+        raise SystemExit(f'error: tshark failed on {pcap_file} (rc {result.returncode}): {err[-1] if err else ""}')
     return result.stdout.splitlines()
 
 
@@ -152,22 +161,39 @@ def _find_record(records, packet_ids):
     return None
 
 
+# Pcaps listed in the error on a directory.
+MAX_HINTS = 10
+
+
+def _dir_hint(path):
+    """Names of the pcaps of a directory, else the paths of those below it, for the error on a directory."""
+    pcaps = sorted(n for n in os.listdir(path) if n.endswith('.pcap'))
+    if pcaps:
+        return f'; its pcaps: {", ".join(pcaps)}'
+    below = sorted(os.path.relpath(os.path.join(d, n), path)
+                   for d, _, names in os.walk(path) for n in names if n.endswith('.pcap'))
+    if not below:
+        return '; no pcap in or below it'
+    # A test dir holds dozens of pcaps across its components.
+    shown = ', '.join(below[:MAX_HINTS]) + (f', ... ({len(below)} in all)' if len(below) > MAX_HINTS else '')
+    return f'; no pcap directly in it; pcaps below: {shown}'
+
+
 def main():
-    if len(sys.argv) != 2:
-        print(f'Usage: {sys.argv[0]} <pcap_file>', file=sys.stderr)
-        sys.exit(1)
-    if not os.path.isfile(sys.argv[1]):
-        hint = ''
-        if os.path.isdir(sys.argv[1]):
-            pcaps = sorted(n for n in os.listdir(sys.argv[1]) if n.endswith('.pcap'))
-            hint = f'; its pcaps: {", ".join(pcaps)}' if pcaps else '; it has no pcap'
-        print(f'error: {sys.argv[1]} is not a pcap file{hint}', file=sys.stderr)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument('pcap_file', help='an F1AP, NGAP or E1AP pcap')
+    args = ap.parse_args()
+    if not os.path.isfile(args.pcap_file):
+        hint = _dir_hint(args.pcap_file) if os.path.isdir(args.pcap_file) else ''
+        print(f'error: {args.pcap_file} is not a pcap file{hint}', file=sys.stderr)
         sys.exit(1)
 
     # Stage for tshark (AppArmor restricts tshark to /tmp on Ubuntu); detect the
     # protocol from the original filename, falling back to probing the staged copy.
-    pcap = _stage_for_tshark(sys.argv[1])
-    proto = _detect_protocol(sys.argv[1], probe_path=pcap)
+    pcap = _stage_for_tshark(args.pcap_file)
+    proto = _detect_protocol(args.pcap_file, probe_path=pcap)
     fields_cfg = _ID_FIELDS[proto]
     labels = [f[0] for f in fields_cfg]
     new_ue_msgs = _NEW_UE_MSGS.get(proto, set())
