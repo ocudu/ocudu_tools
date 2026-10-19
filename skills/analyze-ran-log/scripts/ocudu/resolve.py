@@ -39,7 +39,8 @@ from parsers.log import run  # noqa: E402
 # All five OCUDU app log names resolve as kind `ocudu` -- same format, different
 # role. Sourced from parsers.log.run so the two can't drift apart.
 OCUDU_LOG_NAMES = run.LOG_NAMES
-SIDECARS = ("stdout.log", "metrics.json")
+# Globs of the files beside the app log. Split runs name the stdout of each app, e.g. stdout_du.log.
+SIDECARS = ("stdout*.log", "metrics.json")
 # OCUDU app component directory names that can appear under a test_gnb[...] dir.
 COMPONENT_GLOBS = ("ocudu-gnb-*", "ocudu-cu-*", "ocudu-cu-cp-*", "ocudu-cu-up-*", "ocudu-du-*")
 
@@ -93,12 +94,14 @@ def build_report(given: Path) -> dict:
 
     report["primary_log"] = primary.name
     report["role"] = primary.stem.replace("_", "-")
-    cfgs = sorted(c.name for c in run_dir.glob(run.CONFIG_GLOB))
-    artifacts = (primary.name, *SIDECARS)
-    report["present"] = [a for a in artifacts if (run_dir / a).is_file()] + cfgs
-    report["missing"] = [a for a in artifacts if not (run_dir / a).is_file()]
-    if not cfgs:
-        report["missing"].append(run.CONFIG_GLOB)
+    report["present"] = []
+    report["missing"] = []
+    for glob in (primary.name, *SIDECARS, run.CONFIG_GLOB):
+        found = sorted(f.name for f in run_dir.glob(glob) if f.is_file())
+        if found:
+            report["present"] += found
+        else:
+            report["missing"].append(glob)
     if len(components) > 1:
         report["components"] = components
         report["resolved_component"] = next(

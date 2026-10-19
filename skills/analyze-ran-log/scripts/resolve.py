@@ -39,6 +39,9 @@ import zipfile
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR / "_lib"))
+
+from parsers.pcap.run import COMPONENT_DIR_RE, RUN_SUBDIR_RE  # noqa: E402
 
 # kind -> (subdir, script) it delegates to.
 DELEGATE = {
@@ -104,6 +107,14 @@ def _has_viavi_under(root: Path) -> bool:
     return False
 
 
+def _is_component_dir(path: Path) -> bool:
+    """True if `path` is an OCUDU component dir of a Retina run: an app log in a YYYY-MM-DD_HH-MM-SS subdir."""
+    if not COMPONENT_DIR_RE.match(path.resolve().name):
+        return False
+    return any(RUN_SUBDIR_RE.match(d.name) and any((d / n).is_file() for n in GNB_LOGS)
+               for d in path.iterdir() if d.is_dir())
+
+
 def classify(path: Path) -> tuple[str | None, str]:
     """Return (kind, reason). kind is None when the input is ambiguous/unknown."""
     if path.is_file():
@@ -126,7 +137,8 @@ def classify(path: Path) -> tuple[str | None, str]:
         return "ocudu", "directory contains an OCUDU app log"
     if (path / UE_LOG).is_file():
         return "amari-ue", "directory contains ue.log"
-    if any(p.is_file() for g in PCAP_GLOBS for p in path.glob(g)):
+    # A component dir, e.g. the ocudu-du-1-1 of a split DU, holds pcaps beside the run subdir with its app log.
+    if not _is_component_dir(path) and any(p.is_file() for g in PCAP_GLOBS for p in path.glob(g)):
         return "pcap", "directory contains Upper-PDU pcaps"
     direct_viavi = any("Command_Log" in p.name and p.is_file()
                        for suf in VIAVI_SUFFIXES for p in path.glob(VIAVI_GLOB + suf))

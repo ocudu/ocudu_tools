@@ -257,14 +257,35 @@ class RunDirTest(unittest.TestCase):
         pcaps = run.find_pcaps(run_dir)
         # The run directory's own pcap first.
         self.assertEqual((pcaps["rlc"], pcaps["f1ap"], pcaps["mac"]),
-                         (run_dir / "rlc.pcap", run_dir / "f1ap.pcap", run_dir.parent.resolve() / "mac.pcap"))
+                         (run_dir / "rlc.pcap", run_dir / "f1ap.pcap", run_dir.parent / "mac.pcap"))
         (run_dir / "f1ap.pcap").unlink()
-        self.assertEqual(run.find_pcaps(run_dir)["f1ap"], run_dir.parent.resolve() / "f1ap.pcap")
+        self.assertEqual(run.find_pcaps(run_dir)["f1ap"], run_dir.parent / "f1ap.pcap")
         self.assertEqual(run.resolve(run_dir / "rlc.pcap")["siblings"], ["mac", "f1ap"])
         # Only a run directory, by its name, has pcaps in its parent.
         other = self.dir / "ocudu-du-1-1" / "pcaps"
         other.mkdir()
         self.assertEqual(run.find_pcaps(other), dict.fromkeys(run.PROTOCOLS))
+
+    def test_pcaps_of_a_parent_that_is_no_component_dir(self):
+        # A Retina run directory downloaded next to the pcap of another run.
+        run_dir = self.dir / "2026-09-29_21-31-50"
+        run_dir.mkdir()
+        (run_dir / "mac.pcap").write_bytes(b"x")
+        (self.dir / "gnb_ngap.pcap").write_bytes(b"x")
+        self.assertEqual(run.find_pcaps(run_dir), {**dict.fromkeys(run.PROTOCOLS), "mac": run_dir / "mac.pcap"})
+
+    def test_relative_paths_of_the_component_dir(self):
+        run_dir = self.dir / "ocudu-gnb-1" / "2026-09-29_21-31-50"
+        run_dir.mkdir(parents=True)
+        (run_dir / "mac.pcap").write_bytes(b"x")
+        (run_dir.parent / "ngap.pcap").write_bytes(b"x")
+        cwd = os.getcwd()
+        os.chdir(run_dir)
+        try:
+            pcaps = run.find_pcaps(".")
+        finally:
+            os.chdir(cwd)
+        self.assertEqual((pcaps["mac"], pcaps["ngap"]), (Path("mac.pcap"), Path("../ngap.pcap")))
 
     def test_check_empty_pcap(self):
         (self.dir / "mac.pcap").write_bytes(b"")

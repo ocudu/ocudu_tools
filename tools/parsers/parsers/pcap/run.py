@@ -20,6 +20,8 @@ OCUDU_PREFIXES = ("gnb", "du", "cu", "cu_cp", "cu_up")
 KNOWN_DISSECTORS = ("ngap", "f1ap", "e1ap", "mac-nr", "rlc-nr")
 # Name of a Retina run directory, e.g. 2026-09-29_21-31-50, under the directory of its component, e.g. ocudu-du-1-1.
 RUN_SUBDIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
+# Name of the directory of an OCUDU component, e.g. ocudu-du-1-1, ocudu-gnb-1 or ocudu-cu-cp-1.
+COMPONENT_DIR_RE = re.compile(r"^ocudu-(gnb|du|cu|cu-cp|cu-up|odu|ocu)(-|$)")
 
 
 def pcap_proto(path: str | os.PathLike[str]) -> str | None:
@@ -36,13 +38,21 @@ def pcap_proto(path: str | os.PathLike[str]) -> str | None:
 def find_pcaps(run_dir: str | os.PathLike[str]) -> dict[str, Path | None]:
     """The pcaps of a run directory by protocol, e.g. "mac", None for the missing ones. Of several pcaps of a protocol,
     <proto>.pcap, else one of an OCUDU prefix, else the first by name. A protocol missing from a Retina run directory,
-    see RUN_SUBDIR_RE, is looked for in its parent, the directory of its component, e.g. the f1ap.pcap of a split DU.
+    see RUN_SUBDIR_RE, is looked for in its parent when that is the directory of an OCUDU component, see
+    COMPONENT_DIR_RE, e.g. the f1ap.pcap of a split DU. The paths are relative when run_dir is.
     """
     p = Path(run_dir)
     if not p.is_dir():
         raise FileNotFoundError(f"not a directory: {p}")
     out: dict[str, Path | None] = dict.fromkeys(PROTOCOLS)
-    dirs = [p, p.resolve().parent] if RUN_SUBDIR_RE.match(p.resolve().name) else [p]
+    real = p.resolve()
+    dirs = [p]
+    if RUN_SUBDIR_RE.match(real.name) and COMPONENT_DIR_RE.match(real.parent.name):
+        parent = Path(os.path.normpath(p / os.pardir))
+        # Through a symlink the lexical parent is another directory, so both take the real path.
+        if parent.resolve() != real.parent:
+            dirs[0], parent = real, real.parent
+        dirs.append(parent)
     for d in dirs:
         for full in sorted(d.glob("*.pcap*"), key=_preference):
             proto = pcap_proto(full)

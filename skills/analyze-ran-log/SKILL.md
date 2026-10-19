@@ -29,7 +29,7 @@ Five artifact **types**, each with its own subtree:
 | Type | Scope | Subtree |
 |---|---|---|
 | `pcap` | `*.pcap`/`*.pcapng` — Upper-PDU captures (NGAP/F1AP/E1AP/MAC-NR/RLC-NR), usually five siblings (`mac`,`rlc`,`f1ap`,`e1ap`,`ngap`) per run | `references/pcap/`, `scripts/pcap/` |
-| `ocudu` | OCUDU `gnb`/`du`/`cu`/`cu_cp`/`cu_up` artifacts: `gnb.log`, `stdout.log`, `ocudu_gnb.yml`, `metrics.json` | `references/ocudu/`, `scripts/ocudu/` |
+| `ocudu` | OCUDU `gnb`/`du`/`cu`/`cu_cp`/`cu_up` artifacts: `gnb.log`, `stdout*.log`, `ocudu_gnb.yml`, `metrics.json` | `references/ocudu/`, `scripts/ocudu/` |
 | `amari-ue` | Amarisoft UE simulator: `ue.log`, `stdout.log`, `amarisoft_ue.cfg` | `references/amari-ue/`, `scripts/amari-ue/` |
 | `viavi` | VIAVI RU-simulator (TM500) command/event log: `*_Command_Log*.txt` (or its identical `.zip`) | `references/viavi/`, `scripts/viavi/` |
 | `correlate` | **Cross-artifact**: line up the same event across UE log, gNB log, and pcaps for a whole run — clock/slot alignment, UE-identity joining, PRACH/PUSCH/PUCCH sent-vs-received | `references/correlate/`, `scripts/correlate/` |
@@ -157,7 +157,7 @@ A Retina `test_gnb[...]` directory typically contains:
 
 | Component dir | Artifacts | Type |
 |---|---|---|
-| `ocudu-gnb-*` / `ocudu-du-*` / `ocudu-cu-*` / `ocudu-cu-cp-*` / `ocudu-cu-up-*` | `gnb.log`/`du.log`/`cu*.log`, `stdout.log`, `ocudu_*.yml`, `metrics.json` | `ocudu` |
+| `ocudu-gnb-*` / `ocudu-du-*` / `ocudu-cu-*` / `ocudu-cu-cp-*` / `ocudu-cu-up-*` | `gnb.log`/`du.log`/`cu*.log`, `stdout*.log` (`stdout_du.log` of a split DU), `ocudu_*.yml`, `metrics.json` | `ocudu` |
 | (the same dirs) | `*.pcap` (`ngap`/`f1ap`/`e1ap`/`mac`/`rlc`) | `pcap` |
 | `amarisoft-ue-*` | `ue.log`, `stdout.log`, `amarisoft_ue.cfg` | `amari-ue` |
 | VIAVI tester output | `*_Command_Log*.txt`/`.zip` | `viavi` |
