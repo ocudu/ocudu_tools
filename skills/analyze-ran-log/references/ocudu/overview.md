@@ -26,11 +26,13 @@ Emits, in one pass:
 - Run lifecycle: first and last log time, duration, AMF SCTP connection, NG setup outcome, clean shutdown.
 - Cells and UEs: cells created, UE creations, Initial Context Setups completed, releases.
 - Procedure counts: RRC reconfigurations, handovers completed (target side, info: `"Intra CU Handover Target Routine"
-  finished` and NGAP `HandoverNotify`; Xn and inter-CU CHO not counted), `reconfigurationWithSync` in RRC bodies
-  (`rrc_level: debug` only), NGAP HandoverRequired/HandoverRequest PDUs, reestablishments, bearer
-  setups/modifications/releases, PRACHs, PHY CRC failures, with a note when they are unreliable: RRC, NGAP, F1AP, E1AP
-  or CU at `warning` in the config, or, without config levels, no info or debug lines of RRC, NGAP, CU-CP or CU-CP-E1
-  in the log. No note for a DU log (`==== DU started ===`), nor for RRC when CU-CP logs at info and no UE was created.
+  finished`, conditional intra-CU `CHO inter-DU completion finalized` and NGAP `HandoverNotify`; Xn and inter-CU CHO
+  not counted), `reconfigurationWithSync` in RRC bodies (`rrc_level: debug` only), NGAP HandoverRequired/HandoverRequest
+  PDUs, reestablishments, bearer setups/modifications/releases, PRACHs, PHY CRC failures, with a note when they are
+  unreliable: RRC, NGAP, E1AP or CU at `warning` in the config, or, without config levels, no info or debug lines of
+  RRC, NGAP, CU-CP or CU-CP-E1 in the log. No note for a log of no CU-CP, by its banner (DU, CU-UP, DU low), its
+  configured planes or its loggers, nor for RRC when CU-CP logs at info and no UE was created. Initial Context Setups
+  are compared with the UEs of an RRC setup, and not without RRC or CU-CP lines.
 - Scheduler metrics: from `metrics.json` when present (peak DL/UL bitrate per UE, max latency, late HARQs, failed
   PDCCH/UCI allocations, error indications, Msg3 outcomes, events), else the count and last of the METRICS
   rows, without the leveled lines of the metrics workers.

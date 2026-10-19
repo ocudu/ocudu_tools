@@ -145,11 +145,12 @@ def parse_gnb_log(gnb_log: Path, planes: list[str] = ()) -> dict:
 
 def ics_attempts(log: dict) -> int:
     """The UEs of a log expected to run Initial Context Setup: those of an RRC setup, unlike the CU-CP UEs created by a
-    handover, reestablishment or RRC resume. Without RRC lines, the CU-CP UEs created but not by a handover.
+    handover, reestablishment or RRC resume. 0, i.e. unknown, without RRC or CU-CP lines.
     """
-    if "RRC" not in log["silent_loggers"]:
-        return log["rrc_setups"]
-    return max(0, len(log["ue_creates"]) - log["ho_count"])
+    # CU-CP logs the completions, and only RRC tells the UEs of an RRC setup from those of a reestablishment or resume.
+    if "RRC" in log["silent_loggers"] or "CU-CP" in log["silent_loggers"]:
+        return 0
+    return log["rrc_setups"]
 
 
 def parse_stdout(stdout_log: Path) -> dict:

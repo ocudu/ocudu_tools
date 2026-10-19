@@ -116,6 +116,9 @@ class OcuduLogSummaryTest(unittest.TestCase):
         self.assertIn("Initial Context Setup OK : 1/2", out)
         self.assertIn("Initial Context Setup incomplete: 1/2", out)
         self.assertIn("Initial Context Setup incomplete: 0/1", self.summary(QUIET_LOG + VERBOSE_LINES))
+        # CU-CP, which logs the completions, below info.
+        rrc_only = VERBOSE_LINES.splitlines(keepends=True)[0]
+        self.assertNotIn("Initial Context Setup incomplete", self.summary(QUIET_LOG + rrc_only))
 
     def test_note_of_procedure_loggers_at_warning(self):
         cfg = Path(self.tmp.name) / "ocudu_gnb.yml"
