@@ -20,13 +20,16 @@ persistent `crc=KO` on PUSCH, late HARQs, ZMQ "Waiting for data" stalls
 
 ## Investigation checklist
 
-1. Are PRACH events progressing to UE creations?
+1. Are PRACH events progressing to UE creations? Count PRACHs with `grep -o`: one SCHED line can list
+   several (`prach(...)` at info, `- PRACH: slot=` lines at debug). DU-MNG logs one `UE Create` per DU
+   UE; `UE created` matches CU-CP and CU-UP lines, so it overcounts.
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --layer SCHED --pattern "prach\(" --count
-   python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --pattern "UE created" --count
+   grep -oE 'prach\(ra-rnti|- PRACH: slot=' gnb.log | wc -l
+   python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --layer DU-MNG --pattern 'proc="UE Create": Procedure finished' --count
    ```
    If PRACH count > UE creations by a lot, MSG3 / MSG4 are failing — check
-   `crc=KO` and `msg3_nok` in the metrics rows.
+   `crc=KO` and `msg3_nok` in the metrics rows. UEs a handover creates on a target DU also count as
+   UE creations.
 2. CRC failure timeline (cap at 100):
    ```bash
    python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --layer PHY --pattern "crc=KO" --max-lines 100

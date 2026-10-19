@@ -18,11 +18,11 @@ test catalogue, and the scheduler-only visibility notes, see
 
 ## Investigation checklist
 
-1. Are RRC/CU layers visible? Check log levels:
+1. Are RRC/CU layers visible? Check log levels (a layer without its own key takes `all_level`):
    ```bash
-   grep -E "rrc_level|cu_level" ocudu_gnb.yml
+   grep -E "all_level|rrc_level|cu_level" ocudu_*.yml
    ```
-   If both are `warning`, skip directly to step 4 (pcap) — the gNB log alone
+   If RRC and CU resolve to `warning`, skip directly to step 4 (pcap) — the gNB log alone
    won't show the HO command body.
 2. Count handovers completed (info; intra-CU by the target routine, NGAP by
    the target's `HandoverNotify`) and attempted (NGAP `HandoverRequired` on

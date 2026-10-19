@@ -16,18 +16,20 @@ NR handovers come in two flavours in OCUDU runs:
   `HandoverRequest` / `HandoverCommand` / `HandoverNotify` on the gNB log,
   plus an Xn association if XnAP is used.
 
-In the Retina test catalogue:
-- `mobility.intra_ru_ho.key_regen` — intra-gNB HO between cells served by the
-  same RU.
-- `mobility.inter_ru_ho.cfra_ho` — intra-gNB HO between cells on different RUs
-  (still same gNB), exercising Contention-Free Random Access on the target.
-- `mobility.reestablishment.intra_ru` — RLF + RRC reestablishment (see
+Retina mobility tests (suite ids; a run dir is named e.g. `test_gnb[multiue.mobility.inter_ru_ho]`):
+- `mobility.intra_ru_ho.key_regen`: intra-gNB HO between cells of the same RU.
+- `mobility.inter_ru_ho.{baseline,cfra_ho,conditional_ho}`, `multiue.mobility.inter_ru_ho`,
+  `multiue.mobility.inter_ru_cfra_ho`: intra-gNB HO between cells on different RUs; `cfra` uses
+  Contention-Free Random Access on the target.
+- `mobility.inter_du_ho.baseline`, `multiue.mobility.inter_du_ho` (`test_cu_2du`): intra-CU inter-DU HO.
+- `mobility.inter_cu_ho.{baseline,xn_ho,xn_cho}`, `multiue.mobility.inter_cu_ho` (`test_2gnb`): inter-gNB HO.
+- `mobility.reestablishment.intra_ru`, `multiue.mobility.reestablishment`: RLF + RRC reestablishment (see
   `reestablishment.md`).
 
-These three tests typically have `rrc_level: warning` and `cu_level: warning`,
-so the HO command itself **does not appear** in `gnb.log`. The visible signals
-are at the scheduler/MAC level. To see the HO command body, enable
-`f1ap.pcap` (already enabled in these tests) and use the `pcap` type.
+The log level is set per run (Retina `gnb.all.log_level`); check `all_level`, `rrc_level` and `cu_level` in
+`ocudu_*.yml`. With `all_level: info` every line below is logged. At `warning` (e.g. VIAVI nightly runs pass
+`gnb.all.log_level=warning`) the HO lines are absent: use the scheduler signals below, or `f1ap.pcap` /
+`ngap.pcap` with the `pcap` type.
 
 ## Expected sequence — intra-gNB inter-cell HO (info-level RRC enabled)
 
@@ -52,16 +54,16 @@ Scheduler-only visibility (when RRC/CU layers are at warning):
 
 | Step | Layer | Log line |
 |---|---|---|
-| 1 | RRC | Measurement report decoded |
-| 2 | NGAP | `ue=N ran_ue=N amf_ue=N: "Handover Preparation Procedure" started...` |
-| 3 | NGAP | `Tx PDU ue=N ran_ue=N: HandoverRequired` |
-| 4 | NGAP | `Rx PDU ... HandoverCommand` |
-| 5 | RRC | `DCCH DL rrcReconfiguration` (carrying the target's `reconfigurationWithSync`) |
-| 6 | NGAP | `Tx PDU ... UplinkRanStatusTransfer` (source→AMF; the target receives the matching `DownlinkRANStatusTransfer`) |
-| 7 | CU-CP | UEContextRelease after the handover completes on the target |
+| 1 | RRC | `ue=N c-rnti=0xN: DCCH UL measurementReport` |
+| 2 | CU-CP | `ue=N: Neighbor PCI=N (ssb_rsrp=N) stronger than current serving cell (ssb_rsrp=N)` |
+| 3 | NGAP | `ue=N ran_ue=N amf_ue=N: "Handover Preparation Procedure" started...`, then `Tx PDU ue=N ran_ue=N amf_ue=N: HandoverRequired` |
+| 4 | NGAP | `Rx PDU ue=N ran_ue=N amf_ue=N: HandoverCommand` |
+| 5 | RRC | `ue=N c-rnti=0xN: DCCH DL rrcReconfiguration` (carrying the target's `reconfigurationWithSync`), then F1 `UEContextModificationRequest` and E1 `BearerContextModificationRequest` |
+| 6 | NGAP | `Tx PDU: UplinkRANStatusTransfer` (source→AMF, no UE ids), then `ue=N ran_ue=N amf_ue=N: "Handover Preparation Procedure" finished successfully` |
+| 7 | NGAP | `Rx PDU ue=N ran_ue=N amf_ue=N: UEContextReleaseCommand` once the UE completes the handover on the target |
 
-Target side: NGAP `Rx PDU amf_ue=N: HandoverRequest`, `Tx PDU ...: HandoverRequestAcknowledge`, then
-`Tx PDU: HandoverNotify` once the UE completes the handover.
+Target side: NGAP `Rx PDU amf_ue=N: HandoverRequest`, `Tx PDU ue=N ran_ue=N amf_ue=N: HandoverRequestAcknowledge`,
+`Rx PDU: DownlinkRANStatusTransfer`, then RRC `DCCH UL rrcReconfigurationComplete` and NGAP `Tx PDU: HandoverNotify`.
 
 ## Diagnosing failures
 
