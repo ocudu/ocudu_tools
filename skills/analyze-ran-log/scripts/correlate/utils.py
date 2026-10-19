@@ -141,6 +141,8 @@ GNB_CRC_RE = re.compile(r"\bcrc=(?P<crc>OK|KO)")
 GNB_SINR_RE = re.compile(r"\bsinr=(?P<sinr>\S+)")
 GNB_ITER_RE = re.compile(r"\biter=(?P<iter>\S+)")
 GNB_PREAMBLE_RE = re.compile(r"idx=(?P<idx>\d+)")
+# A PUCCH UCI field. sr=no and a payload of 2s, e.g. ack=2 or csi1=2222, carry no valid UCI.
+GNB_PUCCH_UCI_RE = re.compile(r"\b(?P<field>ack|sr|csi1|csi2)=(?P<value>\S+)")
 # Some builds expose the true PHY reception slot of a later MAC/SCHED line:
 SLOT_RX_RE = re.compile(r"\bslot_rx=(?P<slot_rx>\d+\.\d+)")
 

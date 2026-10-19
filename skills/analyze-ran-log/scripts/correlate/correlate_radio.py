@@ -20,10 +20,20 @@ UL kinds (PUSCH/PUCCH/PRACH — UE transmits, gNB receives):
   - rx-ko/ue-missing       : gNB crc=KO, finite sinr, no UE TX matched
   - ue-missing-tx          : gNB decoded a transmission (crc=OK) the UE has no
                              record of sending -> suspect the join, the ref-date,
-                             or a truncated ue.log; re-check before concluding
+                             or a truncated ue.log; re-check before concluding.
+                             For PUCCH at low sinr, a false detection (sr=yes)
+  - ue-missed-dl           : gNB PUCCH with a HARQ-ACK field, sinr=-inf or no
+                             valid UCI (ack=2..), and no UE TX -> a PDSCH was
+                             scheduled but the UE missed its PDCCH (DL DTX)
+  - no-detection           : other gNB PUCCH with sinr=-inf or no valid UCI
+                             (sr=no) and no UE TX -> an SR or CSI occasion the
+                             UE did not use; not an anomaly
   - gnb-missing            : UE transmitted but no gNB event near it in time
   - ue-extra-tx/contention : a 2nd UE TX on a (slot,rnti) the gNB already paired
                              (RACH contention; expected, not an anomaly)
+  - gnb-extra-rx           : PUCCH only: another resource the gNB decoded at a
+                             (slot,rnti) whose UE TX paired with its best one;
+                             not an anomaly
 DL kinds (PDSCH/PDCCH — gNB transmits, UE receives):
   - tx-rx-ok               : both sides logged it
   - ue-missing-rx          : gNB transmitted but the UE logged no reception
@@ -31,8 +41,13 @@ DL kinds (PDSCH/PDCCH — gNB transmits, UE receives):
 
 Caveats:
   - **PUCCH has no `crc=` field**, so PUCCH never yields the rx-ko/* (DTX)
-    classes — paired PUCCH is always rx-ok; a `sinr=-inf` PUCCH occasion is a
-    normal no-detection, not flagged.
+    classes — paired PUCCH is always rx-ok. A gNB PUCCH shows no UE TX when
+    `sinr=-inf` or no field holds valid UCI (`sr=no`, payloads of 2s such as
+    `ack=2` or `csi1=2222`); one valid field, e.g. `ack=11 csi1=2222`, is a TX.
+  - The UE logs RNTI 0000 for the Msg4 HARQ-ACK PUCCH. Such a UE event takes
+    the RNTI of the UE id's last UL TX (the Msg3 TC-RNTI); with none, it pairs
+    with a detected gNB event of any RNTI at its slot.
+  - Both logs are needed; with one side only the script exits 1.
   - **PRACH**: per-side indices differ (UE sequence_index != gNB idx), so PRACH
     is correlated loosely by wall-clock occasion (see --kind prach), not joined
     on (slot,rnti).
@@ -76,22 +91,32 @@ MATCH_TOL = timedelta(seconds=0.5)
 OCUDU_ROLES = ("gnb", "du", "odu", "cu", "cu-cp", "cu-up", "ocu")
 
 
-def resolve_logs(path_str, gnb_arg, ue_arg):
-    """(gNB log, UE log, other OCUDU logs of the role of the gNB log) of a run, each None or empty when absent."""
-    gnb = Path(gnb_arg) if gnb_arg else None
-    ue = Path(ue_arg) if ue_arg else None
-    if gnb and ue:
-        return gnb, ue, []
-    inv = resolve.build_inventory(path_str)
-    ocudu = []
+def ocudu_logs(inv, roles):
+    """[(index of the role in roles, primary log)] of the OCUDU components of the inventory with one of roles."""
+    found = []
     for c in inv["components"]:
         rd = Path(c["run_dir"])
-        if c["role"] in OCUDU_ROLES:
+        if c["role"] in roles:
             log = next((rd / n for n in resolve.OCUDU_LOG_NAMES if (rd / n).is_file()), None)
             if log:
-                ocudu.append((OCUDU_ROLES.index(c["role"]), log))
-        if ue is None and c["role"] == "ue" and (rd / "ue.log").is_file():
-            ue = rd / "ue.log"
+                found.append((roles.index(c["role"]), log))
+    return found
+
+
+def resolve_logs(path_str, gnb_arg, ue_arg):
+    """(gNB log, UE log, other OCUDU logs of the role of the gNB log) of a run, each None or empty when absent.
+
+    path_str None means no run dir: only the explicit logs are taken.
+    """
+    gnb = Path(gnb_arg).resolve() if gnb_arg else None
+    ue = Path(ue_arg).resolve() if ue_arg else None
+    if (gnb and ue) or path_str is None:
+        return gnb, ue, []
+    inv = resolve.build_inventory(path_str)
+    if ue is None:
+        ue = next((Path(c["run_dir"]) / "ue.log" for c in inv["components"]
+                   if c["role"] == "ue" and (Path(c["run_dir"]) / "ue.log").is_file()), None)
+    ocudu = ocudu_logs(inv, OCUDU_ROLES)
     others = []
     if gnb is None and ocudu:
         best = min(rank for rank, _ in ocudu)
@@ -116,6 +141,22 @@ def has_phy(gnb_log) -> bool:
 # --------------------------------------------------------------------------
 
 UL_KINDS = {"PUSCH", "PUCCH", "PRACH"}
+# RNTI of UE events logged before the UE adopts its C-RNTI, e.g. the Msg4 HARQ-ACK PUCCH.
+UNKNOWN_RNTI = "0x0000"
+
+
+def not_transmitted(kind, rest, sinr) -> tuple[bool, bool]:
+    """(UE sent nothing, UE missed a DL assignment) of a gNB PUCCH.
+
+    The UE sent nothing when there is no signal or no field holds valid UCI; it then missed a DL assignment when the
+    PUCCH has a HARQ-ACK field.
+    """
+    if kind != "PUCCH":
+        return False, False
+    fields = {m.group("field"): m.group("value") for m in utils.GNB_PUCCH_UCI_RE.finditer(rest)}
+    valid = any(v != "no" and set(v) != {"2"} for v in fields.values())
+    no_tx = "inf" in sinr.lower() or (bool(fields) and not valid)
+    return no_tx, no_tx and "ack" in fields
 
 
 def parse_gnb_phy(gnb_log, kind, rnti_filter):
@@ -135,6 +176,7 @@ def parse_gnb_phy(gnb_log, kind, rnti_filter):
                 continue
             crc = utils.GNB_CRC_RE.search(rest)
             sinr = utils.GNB_SINR_RE.search(rest)
+            no_tx, missed_dl = not_transmitted(kind, rest, sinr.group("sinr") if sinr else "")
             events[(m.group("slot"), rnti)].append({
                 "ts": m.group("ts"),
                 "dt": utils.parse_gnb_ts(m.group("ts")),
@@ -142,21 +184,41 @@ def parse_gnb_phy(gnb_log, kind, rnti_filter):
                 "rnti": rnti,
                 "crc": crc.group("crc") if crc else None,
                 "sinr": sinr.group("sinr") if sinr else None,
+                "no_tx": no_tx,
+                "missed_dl": missed_dl,
             })
     return events
+
+
+def ue_phy_events(ue_log):
+    """Yield (match of utils.UE_PHY_RE, RNTI) of the UE PHY lines of ue_log.
+
+    An event of unknown RNTI takes the RNTI of the last UL transmission of its UE id, else stays unknown.
+    """
+    # Last UL RNTI of each UE id.
+    last_ul = {}
+    with open(ue_log, errors="replace") as f:
+        for line in f:
+            if line[:1] not in "0123456789":
+                continue
+            m = utils.UE_PHY_RE.match(line)
+            if not m:
+                continue
+            rnti = normalize(m.group("rnti"), bare_hex=True)
+            if rnti == UNKNOWN_RNTI:
+                # The Msg4 HARQ-ACK follows the Msg3 PUSCH on the TC-RNTI that becomes the C-RNTI. A later RNTI of
+                # the UE id may belong to a new random access.
+                rnti = last_ul.get(m.group("ueid"), UNKNOWN_RNTI)
+            elif rnti and m.group("dir") == "UL":
+                last_ul[m.group("ueid")] = rnti
+            yield m, rnti
 
 
 def parse_ue_phy(ue_log, kind, rnti_filter, ref_date):
     """Return {(slot, rnti): [event, ...]} for the given PHY kind."""
     events = defaultdict(list)
-    for line in open(ue_log, errors="replace"):
-        if line[:1] not in "0123456789":
-            continue
-        m = utils.UE_PHY_RE.match(line)
-        if not m or m.group("kind") != kind:
-            continue
-        rnti = normalize(m.group("rnti"), bare_hex=True)
-        if rnti_filter and rnti != rnti_filter:
+    for m, rnti in ue_phy_events(ue_log):
+        if m.group("kind") != kind or (rnti_filter and rnti != rnti_filter):
             continue
         try:
             dt = utils.parse_hms_ts(m.group("ts"), ref_date) if ref_date else None
@@ -196,12 +258,59 @@ def _pair_by_time(glist, ulist):
     return pairs, g_only, u_only
 
 
+def near(a, b) -> bool:
+    """Whether events a and b are within MATCH_TOL in wall-clock, or either has no timestamp."""
+    return a["dt"] is None or b["dt"] is None or abs(a["dt"] - b["dt"]) <= MATCH_TOL
+
+
+def no_signal(gnb_ev) -> bool:
+    """Whether the gNB measured no signal (sinr=inf or -inf) on the event."""
+    return "inf" in (gnb_ev.get("sinr") or "").lower()
+
+
 def classify_ko(gnb_ev, ue_ev) -> str:
-    sinr = (gnb_ev.get("sinr") or "")
-    silent = "inf" in sinr.lower()
     if ue_ev is not None:
         return "rx-ko/ue-tx"
-    return "rx-ko/ue-silent" if silent else "rx-ko/ue-missing"
+    return "rx-ko/ue-silent" if no_signal(gnb_ev) else "rx-ko/ue-missing"
+
+
+def sinr_db(gnb_ev) -> float:
+    """SINR of a gNB event in dB, -inf when absent or not a number."""
+    try:
+        return float((gnb_ev.get("sinr") or "").removesuffix("dB"))
+    except ValueError:
+        return float("-inf")
+
+
+def split_pucch_resources(pairs, g_only):
+    """(pairs, gNB events left, extra gNB events) of a PUCCH (slot, rnti).
+
+    The gNB may decode several PUCCH resources of a UE in a slot while the UE uses one, so each UE TX takes the best
+    gNB event in its window and the others in that window are extra.
+    """
+    extra = []
+    for i, (g, u) in enumerate(pairs):
+        near = [e for e in g_only if e["dt"] is None or u["dt"] is None or abs(e["dt"] - u["dt"]) <= MATCH_TOL]
+        best = min([g] + near, key=lambda e: (e["no_tx"], -sinr_db(e)))
+        pairs[i] = (best, u)
+        g_only = [e for e in g_only if all(e is not n for n in near)]
+        extra += [e for e in near + [g] if e is not best]
+    return pairs, g_only, extra
+
+
+def take_unknown_rnti(unknown, g):
+    """Pop the UE event of unknown RNTI nearest in wall-clock to gNB event g within MATCH_TOL, or None.
+
+    A gNB event that shows no UE TX takes none.
+    """
+    if g["no_tx"]:
+        return None
+    cands = [u for u in unknown.get(g["slot"], []) if near(g, u)]
+    if not cands:
+        return None
+    u = min(cands, key=lambda e: abs(g["dt"] - e["dt"]) if g["dt"] and e["dt"] else timedelta(0))
+    unknown[g["slot"]].remove(u)
+    return u
 
 
 # --------------------------------------------------------------------------
@@ -211,41 +320,70 @@ def classify_ko(gnb_ev, ue_ev) -> str:
 def correlate(gnb_log, ue_log, kind, rnti_filter, ref_date):
     kind_u = kind.upper()
     is_ul = kind_u in UL_KINDS
-    gnb_ev = parse_gnb_phy(gnb_log, kind_u, rnti_filter) if gnb_log else {}
-    ue_ev = parse_ue_phy(ue_log, kind_u, rnti_filter, ref_date) if ue_log else {}
+    gnb_ev = parse_gnb_phy(gnb_log, kind_u, rnti_filter)
+    ue_ev = parse_ue_phy(ue_log, kind_u, rnti_filter, ref_date)
+    # UE events of unknown RNTI by slot, joined to unpaired gNB events of any RNTI that show a UE TX.
+    unknown = defaultdict(list)
+    for key in [k for k in ue_ev if k[1] == UNKNOWN_RNTI]:
+        unknown[key[0]] += ue_ev.pop(key)
 
     rows = []
     counts = Counter()
-    keys = set(gnb_ev) | set(ue_ev)
-    for key in sorted(keys, key=lambda k: (utils.slot_key(k[0]) or (0, 0), str(k[1]))):
+
+    def emit(status, slot, rnti, g, u):
+        counts[status] += 1
+        rows.append({
+            "slot": slot, "rnti": rnti, "status": status,
+            "gnb_ts": g["ts"] if g else None,
+            "ue_ts": u["ts"] if u else None,
+            "crc": g.get("crc") if g else None,
+            "sinr": g.get("sinr") if g else None,
+            "ueid": u.get("ueid") if u else None,
+        })
+
+    keys = sorted(set(gnb_ev) | set(ue_ev), key=lambda k: (utils.slot_key(k[0]) or (0, 0), str(k[1])))
+    joined = {key: _pair_by_time(gnb_ev.get(key, []), ue_ev.get(key, [])) for key in keys}
+    if is_ul and unknown:
+        for key in keys:
+            pairs, g_only, _ = joined[key]
+            for g in list(g_only):
+                u = take_unknown_rnti(unknown, g)
+                if u is not None:
+                    pairs.append((g, u))
+                    g_only.remove(g)
+
+    for key in keys:
         slot, rnti = key
-        pairs, g_only, u_only = _pair_by_time(gnb_ev.get(key, []), ue_ev.get(key, []))
-
-        def emit(status, g, u):
-            counts[status] += 1
-            rows.append({
-                "slot": slot, "rnti": rnti, "status": status,
-                "gnb_ts": g["ts"] if g else None,
-                "ue_ts": u["ts"] if u else None,
-                "crc": g.get("crc") if g else None,
-                "sinr": g.get("sinr") if g else None,
-                "ueid": u.get("ueid") if u else None,
-            })
-
+        pairs, g_only, u_only = joined[key]
+        if kind_u == "PUCCH":
+            pairs, g_only, extra = split_pucch_resources(pairs, g_only)
+            for g in extra:
+                emit("gnb-extra-rx", slot, rnti, g, None)
         for g, u in pairs:
             if is_ul:
                 status = "rx-ok" if (g.get("crc") in ("OK", None)) else classify_ko(g, u)
             else:
                 status = "tx-rx-ok"
-            emit(status, g, u)
+            emit(status, slot, rnti, g, u)
+        # gNB missed-DL events of the (slot, rnti), one per HARQ-ACK occasion.
+        missed = []
         for g in g_only:
-            if is_ul:
-                # gNB event with no matching UE TX in window
-                status = "ue-missing-tx" if g.get("crc") in ("OK", None) else classify_ko(g, None)
-            else:
+            if not is_ul:
                 # DL: gNB transmitted but the UE logged no reception -> UE missed it.
                 status = "ue-missing-rx"
-            emit(status, g, None)
+            elif g.get("crc") == "KO":
+                status = classify_ko(g, None)
+            elif g["missed_dl"] and not any(near(g, h) for h in missed):
+                # A HARQ-ACK occasion follows a PDSCH, so the UE missed its PDCCH: a DL DTX. The gNB may check
+                # several resources of the occasion, so the others read no-detection.
+                missed.append(g)
+                status = "ue-missed-dl"
+            elif g["no_tx"]:
+                # A PUCCH occasion, e.g. for SR, the UE did not use.
+                status = "no-detection"
+            else:
+                status = "ue-missing-tx"
+            emit(status, slot, rnti, g, None)
         gnb_bucket = gnb_ev.get(key, [])
         tol = MATCH_TOL.total_seconds()
         for u in u_only:
@@ -264,7 +402,10 @@ def correlate(gnb_log, ue_log, kind, rnti_filter, ref_date):
                 # No gNB event near this UE TX in time -> a genuine gNB-side miss,
                 # even if the slot string recurs in another superframe.
                 status = "gnb-missing"
-            emit(status, None, u)
+            emit(status, slot, rnti, None, u)
+    for slot, ues in unknown.items():
+        for u in ues:
+            emit("gnb-missing", slot, UNKNOWN_RNTI, None, u)
     return rows, counts
 
 
@@ -272,7 +413,7 @@ def correlate(gnb_log, ue_log, kind, rnti_filter, ref_date):
 # multi-UE RACH and is NOT listed here (it's normal contention, not a fault).
 ANOMALY_STATUSES = {
     "gnb-missing", "rx-ko/ue-tx", "rx-ko/ue-silent", "rx-ko/ue-missing",
-    "ue-missing-tx", "ue-missing-rx",
+    "ue-missing-tx", "ue-missing-rx", "ue-missed-dl",
 }
 
 
@@ -296,7 +437,7 @@ def prach_summary(gnb_log, ue_log):
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("path", nargs="?", default=".", help="test dir or run dir")
+    ap.add_argument("path", nargs="?", help="test dir or run dir (default: the current dir, unless --gnb or --ue)")
     ap.add_argument("--gnb", help="explicit gnb.log path")
     ap.add_argument("--ue", help="explicit ue.log path")
     ap.add_argument("--kind", default="pusch",
@@ -311,11 +452,13 @@ def main(argv=None) -> int:
     if args.rnti and rnti_filter is None:
         ap.error(f"invalid RNTI {args.rnti!r}, expected 4601, 0x4601 or 17921")
 
-    gnb_log, ue_log, others = resolve_logs(args.path, args.gnb, args.ue)
-    if gnb_log is None and ue_log is None:
-        print("error: could not locate gnb.log or ue.log", file=sys.stderr)
+    path = args.path if args.path or args.gnb or args.ue else "."
+    gnb_log, ue_log, others = resolve_logs(path, args.gnb, args.ue)
+    if gnb_log is None or ue_log is None:
+        missing = "gNB or DU log (--gnb)" if gnb_log is None else "UE log (--ue)"
+        print(f"error: no {missing}; nothing to correlate", file=sys.stderr)
         return 1
-    if gnb_log and not has_phy(gnb_log):
+    if not has_phy(gnb_log):
         print(f"error: no PHY lines in {gnb_log} (a CU log, or phy_level below info); pass a gNB or DU log with --gnb",
               file=sys.stderr)
         return 1
@@ -326,11 +469,9 @@ def main(argv=None) -> int:
 
     # Date anchor for the UE log's HH:MM:SS clock (UE/gNB share UTC). Prefer the
     # gNB first-event date; fall back to the UE log's `# Started on` header.
-    ref_date = None
-    if gnb_log:
-        first = utils.first_gnb_event_ts(gnb_log)
-        ref_date = first.split("T")[0] if first else None
-    if ref_date is None and ue_log:
+    first = utils.first_gnb_event_ts(gnb_log)
+    ref_date = first.split("T")[0] if first else None
+    if ref_date is None:
         ref_date = utils.started_on_date(ue_log)
 
     if args.kind == "prach":

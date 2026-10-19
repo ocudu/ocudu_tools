@@ -85,6 +85,12 @@ Notes and caveats:
   `(slot,rnti)` ⇒ the UE *did* transmit → gNB-side decode / ZMQ-sample issue,
   **not** a UE DTX. gNB `crc=KO sinr=inf` *without* a UE TX ⇒ true DTX.
   (`correlate_radio.py` labels these `rx-ko/ue-tx` vs `rx-ko/ue-silent`.)
+- **PUCCH**: the gNB logs every occasion and resource it checks, the UE only what it sends. A gNB PUCCH shows
+  no UE TX when `sinr=-inf` or no field holds valid UCI (`sr=no`, payloads of 2s such as `ack=2`,
+  `csi1=2222`). Without a UE TX, one with a HARQ-ACK field is `ue-missed-dl`: a PDSCH was scheduled and the UE
+  missed its PDCCH (DL DTX; tracks PDSCH `ue-missing-rx`). Others (SR, CSI) are `no-detection`; a second
+  resource of a paired `(slot,rnti)` is `gnb-extra-rx`; neither is a fault. The UE logs RNTI `0000` for the
+  Msg4 HARQ-ACK; the script gives it the RNTI of that UE id's last UL TX (the Msg3 TC-RNTI).
 - **RACH contention**: two UE PUSCH at the same `(slot, tc-rnti)` from different
   UEIDs, one gNB event → collision (`ue-extra-tx/contention`); expected in
   multi-UE attach, not a fault.
@@ -98,7 +104,7 @@ Notes and caveats:
 | Script | Purpose |
 |---|---|
 | `resolve.py` | Components, artifacts, testbed map, clock anchors (the `correlate` resolver) |
-| `align_clocks.py` | Verify the same-process log↔pcap relationship (sanity/display-TZ guard, not an offset measurement) + UE↔gNB PHY slot alignment + `slot_rx=` availability. Does **not** check off-host sources |
-| `correlate_radio.py` | Join UE↔gNB PHY events on `(SFN.slot, RNTI)`; flag rx-ko/missing/contention; DTX vs degradation |
+| `align_clocks.py` | Verify the same-process log↔pcap relationship (sanity/display-TZ guard, not an offset measurement; on split runs the CU log and its `ngap.pcap`, `--cu` to pick one) + UE↔gNB PHY slot alignment (DU log) + `slot_rx=` availability. Does **not** check off-host sources |
+| `correlate_radio.py` | Join UE↔gNB PHY events on `(SFN.slot, RNTI)`; flag rx-ko/missing/contention; DTX vs degradation. Needs both a gNB/DU log and a UE log, else exits 1 |
 | `map_ue_ids.py` | Per-pcap UE-identifier lifecycle (f1ap/ngap/e1ap); feeds `ue-identity-map.md` |
 | `ue_table.py` | One row per UE context, or per UE trace (`--traces`), of a run: F1AP pcap joined with the gNB log and the NGAP/E1AP pcaps (rnti, du_ue, cu_ue, F1AP, NGAP and E1AP ids, lifetime) |
