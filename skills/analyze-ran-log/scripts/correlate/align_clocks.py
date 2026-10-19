@@ -83,10 +83,10 @@ def resolve_ngap_log(path_str, cu_arg, gnb_log):
     if cu_arg:
         return Path(cu_arg).resolve(), ""
     if path_str is None:
-        # Only explicit logs: a gNB log also writes NGAP.
-        if gnb_log is not None:
+        # Only explicit logs: a gNB log also writes NGAP, a DU log does not.
+        if gnb_log is not None and not gnb_log.name.startswith("du"):
             return gnb_log, ""
-        return None, "no run dir and no --gnb or --cu"
+        return None, "no run dir and no gNB log or --cu"
     logs = correlate_radio.ocudu_logs(resolve.build_inventory(path_str), NGAP_ROLES)
     if not logs:
         return None, "no gNB, CU or CU-CP component in the run (pass --cu)"
@@ -165,7 +165,8 @@ def main(argv=None) -> int:
         elif g_ts is None:
             print(f"[log <-> pcap]  skipped: NGSetupRequest not in {ngap_log.name} (a DU log, NGAP logging below "
                   "info, or the log starts after NG setup).")
-            print("   The log and pcap are written by the same process, so they share UTC regardless;")
+            if pcap == ngap_pcap_beside(ngap_log):
+                print("   The log and pcap are written by the same process, so they share UTC regardless;")
             print("   the UE<->gNB check below still anchors the radio timeline.")
         else:
             print("[log <-> pcap]  could not read the pcap epoch (tshark/AppArmor — "

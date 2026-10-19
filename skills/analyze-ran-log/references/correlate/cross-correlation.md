@@ -88,7 +88,8 @@ Notes and caveats:
 - **PUCCH**: the gNB logs every occasion and resource it checks, the UE only what it sends. A gNB PUCCH shows
   no UE TX when `sinr=-inf` or no field holds valid UCI (`sr=no`, payloads of 2s such as `ack=2`,
   `csi1=2222`). Without a UE TX, one with a HARQ-ACK field is `ue-missed-dl`: a PDSCH was scheduled and the UE
-  missed its PDCCH (DL DTX; tracks PDSCH `ue-missing-rx`). Others (SR, CSI) are `no-detection`; a second
+  missed its PDCCH (DL DTX; tracks PDSCH `ue-missing-rx`), or the UE no longer uses the RNTI, e.g. after a
+  reestablishment or handover, while the gNB still schedules it: check `ue.log` for the RNTI. Others (SR, CSI) are `no-detection`; a second
   resource of a paired `(slot,rnti)` is `gnb-extra-rx`; neither is a fault. The UE logs RNTI `0000` for the
   Msg4 HARQ-ACK; the script gives it the RNTI of that UE id's last UL TX (the Msg3 TC-RNTI).
 - **RACH contention**: two UE PUSCH at the same `(slot, tc-rnti)` from different

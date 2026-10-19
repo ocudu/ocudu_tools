@@ -74,9 +74,12 @@ class AlignClocksTest(unittest.TestCase):
         res = self.run_script("--gnb", str(self.runs["du.log"]), "--ue", str(self.runs["ue.log"]))
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("first co-identified PUSCH", res.stdout)
+        # A DU log writes no NGAP, so it is not checked against a pcap.
+        self.assertIn("[log <-> pcap]  skipped: no run dir and no gNB log or --cu", res.stdout)
+        self.assertIn("Conclusion: the gNB or CU log", res.stdout)
         res = self.run_script("--ue", str(self.runs["ue.log"]))
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn("[log <-> pcap]  skipped: no run dir and no --gnb or --cu", res.stdout)
+        self.assertIn("[log <-> pcap]  skipped: no run dir and no gNB log or --cu", res.stdout)
         self.assertIn("[UE <-> gNB]  skipped: no gNB or DU log (--gnb)", res.stdout)
 
     def test_cu_log_alone(self):

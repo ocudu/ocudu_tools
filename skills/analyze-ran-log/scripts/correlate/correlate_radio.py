@@ -21,10 +21,12 @@ UL kinds (PUSCH/PUCCH/PRACH — UE transmits, gNB receives):
   - ue-missing-tx          : gNB decoded a transmission (crc=OK) the UE has no
                              record of sending -> suspect the join, the ref-date,
                              or a truncated ue.log; re-check before concluding.
-                             For PUCCH at low sinr, a false detection (sr=yes)
+                             For PUCCH, a false detection at low sinr (e.g.
+                             sr=yes); ignore it.
   - ue-missed-dl           : gNB PUCCH with a HARQ-ACK field, sinr=-inf or no
                              valid UCI (ack=2..), and no UE TX -> a PDSCH was
-                             scheduled but the UE missed its PDCCH (DL DTX)
+                             scheduled but the UE missed its PDCCH (DL DTX),
+                             or no longer uses the RNTI (check ue.log for it)
   - no-detection           : other gNB PUCCH with sinr=-inf or no valid UCI
                              (sr=no) and no UE TX -> an SR or CSI occasion the
                              UE did not use; not an anomaly
