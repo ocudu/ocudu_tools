@@ -101,9 +101,11 @@ class SummaryTest(unittest.TestCase):
             "2026-07-27T15:45:03.000000 [NGAP    ] [I] HandoverRequest - extracted target cell. plmn=00101, target "
             "cell_id=6576\n",
             "2026-07-27T15:45:03.100000 [NGAP    ] [I] Tx PDU: HandoverNotify\n",
+            # A conditional intra-CU handover, which runs no Intra CU Handover Target Routine.
+            "2026-07-27T15:45:04.000000 [CU-CP   ] [I] target_ue=4 source_ue=3: CHO inter-DU completion finalized\n",
         ]
         s = summary.summarize(log)
-        self.assertEqual((s.ho_count, s.reconf_with_sync_count, s.ngap_handover_count), (2, 1, 2))
+        self.assertEqual((s.ho_count, s.reconf_with_sync_count, s.ngap_handover_count), (3, 1, 2))
 
     def test_app(self):
         log = [
@@ -114,6 +116,13 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual((s.app, s.build_commit), ("CU", "cb9ca3f"))
         du = summary.summarize(["2026-09-29T21:31:58.240299 [GNB     ] [I] ==== DU started ===\n"])
         self.assertEqual(du.app, "DU")
+        # The CU-CP and CU-UP log them under their own logger, DU low under APP.
+        for logger, app in (("CU-CP", "CU-CP"), ("CU-UP", "CU-UP"), ("APP", "DU low")):
+            s = summary.summarize([
+                f"2026-09-29T21:31:50.592455 [{logger:<8}] [I] Built in Release mode using commit cb9ca3f on branch m\n",
+                f"2026-09-29T21:31:50.898438 [{logger:<8}] [I] ==== {app} started ===\n",
+            ])
+            self.assertEqual((s.app, s.build_commit, s.loggers), (app, "cb9ca3f", [logger]))
 
     def test_console(self):
         c = console.summarize(STDOUT.splitlines(keepends=True))

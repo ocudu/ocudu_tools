@@ -64,10 +64,65 @@ class OcuduLogSummaryTest(unittest.TestCase):
         no_ue += "2026-07-06T17:14:10.400000 [CU-CP   ] [I] Connection to AMF on 127.0.0.1:38412 established\n"
         self.assertNotIn("NOTE", self.summary(QUIET_LOG + no_ue))
 
+    def test_no_note_of_processes_without_cu_cp(self):
+        # By their banner.
+        for logger, app in (("CU-UP", "CU-UP"), ("APP", "DU low")):
+            banner = f"2026-09-29T21:31:58.240299 [{logger:<8}] [I] ==== {app} started ===\n"
+            self.assertNotIn("NOTE", self.summary(QUIET_LOG + banner))
+        # Without a banner, e.g. of a rotated log, by their loggers.
+        du = ('2026-09-29T21:32:20.000000 [DU-MNG  ] [I] ue=0 rnti=0x4601 proc="UE Create": Procedure started...\n'
+              "2026-09-29T21:32:20.100000 [DU-F1   ] [I] Tx PDU du=0 ue=0: InitialULRRCMessageTransfer\n")
+        self.assertNotIn("NOTE", self.summary(QUIET_LOG + du))
+        cu_up = "2026-09-29T21:32:20.000000 [CU-UP-E1] [I] Rx PDU: BearerContextSetupRequest\n"
+        self.assertNotIn("NOTE", self.summary(QUIET_LOG + cu_up))
+        # A CU-CP logger is of a CU-CP.
+        cu_cp = "2026-09-29T21:32:20.200000 [CU-CP-F1] [I] Rx PDU du=0: InitialULRRCMessageTransfer\n"
+        self.assertIn("NOTE", self.summary(QUIET_LOG + du + cu_cp))
+
+    def test_stdout_of_the_component(self):
+        log = Path(self.tmp.name) / "du.log"
+        log.write_text(QUIET_LOG)
+        stdout = "--== OCUDU DU (commit abc123) ==--\n==== DU started ===\n"
+        (Path(self.tmp.name) / "stdout_du.log").write_text(stdout)
+        (Path(self.tmp.name) / "stdout_mme.log").write_text("other\n")
+        res = subprocess.run([sys.executable, str(SCRIPT), self.tmp.name], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("stdout banner   : abc123", res.stdout)
+        self.assertIn("stdout marker       : started but no `Stopping...` line", res.stdout)
+
     def test_handovers_at_info(self):
         ho = ('2026-07-06T17:14:11.000000 [CU-CP   ] [I] ue=1: "Intra CU Handover Target Routine" finished '
               "successfully\n")
         self.assertIn("Handovers completed : 1", self.summary(QUIET_LOG + VERBOSE_LINES + ho))
+
+    def test_initial_context_setup_of_the_ues_of_an_rrc_setup(self):
+        # CU-CP UEs of a handover, a reestablishment and an RRC resume, which run no Initial Context Setup.
+        others = ("2026-07-06T17:14:10.600000 [CU-CP   ] [I] ue=1 c-rnti=0x4602: UE created\n"
+                  '2026-07-06T17:14:10.700000 [CU-CP   ] [I] ue=1: "Intra CU Handover Target Routine" finished '
+                  "successfully\n"
+                  "2026-07-06T17:14:10.800000 [CU-CP   ] [I] ue=2 c-rnti=0x4603: UE created\n"
+                  "2026-07-06T17:14:10.800100 [RRC     ] [I] ue=2 c-rnti=0x4603: CCCH UL rrcReestablishmentRequest\n"
+                  "2026-07-06T17:14:10.900000 [CU-CP   ] [I] ue=3 c-rnti=0x4604: UE created (RRC Resume)\n")
+        ics = ('2026-07-06T17:14:10.450000 [CU-CP   ] [I] ue=0: "Initial Context Setup Routine" finished '
+               "successfully\n")
+        out = self.summary(QUIET_LOG + VERBOSE_LINES + others + ics)
+        self.assertIn("Initial Context Setup OK : 1/1", out)
+        self.assertNotIn("Initial Context Setup incomplete", out)
+        # A UE of an RRC setup, at debug, without Initial Context Setup.
+        setup = ("2026-07-06T17:14:11.000000 [RRC     ] [D] ue=4 c-rnti=0x4605: Rx SRB1 DCCH UL rrcSetupComplete "
+                 "(96 B)\n"
+                 "2026-07-06T17:14:11.000100 [RRC     ] [D] ue=4 c-rnti=0x4605: Containerized rrcSetupComplete: [\n")
+        out = self.summary(QUIET_LOG + VERBOSE_LINES + others + ics + setup)
+        self.assertIn("Initial Context Setup OK : 1/2", out)
+        self.assertIn("Initial Context Setup incomplete: 1/2", out)
+        self.assertIn("Initial Context Setup incomplete: 0/1", self.summary(QUIET_LOG + VERBOSE_LINES))
+
+    def test_note_of_procedure_loggers_at_warning(self):
+        cfg = Path(self.tmp.name) / "ocudu_gnb.yml"
+        cfg.write_text("log:\n  f1ap_level: warning\n")
+        self.assertNotIn("NOTE", self.summary(QUIET_LOG + VERBOSE_LINES))
+        cfg.write_text("log:\n  f1ap_level: warning\n  e1ap_level: warning\n")
+        self.assertIn("NOTE: e1ap logged at 'warning'", self.summary(QUIET_LOG + VERBOSE_LINES))
 
     def test_metrics_rows_leave_out_the_worker_lines(self):
         out = self.summary(QUIET_LOG)

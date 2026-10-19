@@ -24,8 +24,12 @@ _SLOT_EVENTS_RE = re.compile(r"Processed slot events(?: pci=(\d+))?:$")
 # PDUs only: NGAP also names HandoverRequest in its line of the target cell of one.
 _NGAP_HO_RE = re.compile(r"PDU\b.*: HandoverRe(?:quired|quest)$")
 _BANNER_RE = re.compile(r"==== (.+) started ===")
-# CU-CP line of an intra-CU handover completed, at info on the target side. The source side finishes at debug.
+# CU-CP lines of an intra-CU handover completed, at info on the target side: of a handover and of a conditional one.
+# The source side finishes at debug.
 _INTRA_CU_HO_DONE = '"Intra CU Handover Target Routine" finished successfully'
+_CHO_DONE = ": CHO inter-DU completion finalized"
+# Loggers of the build line and banner of each application: gNB and DU, CU, CU-CP, CU-UP, and DU low.
+_APP_LOGGERS = ("GNB", "CU", "CU-CP", "CU-UP", "APP")
 # Warnings expected in healthy runs: per-UE creation latency instrumentation and host notes.
 BENIGN_WARNINGS = (
     "DRM KMS polling is enabled",
@@ -47,7 +51,7 @@ class LogSummary:
 
     build_commit: str | None = None
     build_branch: str | None = None
-    # Application of the "==== <app> started ===" banner: "gNB", "DU" or "CU".
+    # Application of the "==== <app> started ===" banner: "gNB", "DU", "CU", "CU-CP", "CU-UP" or "DU low".
     app: str | None = None
     first_ts: str | None = None
     last_ts: str | None = None
@@ -65,8 +69,8 @@ class LogSummary:
     # (time, UE index) of each successful Initial Context Setup.
     init_ctx_done: list[tuple[str, str]] = field(default_factory=list)
     rrc_reconfigs: int = 0
-    # Handovers completed, counted on the target side: intra-CU ones and NGAP ones, by their HandoverNotify. Xn and
-    # conditional inter-CU ones have no info line of completion.
+    # Handovers completed, counted on the target side: intra-CU ones, conditional or not, and NGAP ones, by their
+    # HandoverNotify. Xn and conditional inter-CU ones have no info line of completion.
     ho_count: int = 0
     # reconfigurationWithSync in RRC bodies, which RRC logs at debug.
     reconf_with_sync_count: int = 0
@@ -98,6 +102,8 @@ class LogSummary:
     last_metrics: str | None = None
     # Time the application started shutting down, by closing its pcaps.
     shutdown_signal_ts: str | None = None
+    # Loggers of the entries, sorted.
+    loggers: list[str] = field(default_factory=list)
 
 
 def is_benign_warning(msg: str) -> bool:
@@ -108,7 +114,7 @@ def is_benign_warning(msg: str) -> bool:
 def summarize(lines: Iterable[str]) -> LogSummary:
     """The summary of the lines of a log."""
     out = LogSummary()
-    ues, rntis, pcis = set(), set(), set()
+    ues, rntis, pcis, loggers = set(), set(), set(), set()
     # Time and PCI, if any, of the entry of scheduler slot events at debug, whose continuation lines hold the events.
     slot_events_ts: str | None = None
     slot_events_pci: int | None = None
@@ -135,6 +141,7 @@ def summarize(lines: Iterable[str]) -> LogSummary:
         layer = m.group("layer").strip()
         lvl = m.group("level") or ""
         msg = raw[m.end() :].rstrip("\r\n")
+        loggers.add(layer)
         slot_events_ts = None
         if layer == "SCHED" and msg.endswith(":") and (sm := _SLOT_EVENTS_RE.search(msg)):
             slot_events_ts, slot_events_pci = ts, int(sm.group(1)) if sm.group(1) else None
@@ -154,8 +161,7 @@ def summarize(lines: Iterable[str]) -> LogSummary:
                 if len(out.warnings) < MAX_KEPT_LINES:
                     out.warnings.append((ts, layer, msg.strip()))
 
-        # The CU application logs its build and banner as CU.
-        if layer in ("GNB", "CU"):
+        if layer in _APP_LOGGERS:
             if "Built in" in msg and (bm := _BUILD_RE.search(msg)):
                 out.build_commit, out.build_branch = bm.group(1), bm.group(2)
             elif out.app is None and (am := _BANNER_RE.search(msg)):
@@ -196,7 +202,7 @@ def summarize(lines: Iterable[str]) -> LogSummary:
         if layer == "CU-CP" and '"Initial Context Setup Routine" finished successfully' in msg:
             out.init_ctx_done.append((ts, um.group(1) if (um := _UE_RE.search(msg)) else "?"))
 
-        if layer == "CU-CP" and _INTRA_CU_HO_DONE in msg:
+        if layer == "CU-CP" and (_INTRA_CU_HO_DONE in msg or _CHO_DONE in msg):
             out.ho_count += 1
 
         if layer == "CU-CP" and '"UE Removal Routine" finished successfully' in msg:
@@ -232,4 +238,5 @@ def summarize(lines: Iterable[str]) -> LogSummary:
     out.ues_seen = sorted(ues, key=lambda s: int(s) if s.isdigit() else -1)
     out.rntis_seen = sorted(rntis)
     out.pcis_seen = sorted(pcis)
+    out.loggers = sorted(loggers)
     return out

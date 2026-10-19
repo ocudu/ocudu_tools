@@ -45,8 +45,17 @@ PROCEDURE_LOGGERS = ("RRC", "NGAP", "CU-CP", "CU-CP-E1")
 # the start and stop lines of the metrics workers.
 _VERBOSE_RE = re.compile(r"\[(RRC|NGAP|CU-CP|CU-CP-E1)\s*\] \[[ID]\] ")
 _METRICS_ROW_RE = re.compile(r"\d \[METRICS\s*\] (?!\[[A-Z]\] )")
+# RRCSetupComplete of a UE, as RRC logs it at info or debug, not its JSON entry at debug.
+_RRC_SETUP_COMPLETE_RE = re.compile(
+    r"\[RRC\s*\] \[[ID]\] ue=\d+ c-rnti=0x\w+: (?:Rx (?:SRB\d+ )?)?DCCH UL rrcSetupComplete\b")
 # Characters of a line that hold its entry header.
 _HEADER_LEN = 64
+# Applications with a CU-CP, whose procedures are counted, by their banner.
+CU_CP_APPS = ("gNB", "CU", "CU-CP")
+# Loggers of the CU-CP, and of a DU or CU-UP without one. A gNB logs the latter at the level of a CU-CP logger, but
+# for DU-MNG, unlike loggers such as MAC or GTPU.
+_CU_CP_LOGGERS = frozenset({"RRC", "NGAP", "CU-CP", "CU-CP-E1", "CU-CP-F1", "CU-UEMNG", "XNAP", "NRPPA"})
+_OTHER_LOGGERS = frozenset({"DU-F1", "DU-MNG", "CU-UP", "CU-UP-E1"})
 
 
 def parse_cfg(cfg_path: Path, gnb_log: Path) -> dict:
@@ -78,14 +87,38 @@ def parse_cfg(cfg_path: Path, gnb_log: Path) -> dict:
     }
 
 
-def parse_gnb_log(gnb_log: Path) -> dict:
+def has_cu_cp(app: str | None, planes: list[str], loggers: list[str]) -> bool | None:
+    """Whether the process of a log has a CU-CP: by its banner, else its configured planes, else its loggers, or None
+    when unknown.
+    """
+    if app is not None:
+        return app in CU_CP_APPS
+    if planes:
+        return "CU-CP" in planes
+    if _CU_CP_LOGGERS.intersection(loggers):
+        return True
+    return False if _OTHER_LOGGERS.intersection(loggers) else None
+
+
+def stdout_log_of(run_dir: Path, log: Path) -> Path:
+    """The console log of the component of a log, e.g. stdout_du.log for du.log, else stdout.log, else the only one."""
+    for name in (f"stdout_{log.stem}.log", "stdout.log"):
+        if (run_dir / name).is_file():
+            return run_dir / name
+    found = sorted(run_dir.glob("stdout*.log"))
+    return found[0] if len(found) == 1 else run_dir / "stdout.log"
+
+
+def parse_gnb_log(gnb_log: Path, planes: list[str] = ()) -> dict:
     """The summary.LogSummary of a log, with the procedure loggers expected but without info or debug lines
-    (silent_loggers), and metrics_rows and last_metrics of METRICS rows only.
+    (silent_loggers), metrics_rows and last_metrics of METRICS rows only, and rrc_setups, the RRCSetupComplete messages.
+    planes are the configured ones, which tell whether the process has a CU-CP when the log has no banner, e.g. a
+    rotated one.
     """
     if not gnb_log.exists():
-        return {**vars(summary.LogSummary()), "silent_loggers": list(PROCEDURE_LOGGERS)}
+        return {**vars(summary.LogSummary()), "silent_loggers": list(PROCEDURE_LOGGERS), "rrc_setups": 0}
     verbose: set[str] = set()
-    rows = {"metrics_rows": 0, "last_metrics": None}
+    rows = {"metrics_rows": 0, "last_metrics": None, "rrc_setups": 0}
 
     def scan(lines):
         for raw in lines:
@@ -94,17 +127,29 @@ def parse_gnb_log(gnb_log: Path) -> dict:
             if m := _METRICS_ROW_RE.search(raw, 0, _HEADER_LEN):
                 rows["metrics_rows"] += 1
                 rows["last_metrics"] = raw[m.end() :].rstrip("\r\n")
+            elif "rrcSetupComplete" in raw and _RRC_SETUP_COMPLETE_RE.search(raw):
+                rows["rrc_setups"] += 1
             yield raw
 
     with open(gnb_log, encoding="utf-8", errors="replace") as f:
         out = vars(summary.summarize(scan(f)))
     silent = [name for name in PROCEDURE_LOGGERS if name not in verbose]
-    # A DU has no CU loggers, and RRC logs nothing at info until a UE connects, which CU-CP logs at info.
-    if out["app"] == "DU":
+    # Only a CU-CP has the procedure loggers, and RRC logs nothing at info until a UE connects, which CU-CP logs at
+    # info.
+    if has_cu_cp(out["app"], list(planes), out["loggers"]) is False:
         silent = []
     elif "CU-CP" in verbose and not out["ue_creates"]:
         silent = [name for name in silent if name != "RRC"]
     return {**out, **rows, "silent_loggers": silent}
+
+
+def ics_attempts(log: dict) -> int:
+    """The UEs of a log expected to run Initial Context Setup: those of an RRC setup, unlike the CU-CP UEs created by a
+    handover, reestablishment or RRC resume. Without RRC lines, the CU-CP UEs created but not by a handover.
+    """
+    if "RRC" not in log["silent_loggers"]:
+        return log["rrc_setups"]
+    return max(0, len(log["ue_creates"]) - log["ho_count"])
 
 
 def parse_stdout(stdout_log: Path) -> dict:
@@ -150,7 +195,7 @@ def summarize(path_str: str) -> None:
     else:
         run_dir = resolve_run_dir(path_str)
         gnb_log = primary_log_in(run_dir) or run_dir / "gnb.log"
-    stdout_log = run_dir / "stdout.log"
+    stdout_log = stdout_log_of(run_dir, gnb_log)
     # Config name tracks the role (ocudu_gnb.yml / ocudu_du.yml / ocudu_cu_cp.yml …).
     cfg_path = run_dir / "ocudu_gnb.yml"
     if not cfg_path.is_file():
@@ -165,7 +210,7 @@ def summarize(path_str: str) -> None:
     print()
 
     cfg = parse_cfg(cfg_path, gnb_log)
-    log = parse_gnb_log(gnb_log)
+    log = parse_gnb_log(gnb_log, cfg["planes"])
     out = parse_stdout(stdout_log)
     met = parse_metrics(metrics_path)
 
@@ -255,8 +300,8 @@ def summarize(path_str: str) -> None:
               f" last @ {log['ue_creates'][-1][0]})")
     if log["init_ctx_done"]:
         done = len(log["init_ctx_done"])
-        attempted = len(log["ue_creates"]) or done
-        print(f"  Initial Context Setup OK : {done}/{attempted}")
+        attempted = ics_attempts(log) or done
+        print(f"  Initial Context Setup OK : {done}/{attempted} (of the UEs of an RRC setup)")
     if log["ue_releases"]:
         if len(log["ue_releases"]) <= 5:
             for ts, ue in log["ue_releases"]:
@@ -277,11 +322,13 @@ def summarize(path_str: str) -> None:
     print(f"  Bearer releases     : {log['bearer_releases']}")
     print(f"  PRACH events        : {log['prach_events']}")
     print(f"  PHY CRC failures (crc=KO) : {log['crc_fails']}")
-    # Caveat: these counters come from RRC/NGAP/F1AP/E1AP/CU layers. If those are
+    # Caveat: these counters come from RRC/NGAP/E1AP/CU layers. If those are
     # logged at 'warning', the layers are silent and the counts read 0 even when
     # the procedures happened — say so rather than implying nothing occurred.
     muted = [name for name, lvl in cfg["log_levels"].items()
-             if lvl == "warning" and name in ("rrc", "ngap", "f1ap", "e1ap", "cu")]
+             if lvl == "warning" and name in ("rrc", "ngap", "e1ap", "cu")]
+    if has_cu_cp(log["app"], cfg["planes"], log["loggers"]) is False:
+        muted = []
     if muted:
         print(f"  NOTE: {', '.join(muted)} logged at 'warning' — the above procedure "
               f"counts are unreliable (layers silent). Infer HO from SCHED PRACH on the "
@@ -331,11 +378,11 @@ def summarize(path_str: str) -> None:
         anomalies.append("NGSetupResponse not seen even though SCTP connected to AMF")
     if log["reest_count"] > 0:
         anomalies.append(f"RRC reestablishment requests: {log['reest_count']}")
-    # UEs that got a context but never finished Initial Context Setup.
-    if log["ue_creates"] and len(log["init_ctx_done"]) < len(log["ue_creates"]):
+    # UEs that set up RRC but never finished Initial Context Setup.
+    if len(log["init_ctx_done"]) < (attempted := ics_attempts(log)):
         anomalies.append(
             f"Initial Context Setup incomplete: {len(log['init_ctx_done'])}/"
-            f"{len(log['ue_creates'])} UEs finished (rest may have been mid-attach "
+            f"{attempted} UEs of an RRC setup finished (rest may have been mid-attach "
             f"at capture end, or failed)"
         )
     if log["crc_fails"] > 100:
