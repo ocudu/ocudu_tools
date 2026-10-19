@@ -25,7 +25,7 @@ from .preamble import ENTRY_START_PATTERN
 
 # Event categories, in display order.
 CATEGORIES = ("ra", "lifecycle", "rrc", "mobility", "failure", "warning", "error")
-# Category of the records that are not events but bind a DU UE index to its RNTI, for UeTracker.
+# Category of the records that are not events but bind a DU or CU-CP UE index to its RNTI, for UeTracker.
 BINDING = "binding"
 
 
@@ -68,6 +68,10 @@ EVENT_PATTERNS = (
     _p("ue_create", "lifecycle", "DU-MNG", r'ue=(?P<ue>\d+)(?: rnti=(?P<rnti>0x\w+))? proc="UE Create": Procedure started'),
     # A UE created without its RNTI, e.g. the target of a handover, gets it at its first configuration.
     _p("ue_config", BINDING, "DU-MNG", r'ue=(?P<ue>\d+) rnti=(?P<rnti>0x\w+) proc="UE Configuration": Procedure started'),
+    # A CU-CP UE index starts a new UE, whose RNTI is bound when the CU-CP logs it created, also for a handover target.
+    # Older builds log more fields, e.g. the gnb_du_id, pci and rnti.
+    _p("cu_ue_new", BINDING, "CU-UEMNG", r"ue=(?P<ue>\d+) du_index=\d+(?: [^:]*)?: Created new CU-CP UE"),
+    _p("cu_ue_create", BINDING, "CU-CP", r"ue=(?P<ue>\d+) c-rnti=(?P<rnti>0x\w+): UE created"),
     _p("ue_delete", "lifecycle", "DU-MNG", r'ue=(?P<ue>\d+) proc="UE Delete": Procedure finished successfully'),
     _p("rrc_setup_complete", "rrc", "RRC", _RRC_PREFIX + r"DCCH UL rrcSetupComplete" + _RRC_SUFFIX),
     _p("rrc_release", "rrc", "RRC", _RRC_PREFIX + r"DCCH DL rrcRelease" + _RRC_SUFFIX),
@@ -93,13 +97,17 @@ EVENT_PATTERNS = (
 # bytes pattern too, to skip lines before decoding them.
 CANDIDATE_PATTERN = (
     r'Processed slot events|subPDUs: \[CCCH|CON_RES|proc="UE (?:Create|Delete|Configuration)"|rrcSetupComplete|rrcRelease'
-    r"|rrcReestablishmentRequest|Trigger intra-CU|Starting HO preparation|RLF detected|Reestablishment"
+    r"|rrcReestablishmentRequest|Trigger intra-CU|Starting HO preparation|RLF detected|Reestablishment|: UE created"
+    r"|Created new CU-CP UE"
     r'|ra-ContentionResolutionTimer|"RRC Setup Procedure" timed out|\] \[[WE]\] '
 )
 
 _CANDIDATE_RE = re.compile(CANDIDATE_PATTERN)
 _ENTRY_START_RE = re.compile(ENTRY_START_PATTERN)
 _LEVEL_EVENTS = {"W": "warning", "E": "error"}
+# The invalid RNTI, which the DU F1AP logs for a UE created without one, e.g. a handover target, until its RNTI is
+# known, as in the c-rnti=0x0 of its warnings or the crnti=0x0 of its failed F1 UE context creation.
+_NO_RNTI_RE = re.compile(r"0x0+$")
 # UE identifiers of the warning and error lines that no pattern recognizes, in one pass over the message.
 # Not the RA-RNTI or MsgB-RNTI of a random access, which is no UE's.
 _GENERIC_IDS_RE = re.compile(r"\bue=(?P<ue>\d+)\b|(?<![\w-])(?:c-|tc-|c)?rnti=(?P<rnti>0x[0-9a-fA-F]+)\b")
@@ -234,16 +242,17 @@ class UeTracker:
     """Assigns events to the UE contexts they belong to, given the events in log order.
 
     A UE context is identified by its RNTI, from the random access to the UE deletion, and by its DU UE index once
-    created. Events of the CU-CP are matched through the RNTI of the RRC messages of the same CU-CP UE index. BINDING
-    records give the RNTI of a context created without it, which its later events, e.g. a contention-free random
-    access, are then matched by.
+    created. Events of the CU-CP are matched through the RNTI of the same CU-CP UE index, which the BINDING records of
+    its creation, or else its RRC messages, give. BINDING records also give the RNTI of a DU context created without
+    it, which its later events, e.g. a contention-free random access, are then matched by. An all-zero RNTI is none.
     """
 
     def __init__(self):
         self.lanes: list[UeLane] = []
         self._by_rnti: dict[str, UeLane] = {}
         self._by_du_ue: dict[int, UeLane] = {}
-        self._cu_ue_rnti: dict[int, str] = {}
+        # Per CU-CP UE index, the lane of its RNTI.
+        self._by_cu_ue: dict[int, UeLane] = {}
         # Per DU UE index of an ongoing creation, its lane and the lanes that it displaced from the DU UE index and RNTI.
         self._creating: dict[int, tuple[UeLane, UeLane | None, UeLane | None]] = {}
 
@@ -262,6 +271,8 @@ class UeTracker:
         du = layer in _DU_LOGGERS
         if layer in _CU_UP_LOGGERS:
             ue = None
+        if rnti and _NO_RNTI_RE.match(rnti):
+            rnti = None
         if type_ == "ue_create":
             prev_du, prev_rnti = self._by_du_ue.get(ue), self._by_rnti.get(rnti) if rnti else None
             lane = prev_rnti
@@ -273,13 +284,18 @@ class UeTracker:
             return lane
         if type_ == "ue_create_failed":
             return self._fail_creation(ue, rnti)
-        if category == BINDING:
+        if category == BINDING and du:
             # Only within the lifetime of the context, since DU UE indexes are soon reused.
             lane = self._by_du_ue.get(ue) if ue is not None else None
             if lane is not None and lane.rnti is None and rnti:
                 lane.rnti = rnti
                 self._by_rnti[rnti] = lane
             return lane
+        if category == BINDING and rnti is None:
+            # A new CU-CP UE ends the binding of the previous UE of its index, since CU-CP UE indexes are reused.
+            if ue is not None:
+                self._by_cu_ue.pop(ue, None)
+            return None
         if type_ == "ue_delete":
             self._creating.pop(ue, None)
             lane = self._by_du_ue.pop(ue, None)
@@ -289,16 +305,24 @@ class UeTracker:
                     del self._by_rnti[lane.rnti]
             return lane
         if rnti:
-            if not du and ue is not None:
-                self._cu_ue_rnti[ue] = rnti
             lane = self._by_du_ue.get(ue) if du and ue is not None else None
             # A DU UE index of another RNTI is of a context whose deletion was not logged, and reused.
             if lane is not None and lane.rnti is not None and lane.rnti != rnti:
                 lane.du_ue = None
                 del self._by_du_ue[ue]
                 lane = None
+            if lane is None and not du and ue is not None and category != BINDING:
+                # The CU-CP UEs of two DUs can share an RNTI, whose latest lane may be the other UE's.
+                lane = self._by_cu_ue.get(ue)
+                if lane is not None and (lane.rnti != rnti or lane.deleted):
+                    lane = None
             if lane is None:
-                lane = self._by_rnti.get(rnti) or self._new_lane(t, rnti)
+                lane = self._by_rnti.get(rnti)
+                # Without the DU lines, e.g. in a CU log, the RNTI of a CU-CP UE created is reused when the lane of
+                # the RNTI has another CU-CP UE index, possibly of another DU.
+                if lane is not None and category == BINDING and lane.du_ue is None and lane.cu_ue not in (None, ue):
+                    lane = None
+                lane = lane or self._new_lane(t, rnti)
             if lane.rnti is None:
                 # A creation that gets its RNTI from its own events, e.g. a failure warning, gives it back if it fails.
                 if du and (creating := self._creating.get(ue)) and creating[0] is lane and creating[2] is None:
@@ -308,15 +332,16 @@ class UeTracker:
             if du and ue is not None and lane.du_ue is None:
                 lane.du_ue = ue
                 self._by_du_ue[ue] = lane
-            if not du and ue is not None and lane.cu_ue is None:
-                lane.cu_ue = ue
+            if not du and ue is not None:
+                self._by_cu_ue[ue] = lane
+                if lane.cu_ue is None:
+                    lane.cu_ue = ue
             return lane
         if ue is None:
             return None
         if du:
             return self._by_du_ue.get(ue)
-        cu_rnti = self._cu_ue_rnti.get(ue)
-        return self._by_rnti.get(cu_rnti) if cu_rnti else None
+        return self._by_cu_ue.get(ue)
 
     def _fail_creation(self, ue: int | None, rnti: str | None) -> UeLane | None:
         """Closes the lane of a failed creation and gives its DU UE index and RNTI back to the UEs that held them."""

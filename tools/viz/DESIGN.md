@@ -251,7 +251,8 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
   access or creation to its deletion or failed creation, with a glyph per event, and a last row, `common`, with the events of no UE. Each UE has its own
   row, labelled with its DU UE index and RNTI, in start order. The trace shows 25 UE rows at a time and scrolls over the
   others with its own scrollbar, keeping the time axis and the row of events of no UE in view. Events are assigned to UE contexts by `parsers.log.events.UeTracker` while they are parsed: by
-  RNTI, by DU UE index, and for CU-CP events by the RNTI of the RRC messages of their CU-CP UE index. A UE created
+  RNTI, by DU UE index, and for CU-CP events by the RNTI of their CU-CP UE index, from its `UE created` line, else its
+  RRC messages, so that a UE that arrived by handover has its own handover events. An all-zero RNTI is none. A UE created
   without RNTI, e.g. a handover target, gets it from its first `UE Configuration` line, within its lifetime only,
   since DU UE indexes are soon reused while RNTIs and protocol UE ids are not. A failed creation, e.g. on a DU UE index
   or C-RNTI clash, closes its lane, which is not open but `failed`, whatever window is read, and gives the index and

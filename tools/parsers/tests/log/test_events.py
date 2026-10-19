@@ -37,6 +37,12 @@ LINES = {
     "warning_rnti": "2026-10-05T20:11:10.204373 [MAC     ] [W] [  468.12] UL rnti=0x5ec8 lcid=0x3a CE: Discarding PDU. Cause: C-RNTI in C-RNTI CE is not associated with any existing UE.",
     "warning": "2026-07-30T21:10:11.000000 [SCHED   ] [W] UE creation (ue=4): latency1=500us",
     "warning_crnti": "2026-04-21T03:21:49.090373 [DU-F1   ] [W] ue=3 crnti=0x4601: F1 UE context failed to be created.",
+    # A handover target created without RNTI, whose creation failed.
+    "warning_crnti_zero": "2026-09-29T21:24:28.269478 [DU-F1   ] [W] ue=10 crnti=0x0: F1 UE context failed to be created.",
+    "cu_ue_new": "2026-09-29T21:24:28.269110 [CU-UEMNG] [I] ue=10 du_index=0: Created new CU-CP UE",
+    "cu_ue_new_old": "2026-04-21T03:21:49.091132 [CU-UEMNG] [I] ue=0 du_index=0 gnb_du_id=0 pci=1 rnti=0x4601 pcell_index=0: Created new CU-CP UE",
+    "cu_ue_create": "2026-09-29T21:24:28.274120 [CU-CP   ] [I] ue=10 c-rnti=0x460b: UE created",
+    "cu_ue_create_resume": "2026-09-29T21:24:28.274120 [CU-CP   ] [I] ue=11 c-rnti=0x460c: UE created (RRC Resume)",
     "error": "2026-07-30T21:10:12.000000 [PHY     ] [E] [   300.1] Something failed",
     "noise": "2026-07-30T21:10:13.000000 [RRC     ] [I] ue=0 c-rnti=0x4601: DCCH DL rrcReconfiguration",
     "wrong_layer": '2026-07-30T21:10:14.000000 [MAC     ] [I] ue=0 rnti=0x4601 proc="UE Create": Procedure started....',
@@ -289,12 +295,81 @@ class EventsTest(unittest.TestCase):
         # A failure of no ongoing creation changes nothing.
         self.assertIsNone(tracker.assign(ev(12, "ue_create_failed", "DU-MNG", ue=4, rnti="0x4")))
 
+    def test_ue_tracker_zero_rnti(self):
+        def ev(t, type_, layer, ue=None, rnti=None):
+            return {"timestamp": datetime(2026, 1, 1, 0, 0, t), "type": type_, "layer": layer, "ue": ue, "rnti": rnti}
+
+        w = parse("warning_crnti_zero")
+        tracker = events.UeTracker()
+        assigned = [
+            tracker.assign(e)
+            for e in [
+                # Two failed handover targets, whose all-zero RNTI is none and joins nothing.
+                ev(0, "ue_create", "DU-MNG", ue=10),
+                ev(1, w["type"], w["layer"], w["ue"], w["rnti"]),
+                ev(2, "ue_create", "DU-MNG", ue=11),
+                ev(3, "warning", "DU-F1", ue=11, rnti="0x0"),
+                ev(4, "ue_create_failed", "DU-MNG", ue=11),
+                ev(5, "warning", "MAC", rnti="0x0000"),
+            ]
+        ]
+        self.assertEqual(assigned, [0, 0, 1, 1, 1, None])
+        self.assertEqual([(lane.du_ue, lane.rnti, lane.failed) for lane in tracker.lanes], [(10, None, False), (11, None, True)])
+
+    def test_ue_tracker_cu_binding(self):
+        def ev(t, type_, layer, ue=None, rnti=None, category=None):
+            return {"timestamp": datetime(2026, 1, 1, 0, 0, t), "type": type_, "category": category, "layer": layer,
+                    "ue": ue, "rnti": rnti}
+
+        def new(t, ue):
+            return ev(t, "cu_ue_new", "CU-UEMNG", ue, category=events.BINDING)
+
+        def created(t, ue, rnti):
+            return ev(t, "cu_ue_create", "CU-CP", ue, rnti, category=events.BINDING)
+
+        tracker = events.UeTracker()
+        assigned = [
+            tracker.assign(e)
+            for e in [
+                ev(0, "ue_create", "DU-MNG", ue=0, rnti="0x4601"),
+                new(1, 0),
+                created(2, 0, "0x4601"),
+                # A handover target, which logs no RRC message before its own handover.
+                ev(3, "ue_create", "DU-MNG", ue=1),
+                ev(4, "ue_config", "DU-MNG", 1, "0x4602", category=events.BINDING),
+                new(5, 1),
+                created(6, 1, "0x4602"),
+                ev(7, "ho_trigger", "CU-CP", ue=0),
+                ev(8, "ho_trigger", "CU-CP", ue=1),
+                ev(9, "ho_preparation", "NGAP", ue=1),
+                # A CU-CP UE index reused, by a UE whose RNTI is not known yet.
+                new(10, 0),
+                ev(11, "ho_trigger", "CU-CP", ue=0),
+            ]
+        ]
+        self.assertEqual(assigned, [0, None, 0, 1, 1, None, 1, 0, 1, 1, None, None])
+        self.assertEqual([(lane.du_ue, lane.rnti, lane.cu_ue) for lane in tracker.lanes], [(0, "0x4601", 0), (1, "0x4602", 1)])
+
+        # Without the DU lines, CU-CP UEs of two DUs with the same RNTI are two contexts.
+        tracker = events.UeTracker()
+        assigned = [tracker.assign(e) for e in [created(0, 5, "0x4601"), created(1, 6, "0x4601"),
+                                                ev(2, "rrc_setup_complete", "RRC", 5, "0x4601"),
+                                                ev(3, "rrc_setup_complete", "RRC", 6, "0x4601"),
+                                                ev(4, "ho_preparation", "NGAP", ue=5),
+                                                ev(5, "rrc_release", "RRC", 6, "0x4601"), ev(6, "ho_trigger", "CU-CP", ue=5)]]
+        self.assertEqual(assigned, [0, 1, 0, 1, 0, 1, 0])
+        self.assertEqual([lane.cu_ue for lane in tracker.lanes], [5, 6])
+
     def test_categories_cover_patterns(self):
         self.assertTrue({p.category for p in events.EVENT_PATTERNS} <= {*events.CATEGORIES, events.BINDING})
 
     def test_binding(self):
         rec = parse("ue_config")
         self.assertEqual((rec["type"], rec["category"], rec["ue"], rec["rnti"]), ("ue_config", events.BINDING, 3, "0x4605"))
+        self.assertEqual([(r["type"], r["category"], r["layer"], r["ue"], r["rnti"]) for r in map(parse, ("cu_ue_new", "cu_ue_new_old", "cu_ue_create", "cu_ue_create_resume"))],
+                         [("cu_ue_new", events.BINDING, "CU-UEMNG", 10, None), ("cu_ue_new", events.BINDING, "CU-UEMNG", 0, None),
+                          ("cu_ue_create", events.BINDING, "CU-CP", 10, "0x460b"),
+                          ("cu_ue_create", events.BINDING, "CU-CP", 11, "0x460c")])
 
 
 if __name__ == "__main__":
