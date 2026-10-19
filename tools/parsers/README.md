@@ -104,11 +104,18 @@ with open("gnb.log") as f:
 
 `events.iter_events()` recognizes the lines of known events (`events.EVENT_PATTERNS`) and reports the other warning and
 error lines as generic `warning` and `error` events, with the `ue=` and RNTI (`rnti=`, `c-rnti=`, `tc-rnti=` or
-`crnti=`, not `ra-rnti=` or `msgb-rnti=`) of their message if any. Records have `timestamp`, `type`, `category`, `layer`, `level`,
-`ue`, `rnti`, `cause` and `text`. Records of category `events.BINDING` (`ue_config`) are not events: they give
-`events.UeTracker` the RNTI of a UE created without it, e.g. a handover target. A failed UE creation, e.g. on a UE
-index or C-RNTI clash, closes its context (`UeLane.failed`) and leaves the UE it clashed with as it was, also when
-the creation logged no RNTI and a warning of it did; that context is not open and joins no UE of `parsers.correlate`.
+`crnti=`, not `ra-rnti=` or `msgb-rnti=`) of their message if any. `events.UeTracker` takes an all-zero RNTI as none:
+the DU F1AP logs one for a UE created without RNTI, e.g. a handover target, as the `c-rnti=0x0` of its DU-F1 lines or
+the `crnti=0x0` of its failed F1 UE context creation. Records have `timestamp`, `type`, `category`, `layer`, `level`,
+`ue`, `rnti`, `cause` and `text`. Records of category `events.BINDING` are not events: `ue_config` gives
+`events.UeTracker` the RNTI of a DU UE created without it, e.g. a handover target, and `cu_ue_new` (CU-UEMNG `Created
+new CU-CP UE`) and `cu_ue_create` (CU-CP `ue=N c-rnti=0x..: UE created`) bind a CU-CP UE index to its RNTI for its
+lifetime, also for a UE that arrived by handover and logs no RRC setup, so that its CU-CP and NGAP events, e.g. its own
+handover, have a context. Without DU lines, e.g. in a CU log, a CU-CP UE created with the RNTI of a context of another
+CU-CP UE index, e.g. on another DU, is a new context, and the events of each of these CU-CP UEs stay in its own. A
+failed UE creation, e.g. on a UE index or C-RNTI clash, closes its context (`UeLane.failed`) and leaves the UE it
+clashed with as it was, also when the creation logged no RNTI and a warning of it did; that context is not open and
+joins no UE of `parsers.correlate`.
 
 | Category    | Types                                                              |
 |-------------|--------------------------------------------------------------------|
@@ -164,22 +171,24 @@ lets it read under `/tmp`, and dissects the MAC and RLC PDUs of `mac.pcap` and `
 `rlc_nr_udp` heuristics. A pcap whose last record is cut short, e.g. by a crash, gives its complete records, with a
 warning. Field extractions are cached in the work directory by pcap path, size and mtime, and a tag, by default the
 fields and filter. `run.find_pcaps()` finds the pcaps of each protocol by file name, `<proto>.pcap` or with a prefix,
-e.g. `gnb_f1ap.pcap`, and those missing from a Retina run directory (`YYYY-MM-DD_HH-MM-SS`) in its component directory,
-e.g. the `f1ap.pcap` of a split DU. `run.check_pcap()` checks that one of the known dissectors binds the first frame of
-a pcap. `messages.messages()` lists the NGAP, F1AP or E1AP messages of a pcap with their procedure, outcome, UE
-identifiers and cause, as `<group>:<value>` named by the value tables of tshark, e.g. `protocol:unspecified`,
-`frames.summaries()` the one-line tshark summary of each frame and `frames.decode()` decodes one frame. The `rrc` of an
-F1AP message is the RRC message of its RRC container, None without one, e.g. for the `UEContextSetupRequest` of a
-handover target, whose `HandoverPreparationInformation` holds the source's `rrcReconfiguration`, which is not counted
-beside a container. RRC, NAS and cause fields that a `tshark` build does not know are left out of extractions, so those
-values are None. `frames.time_span()` reads the time span of a classic pcap from its complete packets' headers, without
-`tshark`, and gives None for pcapng. `capture.read()` gives the protocol, the frame summaries and the messages or PDUs
-of a pcap in one pass over its frames, after reading its first frame for the protocol, or its file name for a pcap
-without frames, unless given one, e.g. for a capture whose first frame is TCP. `contexts.ContextTracker` assigns the
-NGAP, F1AP or E1AP messages to UE contexts, by their UE identifiers until the release of the context, with the C-RNTI of
-the F1AP ones and the links between contexts, given the messages of `capture.read()`, which carry them; the messages of
-`messages.messages()` give contexts without either. `contexts.ue_trace()` gives the F1AP contexts of a C-RNTI and those
-that continue them: the targets of their handovers and the contexts that reestablish them, and so on.
+e.g. `gnb_f1ap.pcap`, and those missing from a Retina run directory (`YYYY-MM-DD_HH-MM-SS`) in its parent when that is
+the directory of an OCUDU component (`ocudu-gnb-*`, `ocudu-du-*`, `ocudu-cu-*`, ...), e.g. the `f1ap.pcap` of a split
+DU. The paths are relative when the run directory is. `run.check_pcap()` checks that one of the known dissectors binds
+the first frame of a pcap. `messages.messages()` lists the NGAP, F1AP or E1AP messages of a pcap with their procedure,
+outcome, UE identifiers and cause, as `<group>:<value>` named by the value tables of tshark, e.g.
+`protocol:unspecified`, `frames.summaries()` the one-line tshark summary of each frame and `frames.decode()` decodes one
+frame. The `rrc` of an F1AP message is the RRC message of its RRC container, None without one, e.g. for the
+`UEContextSetupRequest` of a handover target, whose `HandoverPreparationInformation` holds the source's
+`rrcReconfiguration`, which is not counted beside a container. RRC, NAS and cause fields that a `tshark` build does not
+know are left out of extractions, so those values are None. `frames.time_span()` reads the time span of a classic pcap
+from its complete packets' headers, without `tshark`, and gives None for pcapng. `capture.read()` gives the protocol,
+the frame summaries and the messages or PDUs of a pcap in one pass over its frames, after reading its first frame for
+the protocol, or its file name for a pcap without frames, unless given one, e.g. for a capture whose first frame is TCP.
+`contexts.ContextTracker` assigns the NGAP, F1AP or E1AP messages to UE contexts, by their UE identifiers until the
+release of the context, with the C-RNTI of the F1AP ones and the links between contexts, given the messages of
+`capture.read()`, which carry them; the messages of `messages.messages()` give contexts without either.
+`contexts.ue_trace()` gives the F1AP contexts of a C-RNTI and those that continue them: the targets of their handovers
+and the contexts that reestablish them, and so on.
 
 ### Scheduler event traces
 
@@ -310,10 +319,12 @@ an application, `metrics_json.rollup()` its `metrics.json`, and `config.parse_co
 and pcap options. The `ocudu_log_search.py`, `ocudu_log_summary.py` and `ocudu_ue_proc_latency.py` scripts of the
 analyze-ran-log skill print them. `summary.summarize()` counts the handovers completed (`ho_count`) on the target side,
 from info lines: intra-CU ones by `"Intra CU Handover Target Routine" finished successfully`, whose source side finishes
-at debug, and NGAP ones by their `HandoverNotify`. Xn and conditional inter-CU handovers log no completion at info.
-`reconf_with_sync_count` counts the `reconfigurationWithSync` of RRC bodies, which RRC logs at debug, and
-`ngap_handover_count` the NGAP `HandoverRequired` and `HandoverRequest` PDUs. `app` is the application of the `====
-<app> started ===` banner, e.g. `gNB`, `DU` or `CU`.
+at debug, conditional intra-CU ones by `CHO inter-DU completion finalized`, and NGAP ones by their `HandoverNotify`. Xn
+and conditional inter-CU handovers log no completion at info. `reconf_with_sync_count` counts the
+`reconfigurationWithSync` of RRC bodies, which RRC logs at debug, and `ngap_handover_count` the NGAP `HandoverRequired`
+and `HandoverRequest` PDUs. `app` is the application of the `==== <app> started ===` banner: `gNB`, `DU`, `CU`, `CU-CP`,
+`CU-UP` or `DU low`, which log it and the build line under GNB (gNB and DU), CU, CU-CP, CU-UP or APP (DU low). `loggers`
+are the loggers of the log's entries.
 
 ### UEs of a run
 
