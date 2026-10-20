@@ -241,10 +241,12 @@ test fails when it is stale. The tests compare the decoder with flatc on a trace
 the generated decoder with `schedtrace.flatbuf`. It decodes about 18k slots per second of busy slots.
 
 `schedtrace.collisions` finds the allocations of a slot whose resources overlap: PDSCH with PDSCH, PUSCH with PUSCH,
-PUSCH with PUCCH, PDCCH with PDSCH, and PDCCH with PDCCH, by their CCEs in a CORESET. PDSCHs are placed as `grid.allocations()` places
-them: those of DCI format 1_0 in a common search space (SIB, RAR, paging, fallback), matched to their PDCCH in the slot,
-from the lowest CRB of its CORESET (TS 38.214 5.1.2.2.2), the others from the BWP start; PDCCHs from the REG bundles
-of their CCEs (TS 38.211 7.3.2.2). `skills/analyze-ran-log/scripts/ocudu/schedtrace_collisions.py` prints them.
+PUSCH with PUCCH, PDCCH with PDSCH, and PDCCH with PDCCH, by their CCEs in a CORESET. PDSCHs are placed as
+`grid.allocations()` places them: those of DCI format 1_0 in a common search space (SIB, RAR, paging, fallback), matched
+to their PDCCH in the slot, from the lowest CRB of its CORESET (TS 38.214 5.1.2.2.2), the others from the BWP start;
+PDCCHs from the REG bundles of their CCEs (TS 38.211 7.3.2.2). PDCCHs of an aggregation level above 16 CCEs or with CCEs
+past those of their CORESET, as of a corrupt event that still decodes, are left out of `grid.allocations()` and of the
+collisions. `skills/analyze-ran-log/scripts/ocudu/schedtrace_collisions.py` prints them.
 
 `schedtrace.ue_metrics` gives the per-UE metrics of a trace: `slot_items()` the DL and UL grants, HARQ-ACK and CSI
 reports and SRs of a slot, per UE, a DL grant with the MCS of its first and second codeword (`mcs`, `mcs2`) and the TBS
