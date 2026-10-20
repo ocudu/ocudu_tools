@@ -68,16 +68,18 @@ output**, not real warnings — they report per-UE creation latency for
 performance tracking.
 
 When `Initial Context Setup OK : K/N` shows K < N, the gap is the most
-useful single signal. Find which UEs missed it, one `<creation ts> ue=N` line per
-CU-CP UE context whose `ue=N` was created again, or the log ended, before its
-ICS finished. `ue=` indexes are reused, so compare per creation, not per index;
-the CU-UP also logs `ue=N: UE created`, hence the `CU-CP` anchor:
+useful single signal. Find which UEs missed it, one `<setup ts> ue=N` line per
+RRCSetupComplete (RRC, info or debug) whose CU-CP `ue=N` got another
+RRCSetupComplete, or the log ended, before its ICS finished. UEs of a handover,
+reestablishment or resume run no ICS, so the anchor is the RRC setup, not
+`UE created`; `ue=` indexes are reused, so compare per setup, not per index; a
+completion without a setup in the log is of a UE set up before the log start:
 
 ```bash
 C="${CLAUDE_CODE_TMPDIR:-/tmp}/claude-skills-${CLAUDE_CODE_SESSION_ID}"; mkdir -p "$C"
-LC_ALL=C grep -aE '\[CU-CP +\] \[I\] ue=[0-9]+( c-rnti=0x[0-9a-f]+: UE created|: "Initial Context Setup Routine" finished)' gnb.log \
+LC_ALL=C grep -aE '\[RRC +\] \[[ID]\] ue=[0-9]+ c-rnti=0x[0-9a-fA-F]+: (Rx (SRB[0-9]+ )?)?DCCH UL rrcSetupComplete\b|\[CU-CP +\] \[[ID]\] ue=[0-9]+: "Initial Context Setup Routine" finished successfully' gnb.log \
   | awk '{ match($0, /ue=[0-9]+/); u = substr($0, RSTART, RLENGTH) }
-         /UE created/ { if (u in p) print p[u]; p[u] = $1 " " u; next }
+         /rrcSetupComplete/ { if (u in p) print p[u]; p[u] = $1 " " u; next }
          { delete p[u] } END { for (u in p) print p[u] }' | sort > "$C/ocudu-missed-ics.txt"
 wc -l < "$C/ocudu-missed-ics.txt"
 ```

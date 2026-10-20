@@ -41,8 +41,9 @@ LEVEL_OPTIONS = ("all", "lib", "rrc", "ngap", "f1ap", "e1ap", "cu", "pdcp", "mac
 NODE_TYPES = {"gNB": "monolithic gNB", "CU": "CU (CP+UP)"}
 # Loggers of the procedure counts, which log them at info or debug.
 PROCEDURE_LOGGERS = ("RRC", "NGAP", "CU-CP", "CU-CP-E1")
-# Log level options of the procedure loggers.
+# Log level options of the procedure loggers, in their order.
 PROCEDURE_OPTIONS = ("rrc", "ngap", "cu", "e1ap")
+OPTION_LOGGERS = dict(zip(PROCEDURE_OPTIONS, PROCEDURE_LOGGERS))
 # Log levels that print no info lines.
 QUIET_LEVELS = ("none", "error", "warning")
 # Entry headers of info or debug lines of the procedure loggers, and of METRICS rows, which have no level, unlike
@@ -51,7 +52,8 @@ _VERBOSE_RE = re.compile(r"\[(RRC|NGAP|CU-CP|CU-CP-E1)\s*\] \[[ID]\] ")
 _METRICS_ROW_RE = re.compile(r"\d \[METRICS\s*\] (?!\[[A-Z]\] )")
 # RRCSetupComplete of a UE, as RRC logs it at info or debug, not its JSON entry at debug.
 _RRC_SETUP_COMPLETE_RE = re.compile(
-    r"\[RRC\s*\] \[[ID]\] ue=\d+ c-rnti=0x\w+: (?:Rx (?:SRB\d+ )?)?DCCH UL rrcSetupComplete\b")
+    r"\[RRC\s*\] \[[ID]\] ue=(\d+) c-rnti=0x\w+: (?:Rx (?:SRB\d+ )?)?DCCH UL rrcSetupComplete\b")
+_ICS_DONE_RE = re.compile(r"\[CU-CP\s*\] \[[ID]\] ue=(\d+)\b.*\"Initial Context Setup Routine\" finished successfully")
 # Characters of a line that hold its entry header.
 _HEADER_LEN = 64
 # Applications with a CU-CP, whose procedures are counted, by their banner.
@@ -117,14 +119,17 @@ def stdout_log_of(run_dir: Path, log: Path) -> Path:
 
 def parse_gnb_log(gnb_log: Path, planes: list[str] = ()) -> dict:
     """The summary.LogSummary of a log, with the procedure loggers expected but without info or debug lines
-    (silent_loggers), metrics_rows and last_metrics of METRICS rows only, and rrc_setups, the RRCSetupComplete messages.
-    planes are the configured ones, which tell whether the process has a CU-CP when the log has no banner, e.g. a
+    (silent_loggers), metrics_rows and last_metrics of METRICS rows only, rrc_setups, the RRCSetupComplete messages,
+    ics_of_setups, the Initial Context Setups of the UEs of those, and ics_before_log, those of UEs without one in the
+    log. planes are the configured ones, which tell whether the process has a CU-CP when the log has no banner, e.g. a
     rotated one.
     """
+    rows = {"metrics_rows": 0, "last_metrics": None, "rrc_setups": 0, "ics_of_setups": 0, "ics_before_log": 0}
     if not gnb_log.exists():
-        return {**vars(summary.LogSummary()), "silent_loggers": list(PROCEDURE_LOGGERS), "rrc_setups": 0}
+        return {**vars(summary.LogSummary()), **rows, "silent_loggers": list(PROCEDURE_LOGGERS)}
     verbose: set[str] = set()
-    rows = {"metrics_rows": 0, "last_metrics": None, "rrc_setups": 0}
+    # CU-CP indexes of the UEs of an RRC setup still without Initial Context Setup; indexes are reused.
+    pending: set[str] = set()
 
     def scan(lines):
         for raw in lines:
@@ -133,8 +138,15 @@ def parse_gnb_log(gnb_log: Path, planes: list[str] = ()) -> dict:
             if m := _METRICS_ROW_RE.search(raw, 0, _HEADER_LEN):
                 rows["metrics_rows"] += 1
                 rows["last_metrics"] = raw[m.end() :].rstrip("\r\n")
-            elif "rrcSetupComplete" in raw and _RRC_SETUP_COMPLETE_RE.search(raw):
+            elif "rrcSetupComplete" in raw and (m := _RRC_SETUP_COMPLETE_RE.search(raw)):
                 rows["rrc_setups"] += 1
+                pending.add(m.group(1))
+            elif "Initial Context Setup Routine" in raw and (m := _ICS_DONE_RE.search(raw)):
+                if m.group(1) in pending:
+                    pending.discard(m.group(1))
+                    rows["ics_of_setups"] += 1
+                else:
+                    rows["ics_before_log"] += 1
             yield raw
 
     with open(gnb_log, encoding="utf-8", errors="replace") as f:
@@ -306,11 +318,16 @@ def summarize(path_str: str) -> None:
         print(f"  UE creations        : {len(log['ue_creates'])} (first @ {log['ue_creates'][0][0]},"
               f" last @ {log['ue_creates'][-1][0]})")
     if log["init_ctx_done"]:
-        done = len(log["init_ctx_done"])
         attempted = ics_attempts(log)
-        # A log starting mid-run holds completions of UEs whose RRC setup precedes it.
-        early = f"; {done - attempted} of an RRC setup before the log start" if 0 < attempted < done else ""
-        print(f"  Initial Context Setup OK : {done}/{max(done, attempted)} (of the UEs of an RRC setup{early})")
+        # A log starting mid-run holds completions of UEs whose RRC setup precedes it, which tell nothing of the
+        # setups in the log.
+        if attempted:
+            early = log["ics_before_log"]
+            early = f"; {early} more of an RRC setup before the log start" if early else ""
+            print(f"  Initial Context Setup OK : {log['ics_of_setups']}/{attempted} (of the UEs of an RRC setup in "
+                  f"the log{early})")
+        else:
+            print(f"  Initial Context Setup OK : {len(log['init_ctx_done'])}")
     if log["ue_releases"]:
         if len(log["ue_releases"]) <= 5:
             for ts, ue in log["ue_releases"]:
@@ -334,16 +351,16 @@ def summarize(path_str: str) -> None:
     # Caveat: these counters come from RRC/NGAP/E1AP/CU layers. If those are
     # logged at 'warning', the layers are silent and the counts read 0 even when
     # the procedures happened — say so rather than implying nothing occurred.
-    muted = [f"{name}={lvl}" for name, lvl in (cfg["procedure_levels"] or {}).items() if lvl in QUIET_LEVELS]
-    if has_cu_cp(log["app"], cfg["planes"], log["loggers"]) is False:
-        muted = []
+    # A configured level may be overridden on the command line or by another configuration file, so only loggers
+    # without info or debug lines count as muted.
+    muted = [f"{name}={lvl}" for name, lvl in (cfg["procedure_levels"] or {}).items()
+             if lvl in QUIET_LEVELS and OPTION_LOGGERS[name] in log["silent_loggers"]]
     if muted:
         # CU-CP logs the UE creations and Initial Context Setups.
-        cu_muted = (cfg["procedure_levels"] or {}).get("cu") in QUIET_LEVELS
-        also = ", UE creations and Initial Context Setups" if cu_muted else ""
-        print(f"  NOTE: {', '.join(muted)} below info (set or inherited from all_level) — the above procedure "
-              f"counts{also} are unreliable (layers silent). Infer HO from SCHED PRACH on the target cell / metrics "
-              f"'ue_reconf' events, or enable info logging.")
+        also = ", UE creations and Initial Context Setups" if "CU-CP" in log["silent_loggers"] else ""
+        print(f"  NOTE: {', '.join(muted)} below info (set, or inherited from all_level or the default) — the above "
+              f"procedure counts{also} are unreliable (layers silent). Infer HO from SCHED PRACH on the target cell / "
+              f"metrics 'ue_reconf' events, or enable info logging.")
     elif cfg["procedure_levels"] is None and log["silent_loggers"]:
         # Without the levels of a configuration, a logger without info or debug lines is taken as logged at warning.
         print(f"  NOTE: no info or debug lines of {', '.join(log['silent_loggers'])} — the above procedure "
@@ -390,9 +407,9 @@ def summarize(path_str: str) -> None:
     if log["reest_count"] > 0:
         anomalies.append(f"RRC reestablishment requests: {log['reest_count']}")
     # UEs that set up RRC but never finished Initial Context Setup.
-    if len(log["init_ctx_done"]) < (attempted := ics_attempts(log)):
+    if log["ics_of_setups"] < (attempted := ics_attempts(log)):
         anomalies.append(
-            f"Initial Context Setup incomplete: {len(log['init_ctx_done'])}/"
+            f"Initial Context Setup incomplete: {log['ics_of_setups']}/"
             f"{attempted} UEs of an RRC setup finished (rest may have been mid-attach "
             f"at capture end, or failed)"
         )

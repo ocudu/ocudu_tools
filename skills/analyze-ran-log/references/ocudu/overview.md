@@ -107,3 +107,5 @@ For multi-UE runs `stdout.log` reprints the metrics table many times — use
 The traffic figures are **per-UE peaks, not per-cell**, and the script computes
 **no BLER** — don't invent either. `Initial Context Setup OK: K/N` is the single
 most useful multi-UE health signal; carry it even when K == N.
+N counts the RRC setups in the log; completions of UEs set up before the log
+start are reported apart and are not in K.

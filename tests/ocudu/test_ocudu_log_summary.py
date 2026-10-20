@@ -120,26 +120,42 @@ class OcuduLogSummaryTest(unittest.TestCase):
         early = ('2026-07-06T17:14:10.460000 [CU-CP   ] [I] ue=9: "Initial Context Setup Routine" finished '
                  "successfully\n")
         out = self.summary(QUIET_LOG + VERBOSE_LINES + ics + early)
-        self.assertIn("Initial Context Setup OK : 2/2 (of the UEs of an RRC setup; 1 of an RRC setup before the log "
-                      "start)", out)
+        self.assertIn("Initial Context Setup OK : 1/1 (of the UEs of an RRC setup in the log; 1 more of an RRC setup "
+                      "before the log start)", out)
         self.assertNotIn("Initial Context Setup incomplete", out)
+        # Completions of UEs set up before the log start hide no failure in it.
+        out = self.summary(QUIET_LOG + VERBOSE_LINES + early)
+        self.assertIn("Initial Context Setup OK : 0/1 (of the UEs of an RRC setup in the log; 1 more", out)
+        self.assertIn("Initial Context Setup incomplete: 0/1", out)
+        # A reused index, whose first UE never completes.
+        again = VERBOSE_LINES.splitlines(keepends=True)[0].replace("10.200000", "10.420000")
+        out = self.summary(QUIET_LOG + VERBOSE_LINES + again + ics)
+        self.assertIn("Initial Context Setup OK : 1/2 (of the UEs of an RRC setup in the log)", out)
         # CU-CP, which logs the completions, below info.
         rrc_only = VERBOSE_LINES.splitlines(keepends=True)[0]
         self.assertNotIn("Initial Context Setup incomplete", self.summary(QUIET_LOG + rrc_only))
 
     def test_note_of_procedure_loggers_at_warning(self):
         cfg = Path(self.tmp.name) / "ocudu_gnb.yml"
+        verbose = VERBOSE_LINES.splitlines(keepends=True)
+        no_e1 = "".join(verbose[:3])
         info = "log:\n  f1ap_level: warning\n  rrc_level: info\n  ngap_level: info\n  cu_level: debug\n"
         cfg.write_text(info + "  e1ap_level: info\n")
         self.assertNotIn("NOTE", self.summary(QUIET_LOG + VERBOSE_LINES))
         cfg.write_text(info + "  e1ap_level: warning\n")
-        self.assertIn("NOTE: e1ap=warning below info", self.summary(QUIET_LOG + VERBOSE_LINES))
+        out = self.summary(QUIET_LOG + no_e1)
+        self.assertIn("NOTE: e1ap=warning below info", out)
+        self.assertNotIn("UE creations and Initial Context Setups are unreliable", out)
         # Levels inherited from all_level or the default, and error or none, also mute.
         cfg.write_text("log:\n  all_level: warning\n  rrc_level: info\n  ngap_level: error\n  e1ap_level: none\n")
-        self.assertIn("NOTE: ngap=error, cu=warning, e1ap=none below info", self.summary(QUIET_LOG + VERBOSE_LINES))
+        out = self.summary(QUIET_LOG + verbose[0])
+        self.assertIn("NOTE: ngap=error, cu=warning, e1ap=none below info", out)
+        self.assertIn("UE creations and Initial Context Setups are unreliable", out)
         cfg.write_text("log:\n  filename: gnb.log\n")
-        self.assertIn("NOTE: rrc=warning, ngap=warning, cu=warning, e1ap=warning below info",
-                      self.summary(QUIET_LOG + VERBOSE_LINES))
+        self.assertIn("NOTE: rrc=warning, ngap=warning, cu=warning, e1ap=warning below info", self.summary(QUIET_LOG))
+        # Levels of the command line or another configuration file override those of the file.
+        self.assertNotIn("NOTE", self.summary(QUIET_LOG + VERBOSE_LINES))
+        self.assertIn("NOTE: e1ap=warning below info", self.summary(QUIET_LOG + no_e1))
         cfg.write_text("log:\n  all_level: info\n")
         self.assertNotIn("NOTE", self.summary(QUIET_LOG + VERBOSE_LINES))
 
