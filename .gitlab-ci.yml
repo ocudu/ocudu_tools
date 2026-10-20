@@ -90,7 +90,12 @@ parser tests:
     - apk add --no-cache tshark
     - pip install "./tools/parsers[pandas]"
   script:
-    - python3 -m unittest discover -s tools/parsers/tests -t tools/parsers -v
+    # Run a copy of the tests outside the source tree, so that they import the installed package.
+    - TESTS_ROOT=$(mktemp -d)
+    - cp -r tools/parsers/tests "$TESTS_ROOT/"
+    - cd "$TESTS_ROOT"
+    - python3 -c 'import parsers, sysconfig; assert parsers.__file__.startswith(sysconfig.get_paths()["purelib"]), parsers.__file__'
+    - python3 -m unittest discover -s tests -t . -v
   rules:
     - if: $ON_MR
       changes:
