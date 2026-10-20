@@ -26,7 +26,9 @@ DD/MM/YY HH:MM:SS:mmm <payload>
   above (an RRC event's `Cell Info:`, a `REGISTRATION IND` body).
 - **GETSTATS rows are timestamped**: every row of a dump repeats the timestamp of
   its `UE ID:` header, so a line grep returns only the header; take the rows with
-  `grep -a -A30` or `viavi_log_search.py`, which groups them with their header.
+  `viavi_log_search.py --pattern "UE ID: N "`, which groups them with their header.
+  A record can exceed 90 rows (COMBINED, all stats), so `grep -A30` cuts it
+  short; by hand, grep the header's timestamp.
 
 ### Payload classes
 
@@ -161,7 +163,8 @@ LC_ALL=C grep -aoE 'C: [A-Z_]+ 0x[0-9A-Fa-f]+' "$L" | grep -v ' 0x00$'
 LC_ALL=C grep -ac 'C: FORW .* GETSTATS' "$L"
 LC_ALL=C grep -acE '^[0-9/]* [0-9:]* UE ID: [0-9]+ ' "$L"
 LC_ALL=C grep -acE '^[0-9/]* [0-9:]* UE ID: [0-9]+-[0-9]+ ' "$L"
-LC_ALL=C grep -a -A30 'UE ID: 113 ' "$L" | head -n 200
+TS=$(LC_ALL=C grep -a -m1 'UE ID: 113 ' "$L" | cut -c1-21)
+LC_ALL=C grep -a "^$TS " "$L" | head -n 200
 
 # Run time span (first / last timestamp)
 LC_ALL=C grep -aoE '^[0-9]{2}/[0-9]{2}/[0-9]{2} [0-9:]{12}' "$L" | sed -n '1p;$p'

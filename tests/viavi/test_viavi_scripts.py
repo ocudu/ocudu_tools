@@ -22,7 +22,8 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "skills" / "analyze-ran-log" / "scripts" / "viavi"
 
-# Ends past midnight; one per-UE GETSTATS record and one COMBINED record, each with timestamped stat rows.
+# Ends past midnight; one per-UE GETSTATS record and one COMBINED record, each with timestamped stat rows,
+# the COMBINED one followed by a command echo of the same timestamp.
 COMMAND_LOG = """\
 14/01/26 23:17:29:111 RSET
 14/01/26 23:17:29:120 C: RSET 0x00 Ok
@@ -52,6 +53,7 @@ COMMAND_LOG = """\
 15/01/26 00:00:05:050 Throughput: 000000000  Average: 985022950  Min: 000000000  Max: 1514786750
 15/01/26 00:00:05:050 UL-SCH (PCC)
 15/01/26 00:00:05:050 Throughput: 000000000  Average: 020387530  Min: 000000000  Max: 035349480
+15/01/26 00:00:05:050 forw mte GetNrBeamStats
 15/01/26 00:00:06:000 I: CMPI MTE 0 NR DISCONNECTION IND:UE Id:0
 """
 
@@ -155,6 +157,8 @@ class ViaviScriptsTest(unittest.TestCase):
         self.assertIn("Average: 46681020", res.stdout)
         self.assertNotIn("WAIT FOR", res.stdout)
         self.assertEqual(self.count(log, "--pattern", "Average: 985022950"), 1)
+        res = run("viavi_log_search.py", str(log), "--pattern", "GetNrBeamStats")
+        self.assertEqual(res.stdout.strip(), "15/01/26 00:00:05:050 forw mte GetNrBeamStats")
 
     def test_search_ue_excludes_combined_range(self):
         log = write_txt(self.dir)
@@ -168,10 +172,19 @@ class ViaviScriptsTest(unittest.TestCase):
 
     def test_search_window_across_midnight(self):
         log = write_txt(self.dir)
-        self.assertEqual(self.count(log), 17)
-        self.assertEqual(self.count(log, "--after", "23:59:59:000"), 6)
+        self.assertEqual(self.count(log), 18)
+        self.assertEqual(self.count(log, "--after", "23:59:59:000"), 7)
         self.assertEqual(self.count(log, "--after", "23:59:59", "--before", "00:00:01"), 3)
         self.assertEqual(self.count(log, "--before", "00:00:00:010"), 14)
+
+    def test_search_window_before_first_line(self):
+        # Bounds less than 12 h behind the first line (23:17:29) are on its day.
+        log = write_txt(self.dir)
+        self.assertEqual(self.count(log, "--after", "23:00:00", "--before", "23:19:00"), 3)
+        self.assertEqual(self.count(log, "--before", "23:00:00"), 0)
+        self.assertEqual(self.count(log, "--after", "12:00:00"), 18)
+        # A --before behind --after but within 12 h is on the same day, so the window is empty.
+        self.assertEqual(self.count(log, "--after", "23:19:00", "--before", "23:18:00"), 0)
 
     def test_search_bad_arguments(self):
         log = write_txt(self.dir)

@@ -45,9 +45,9 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/amari-ue/ue_log_search.py <ue.log> \
 | "Did the UE reestablish?" | `--layer RRC --pattern "RRC reestablishment request"` |
 | "What band/BW was used?" | read `amarisoft_ue.cfg` (fields: `reference/config-format.md`) or `grep "^RF" stdout.log` |
 
-`--pattern` is a case-insensitive regex. `--after`/`--before` take each time at
-its first occurrence at or after the first log line, so a window across midnight
-works.
+`--pattern` is a case-insensitive regex. `--after` is on the day of the first
+log line unless over 12 h behind it (then the next day); `--before` likewise
+against `--after`, or the first line. So a window across midnight works.
 
 Regex alternation can't be written inside a markdown table cell, so these live
 here — copy them verbatim, the pipe must **not** be backslash-escaped:

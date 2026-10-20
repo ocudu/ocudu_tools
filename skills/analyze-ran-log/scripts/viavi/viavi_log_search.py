@@ -9,8 +9,8 @@ viavi_log_search.py - Search a VIAVI command log with filtering.
 Block-aware: a block is one timestamped line plus the untimestamped continuation
 lines that follow it (e.g. an RRC event's "Cell Info:" body). A GETSTATS record
 ("UE ID: <id>   (Radio Context ..." or a COMBINED "UE ID: 0-32 ...") also takes
-the following stat rows that carry its timestamp. A filter that matches anywhere
-in a block returns the whole block.
+the following stat rows that carry its timestamp, up to a command echo. A filter
+that matches anywhere in a block returns the whole block.
 
 Usage:
   python3 viavi_log_search.py <path> [options]
@@ -25,8 +25,9 @@ Options:
                       (e.g. "Random Access Error", "NR REGISTRATION IND")
   --after <ts>        Only blocks at or after HH:MM:SS:mmm
   --before <ts>       Only blocks at or before HH:MM:SS:mmm
-                      (each time is its first occurrence at or after the
-                      first log line, so a log crossing midnight works)
+                      (a log crossing midnight: --after is on the next day
+                      when over 12 h behind the first line, --before when
+                      over 12 h behind --after or the first line)
   --pattern <regex>   Additional regex, case-insensitive, searched across the whole block
   --count             Print the match count only
   --max-lines <N>     Max output lines before truncation (default: 200)
@@ -56,6 +57,9 @@ import viavi_log_summary  # reuse resolve_log() / open_log() / TS_RE
 
 TS_RE = viavi_log_summary.TS_RE
 HMS_RE = re.compile(r"^(\d{2}):(\d{2}):(\d{2})(?:[:.](\d{1,3}))?$")
+# A command echo ("forw mte GetNrBeamStats", "FORW MTE ...", "SETP ..."): stat rows start
+# with a capital or a digit, and "RACH NO DATA" is a stat row.
+ECHO_RE = re.compile(r"^(?:[a-z]|(?:FORW|SETP|SDLI|SMLI|SCXT|SCFG|LCFG|CONF|WAIT|MULT|RSET) )")
 
 
 def _hms_arg(s: str) -> dt.time:
@@ -95,18 +99,19 @@ def parse_args(argv=None):
 
 
 class TimeWindow:
-    """--after/--before bounds, each placed at its first occurrence at or after the first line."""
+    """--after/--before bounds placed in the day of the first line (--before: of --after when
+    given), or the next day when over 12 h behind it."""
 
     def __init__(self, after: dt.time | None, before: dt.time | None):
         self._after_t, self._before_t = after, before
         self._after = self._before = None
         self._placed = False
 
-    def _place(self, t: dt.time | None, first: dt.datetime) -> dt.datetime | None:
+    def _place(self, t: dt.time | None, ref: dt.datetime) -> dt.datetime | None:
         if t is None:
             return None
-        d = dt.datetime.combine(first.date(), t)
-        return d if d >= first else d + dt.timedelta(days=1)
+        d = dt.datetime.combine(ref.date(), t)
+        return d + dt.timedelta(days=1) if ref - d > dt.timedelta(hours=12) else d
 
     def contains(self, when: dt.datetime | None) -> bool:
         if self._after_t is None and self._before_t is None:
@@ -115,7 +120,7 @@ class TimeWindow:
             return False
         if not self._placed:
             self._after = self._place(self._after_t, when)
-            self._before = self._place(self._before_t, when)
+            self._before = self._place(self._before_t, self._after or when)
             self._placed = True
         if self._after is not None and when < self._after:
             return False
@@ -173,7 +178,8 @@ def search(args) -> None:
                 stamp, payload = (m.group(1), m.group(2)), m.group(3)
                 is_record = viavi_log_summary.STATS_UE_RE.search(payload)
                 if (stamp == stats_stamp and not is_record
-                        and not payload.startswith(("I: ", "C: "))):
+                        and not payload.startswith(("I: ", "C: "))
+                        and not ECHO_RE.match(payload)):
                     body.append(line)
                     continue
                 flush()

@@ -21,8 +21,9 @@ Options:
   --cell <cell_id>      Filter by cell index (2-char decimal, e.g. 00, 01)
   --after <ts>          Only include lines at or after HH:MM:SS.mmm
   --before <ts>         Only include lines at or before HH:MM:SS.mmm
-                        (a log crossing midnight: each time is its first
-                        occurrence at or after the first log line)
+                        (a log crossing midnight: --after is on the next day
+                        when over 12 h behind the first line, --before when
+                        over 12 h behind --after or the first line)
   --pattern <regex>     Additional regex, case-insensitive (searched across entire block)
   --count               Print match count only (no block content)
   --max-lines <N>       Max output lines before truncation (default: 200)
@@ -67,10 +68,10 @@ def hms_seconds(s: str) -> float:
 
 
 def _hms_arg(s: str) -> float:
-    try:
-        return hms_seconds(s)
-    except ValueError:
+    m = HMS_RE.match(s)
+    if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59 or float(m.group(3)) >= 60:
         raise argparse.ArgumentTypeError(f"not HH:MM:SS[.mmm]: {s!r}")
+    return hms_seconds(s)
 
 
 def _regex_arg(s: str) -> re.Pattern:
@@ -119,9 +120,13 @@ class LogClock:
         self._last = sec
         return self._day + sec
 
-    def bound(self, sec: float) -> float:
-        """A --after/--before time placed at its first occurrence at or after the first line."""
-        return sec if sec >= self.first else sec + DAY
+    def bound(self, sec: float, ref: float | None = None) -> float:
+        """A time of day placed in the day of ref (default: the first line), or the next day
+        when over 12 h behind ref."""
+        if ref is None:
+            ref = self.first
+        placed = ref - ref % DAY + sec
+        return placed + DAY if ref - placed > HALF_DAY else placed
 
 
 def block_matches(header_line: str, body_lines: list[str], args, clock: LogClock) -> bool:
@@ -133,9 +138,10 @@ def block_matches(header_line: str, body_lines: list[str], args, clock: LogClock
 
     # Time range
     t = clock.elapsed(ts)
-    if args.after is not None and t < clock.bound(args.after):
+    after = None if args.after is None else clock.bound(args.after)
+    if after is not None and t < after:
         return False
-    if args.before is not None and t > clock.bound(args.before):
+    if args.before is not None and t > clock.bound(args.before, after):
         return False
 
     # Layer filter

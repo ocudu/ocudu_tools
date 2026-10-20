@@ -117,6 +117,12 @@ class UeLogSearchTest(unittest.TestCase):
             self.run_count("--after", "15:45:02.700", "--before", "15:45:02.710"), 6
         )
 
+    def test_timestamp_window_before_first_line(self):
+        # Bounds less than 12 h behind the first line (15:45:02.270) are on its day.
+        self.assertEqual(self.run_count("--after", "15:00:00", "--before", "15:45:02.400"), 3)
+        self.assertEqual(self.run_count("--before", "15:00:00"), 0)
+        self.assertEqual(self.run_count("--after", "04:00:00"), 18)
+
     def test_pattern_matches_multiline_block_body(self):
         # "rrcSetupRequest" only appears inside the ASN.1 body, not the header line.
         self.assertEqual(self.run_count("--pattern", "rrcSetupRequest"), 1)
@@ -144,7 +150,8 @@ class UeLogSearchTest(unittest.TestCase):
             self.assertEqual(count("--before", "00:00:00.100"), 3)
 
     def test_bad_arguments_exit_2(self):
-        for args in (("--pattern", "("), ("--after", "1:2")):
+        for args in (("--pattern", "("), ("--after", "1:2"), ("--after", "25:00:00"),
+                     ("--before", "12:60:00"), ("--before", "12:00:60.5")):
             proc = subprocess.run([sys.executable, str(SCRIPT), self.tmpdir.name, *args],
                                   capture_output=True, text=True)
             self.assertEqual(proc.returncode, 2)

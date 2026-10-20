@@ -54,7 +54,8 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/viavi/viavi_log_search.py <log> \
   --pattern "UE ID: N " --after <HH:MM:SS:mmm> --before <HH:MM:SS:mmm>
 ```
 
-By hand: `LC_ALL=C grep -a -A30 'UE ID: N ' <log>`.
+By hand, grep the header's timestamp, which every row repeats (`-A30` cuts a
+record of over 90 rows short): `LC_ALL=C grep -a "^$(LC_ALL=C grep -a -m1 'UE ID: N ' <log> | cut -c1-21) " <log>`.
 
 ## Reading the result
 
