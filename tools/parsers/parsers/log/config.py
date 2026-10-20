@@ -20,6 +20,8 @@ from . import events
 LEVELS = ("none", "error", "warning", "info", "debug")
 # Level of the layers that neither their own option nor all_level set.
 DEFAULT_LEVEL = "warning"
+# Options that all_level does not set.
+_NOT_FROM_ALL = ("lib",)
 
 # Logger name to the log level option that controls it, without the "_level" suffix.
 LOGGER_OPTIONS = {
@@ -101,12 +103,14 @@ class AppConfig:
     amf_port: int | None = None
 
     def level(self, option: str) -> str:
-        """Effective log level of an option, e.g. "mac"."""
+        """Effective log level of an option, e.g. "mac": its own, else all_level's, else the OCUDU default."""
         if option in self.levels:
             return self.levels[option]
-        if option != "config" and "all" in self.levels:
-            return self.levels["all"]
-        return "none" if option == "config" else DEFAULT_LEVEL
+        inherited = self.levels.get("all") if option not in _NOT_FROM_ALL else None
+        if option == "config":
+            # The config logger supports none, info and debug only.
+            return inherited if inherited in ("none", "info", "debug") else "none"
+        return inherited or DEFAULT_LEVEL
 
     def logger_level(self, logger: str) -> str | None:
         """Effective log level of a logger, e.g. "SCHED", or None if no option controls it."""

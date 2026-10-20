@@ -41,6 +41,10 @@ LEVEL_OPTIONS = ("all", "lib", "rrc", "ngap", "f1ap", "e1ap", "cu", "pdcp", "mac
 NODE_TYPES = {"gNB": "monolithic gNB", "CU": "CU (CP+UP)"}
 # Loggers of the procedure counts, which log them at info or debug.
 PROCEDURE_LOGGERS = ("RRC", "NGAP", "CU-CP", "CU-CP-E1")
+# Log level options of the procedure loggers.
+PROCEDURE_OPTIONS = ("rrc", "ngap", "cu", "e1ap")
+# Log levels that print no info lines.
+QUIET_LEVELS = ("none", "error", "warning")
 # Entry headers of info or debug lines of the procedure loggers, and of METRICS rows, which have no level, unlike
 # the start and stop lines of the metrics workers.
 _VERBOSE_RE = re.compile(r"\[(RRC|NGAP|CU-CP|CU-CP-E1)\s*\] \[[ID]\] ")
@@ -70,12 +74,14 @@ def parse_cfg(cfg_path: Path, gnb_log: Path) -> dict:
     cfg = cfg or config.AppConfig(planes=[])
     levels = {k: cfg.levels[k] for k in LEVEL_OPTIONS if k in cfg.levels}
     # MAC details, SCHED lines (gated by mac_level, there is no sched_level) and DU proc=... traces need info.
-    quiet = ("none", "warning", "error")
-    suppressed = "DU" in cfg.planes and (cfg.level("mac") in quiet or cfg.level("du") in quiet)
+    suppressed = "DU" in cfg.planes and (cfg.level("mac") in QUIET_LEVELS or cfg.level("du") in QUIET_LEVELS)
     return {
         "raw": cfg.values,
         "pcaps": cfg.pcaps,
         "log_levels": levels,
+        # Levels of the procedure options, inherited from all_level or the OCUDU default when not set; None without a
+        # configuration file or echo.
+        "procedure_levels": {k: cfg.level(k) for k in PROCEDURE_OPTIONS} if found else None,
         "node_type": NODE_TYPES.get(cfg.node_type, cfg.node_type),
         "planes": cfg.planes,
         "l2_traces_suppressed": suppressed,
@@ -301,8 +307,10 @@ def summarize(path_str: str) -> None:
               f" last @ {log['ue_creates'][-1][0]})")
     if log["init_ctx_done"]:
         done = len(log["init_ctx_done"])
-        attempted = ics_attempts(log) or done
-        print(f"  Initial Context Setup OK : {done}/{attempted} (of the UEs of an RRC setup)")
+        attempted = ics_attempts(log)
+        # A log starting mid-run holds completions of UEs whose RRC setup precedes it.
+        early = f"; {done - attempted} of an RRC setup before the log start" if 0 < attempted < done else ""
+        print(f"  Initial Context Setup OK : {done}/{max(done, attempted)} (of the UEs of an RRC setup{early})")
     if log["ue_releases"]:
         if len(log["ue_releases"]) <= 5:
             for ts, ue in log["ue_releases"]:
@@ -326,15 +334,17 @@ def summarize(path_str: str) -> None:
     # Caveat: these counters come from RRC/NGAP/E1AP/CU layers. If those are
     # logged at 'warning', the layers are silent and the counts read 0 even when
     # the procedures happened — say so rather than implying nothing occurred.
-    muted = [name for name, lvl in cfg["log_levels"].items()
-             if lvl == "warning" and name in ("rrc", "ngap", "e1ap", "cu")]
+    muted = [f"{name}={lvl}" for name, lvl in (cfg["procedure_levels"] or {}).items() if lvl in QUIET_LEVELS]
     if has_cu_cp(log["app"], cfg["planes"], log["loggers"]) is False:
         muted = []
     if muted:
-        print(f"  NOTE: {', '.join(muted)} logged at 'warning' — the above procedure "
-              f"counts are unreliable (layers silent). Infer HO from SCHED PRACH on the "
-              f"target cell / metrics 'ue_reconf' events, or enable info logging.")
-    elif not cfg["log_levels"] and log["silent_loggers"]:
+        # CU-CP logs the UE creations and Initial Context Setups.
+        cu_muted = (cfg["procedure_levels"] or {}).get("cu") in QUIET_LEVELS
+        also = ", UE creations and Initial Context Setups" if cu_muted else ""
+        print(f"  NOTE: {', '.join(muted)} below info (set or inherited from all_level) — the above procedure "
+              f"counts{also} are unreliable (layers silent). Infer HO from SCHED PRACH on the target cell / metrics "
+              f"'ue_reconf' events, or enable info logging.")
+    elif cfg["procedure_levels"] is None and log["silent_loggers"]:
         # Without the levels of a configuration, a logger without info or debug lines is taken as logged at warning.
         print(f"  NOTE: no info or debug lines of {', '.join(log['silent_loggers'])} — the above procedure "
               f"counts are unreliable (likely logged at 'warning'). Infer HO from SCHED PRACH on the "

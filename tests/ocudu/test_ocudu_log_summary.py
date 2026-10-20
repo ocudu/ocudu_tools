@@ -116,16 +116,32 @@ class OcuduLogSummaryTest(unittest.TestCase):
         self.assertIn("Initial Context Setup OK : 1/2", out)
         self.assertIn("Initial Context Setup incomplete: 1/2", out)
         self.assertIn("Initial Context Setup incomplete: 0/1", self.summary(QUIET_LOG + VERBOSE_LINES))
+        # A log starting mid-attach, after the RRC setup of a UE that completes.
+        early = ('2026-07-06T17:14:10.460000 [CU-CP   ] [I] ue=9: "Initial Context Setup Routine" finished '
+                 "successfully\n")
+        out = self.summary(QUIET_LOG + VERBOSE_LINES + ics + early)
+        self.assertIn("Initial Context Setup OK : 2/2 (of the UEs of an RRC setup; 1 of an RRC setup before the log "
+                      "start)", out)
+        self.assertNotIn("Initial Context Setup incomplete", out)
         # CU-CP, which logs the completions, below info.
         rrc_only = VERBOSE_LINES.splitlines(keepends=True)[0]
         self.assertNotIn("Initial Context Setup incomplete", self.summary(QUIET_LOG + rrc_only))
 
     def test_note_of_procedure_loggers_at_warning(self):
         cfg = Path(self.tmp.name) / "ocudu_gnb.yml"
-        cfg.write_text("log:\n  f1ap_level: warning\n")
+        info = "log:\n  f1ap_level: warning\n  rrc_level: info\n  ngap_level: info\n  cu_level: debug\n"
+        cfg.write_text(info + "  e1ap_level: info\n")
         self.assertNotIn("NOTE", self.summary(QUIET_LOG + VERBOSE_LINES))
-        cfg.write_text("log:\n  f1ap_level: warning\n  e1ap_level: warning\n")
-        self.assertIn("NOTE: e1ap logged at 'warning'", self.summary(QUIET_LOG + VERBOSE_LINES))
+        cfg.write_text(info + "  e1ap_level: warning\n")
+        self.assertIn("NOTE: e1ap=warning below info", self.summary(QUIET_LOG + VERBOSE_LINES))
+        # Levels inherited from all_level or the default, and error or none, also mute.
+        cfg.write_text("log:\n  all_level: warning\n  rrc_level: info\n  ngap_level: error\n  e1ap_level: none\n")
+        self.assertIn("NOTE: ngap=error, cu=warning, e1ap=none below info", self.summary(QUIET_LOG + VERBOSE_LINES))
+        cfg.write_text("log:\n  filename: gnb.log\n")
+        self.assertIn("NOTE: rrc=warning, ngap=warning, cu=warning, e1ap=warning below info",
+                      self.summary(QUIET_LOG + VERBOSE_LINES))
+        cfg.write_text("log:\n  all_level: info\n")
+        self.assertNotIn("NOTE", self.summary(QUIET_LOG + VERBOSE_LINES))
 
     def test_metrics_rows_leave_out_the_worker_lines(self):
         out = self.summary(QUIET_LOG)

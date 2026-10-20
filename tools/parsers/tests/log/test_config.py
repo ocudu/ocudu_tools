@@ -44,6 +44,13 @@ class ConfigTest(unittest.TestCase):
         self.assertFalse(cfg.complete)
         self.assertIsNone(cfg.node_type)
 
+    def test_levels_inherited_from_all_level(self):
+        cfg = config.parse_config("log:\n  all_level: debug\n  rrc_level: info\n")
+        self.assertEqual([cfg.level(o) for o in ("rrc", "ngap", "config", "lib")], ["info", "debug", "debug", "warning"])
+        cfg = config.parse_config("log:\n  all_level: error\n")
+        self.assertEqual([cfg.level(o) for o in ("cu", "config")], ["error", "none"])
+        self.assertFalse(cfg.logs_at("CU-CP", "info"))
+
     def test_last_value_wins(self):
         text = "log:\n  all_level: info\ncu_cp:\n  x: 1\nlog:\n  all_level: warning\n"
         self.assertEqual(config.parse_config(text).levels, {"all": "warning"})
