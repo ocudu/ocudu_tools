@@ -143,6 +143,49 @@ class CorrelateRadioTest(unittest.TestCase):
         self.assertIn("1  gnb-extra-rx", res.stdout)
         self.assertIn("No anomalies.", res.stdout)
 
+    def test_ue_log_without_phy(self):
+        for text in ("", "14:27:21.273 [RRC] UL 0035 rrcSetupRequest\n"):
+            (self.dir / "ue.log").write_text(text)
+            res = self.run_script(None)
+            self.assertEqual(res.returncode, 1, text)
+            self.assertIn("no PHY lines in", res.stderr)
+            self.assertIn("pass a UE log with PHY lines with --ue", res.stderr)
+
+    def test_midnight_crossing(self):
+        # The UE clock has no date, so the PUSCH after midnight takes the next day, like the gNB one.
+        (self.dir / "gnb.log").write_text(
+            "2026-04-29T23:59:59.981595 [PHY     ] [I] [  123.14] PUSCH: rnti=0x460b tbs=11 crc=OK sinr=97.0dB\n"
+            "2026-04-30T00:00:00.021595 [PHY     ] [I] [  127.14] PUSCH: rnti=0x460b tbs=11 crc=OK sinr=97.0dB\n")
+        (self.dir / "ue.log").write_text(
+            "23:59:59.973 [PHY] UL 0035 00 460b  123.14 PUSCH: harq=0 tb_len=11\n"
+            "00:00:00.013 [PHY] UL 0035 00 460b  127.14 PUSCH: harq=0 tb_len=11\n")
+        res = self.run_script(None)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("2  rx-ok", res.stdout)
+        self.assertIn("No anomalies.", res.stdout)
+
+    def test_ue_log_starting_after_midnight(self):
+        # The gNB log starts before midnight, the UE log after it.
+        (self.dir / "gnb.log").write_text(
+            "2026-04-29T23:59:58.000000 [PHY     ] [I] [  100.1] PDCCH: rnti=0x460b\n"
+            "2026-04-30T00:00:00.021595 [PHY     ] [I] [  127.14] PUSCH: rnti=0x460b tbs=11 crc=OK sinr=97.0dB\n")
+        (self.dir / "ue.log").write_text("00:00:00.013 [PHY] UL 0035 00 460b  127.14 PUSCH: harq=0 tb_len=11\n")
+        res = self.run_script(None)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("1  rx-ok", res.stdout)
+
+    def test_run_subdir_is_used(self):
+        for run_name, du in (("2026-04-29_14-27-00", GNB_LOG), ("2026-04-30_09-00-00", "")):
+            for comp, name, text in (("ocudu-du-1", "du.log", du), ("amarisoft-ue-1", "ue.log", UE_LOG)):
+                run = self.dir / "test" / comp / run_name
+                run.mkdir(parents=True)
+                (run / name).write_text(text)
+        run = self.dir / "test" / "ocudu-du-1" / "2026-04-29_14-27-00"
+        res = subprocess.run([sys.executable, str(SCRIPT), str(run), "--ue", str(self.dir / "ue.log")],
+                             capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn(f"gNB log : {run / 'du.log'}", res.stdout)
+
     def test_one_sided(self):
         for flag, name, missing in (("--gnb", "gnb.log", "no UE log"), ("--ue", "ue.log", "no gNB or DU log")):
             # No positional path: the current dir is not a run and is not searched.

@@ -138,6 +138,21 @@ def has_phy(gnb_log) -> bool:
         return any("[PHY" in line[:40] and utils.GNB_PHY_RE.match(line) for line in f)
 
 
+def ue_has_phy(ue_log) -> bool:
+    """Whether a UE log has a PHY radio event line."""
+    with open(ue_log, errors="replace") as f:
+        return any("[PHY]" in line[:20] and utils.UE_PHY_RE.match(line) for line in f)
+
+
+def ue_clock_ref(gnb_log, ue_log):
+    """Date anchor of the HH:MM:SS clock of ue_log, see utils.HmsClock, or None.
+
+    UE and gNB share UTC, so the first gNB event anchors it; else the `# Started on` header of the UE log.
+    """
+    first = utils.first_gnb_event_ts(gnb_log)
+    return utils.parse_gnb_ts(first) if first else utils.started_on_date(ue_log)
+
+
 # --------------------------------------------------------------------------
 # Parse PHY events into {(slot, rnti): event} (UL/DL kinds carry an RNTI).
 # --------------------------------------------------------------------------
@@ -216,16 +231,21 @@ def ue_phy_events(ue_log):
             yield m, rnti
 
 
-def parse_ue_phy(ue_log, kind, rnti_filter, ref_date):
-    """Return {(slot, rnti): [event, ...]} for the given PHY kind."""
+def parse_ue_phy(ue_log, kind, rnti_filter, ref):
+    """Return {(slot, rnti): [event, ...]} for the given PHY kind.
+
+    ref is the date anchor of the UE clock, see utils.HmsClock, or None for events without a datetime.
+    """
     events = defaultdict(list)
+    clock = utils.HmsClock(ref) if ref else None
     for m, rnti in ue_phy_events(ue_log):
-        if m.group("kind") != kind or (rnti_filter and rnti != rnti_filter):
-            continue
+        # Every PHY line advances the clock, so a midnight crossing is seen whatever the kind kept.
         try:
-            dt = utils.parse_hms_ts(m.group("ts"), ref_date) if ref_date else None
+            dt = clock.parse(m.group("ts")) if clock else None
         except ValueError:
             dt = None
+        if m.group("kind") != kind or (rnti_filter and rnti != rnti_filter):
+            continue
         events[(m.group("slot"), rnti)].append({
             "ts": m.group("ts"),
             "dt": dt,
@@ -319,11 +339,11 @@ def take_unknown_rnti(unknown, g):
 # Correlation
 # --------------------------------------------------------------------------
 
-def correlate(gnb_log, ue_log, kind, rnti_filter, ref_date):
+def correlate(gnb_log, ue_log, kind, rnti_filter, ref):
     kind_u = kind.upper()
     is_ul = kind_u in UL_KINDS
     gnb_ev = parse_gnb_phy(gnb_log, kind_u, rnti_filter)
-    ue_ev = parse_ue_phy(ue_log, kind_u, rnti_filter, ref_date)
+    ue_ev = parse_ue_phy(ue_log, kind_u, rnti_filter, ref)
     # UE events of unknown RNTI by slot, joined to unpaired gNB events of any RNTI that show a UE TX.
     unknown = defaultdict(list)
     for key in [k for k in ue_ev if k[1] == UNKNOWN_RNTI]:
@@ -464,17 +484,16 @@ def main(argv=None) -> int:
         print(f"error: no PHY lines in {gnb_log} (a CU log, or phy_level below info); pass a gNB or DU log with --gnb",
               file=sys.stderr)
         return 1
+    if not ue_has_phy(ue_log):
+        print(f"error: no PHY lines in {ue_log} (empty, or PHY logging off in its log_options); pass a UE log "
+              "with PHY lines with --ue", file=sys.stderr)
+        return 1
     print(f"gNB log : {gnb_log}")
     for o in others:
         print(f"  other : {o} (UE events on its cells read gnb-missing; rerun with --gnb)")
     print(f"UE  log : {ue_log}")
 
-    # Date anchor for the UE log's HH:MM:SS clock (UE/gNB share UTC). Prefer the
-    # gNB first-event date; fall back to the UE log's `# Started on` header.
-    first = utils.first_gnb_event_ts(gnb_log)
-    ref_date = first.split("T")[0] if first else None
-    if ref_date is None:
-        ref_date = utils.started_on_date(ue_log)
+    ref = ue_clock_ref(gnb_log, ue_log)
 
     if args.kind == "prach":
         n_ue, n_gnb, _ = prach_summary(gnb_log, ue_log)
@@ -485,7 +504,7 @@ def main(argv=None) -> int:
         print("  subsequent Msg3 PUSCH (exact (SFN.slot, RNTI) join), not the raw index.")
         return 0
 
-    rows, counts = correlate(gnb_log, ue_log, args.kind, rnti_filter, ref_date)
+    rows, counts = correlate(gnb_log, ue_log, args.kind, rnti_filter, ref)
     print(f"\n{args.kind.upper()} correlation on (SFN.slot, RNTI):")
     total = sum(counts.values())
     print(f"  total correlated events: {total}")

@@ -112,9 +112,10 @@ def resolve_test_dir(path: Path) -> tuple[Path, list[Path]]:
     )
 
 
-def inventory_component(comp_dir: Path) -> dict:
+def inventory_component(comp_dir: Path, run_dir: Path | None = None) -> dict:
+    """Inventory of a component, of its run subdir run_dir, by default its latest one."""
     role, atype = classify(comp_dir.name)
-    run_dir = latest_run_subdir(comp_dir)
+    run_dir = run_dir or latest_run_subdir(comp_dir)
     info: dict = {
         "component": comp_dir.name,
         "role": role,
@@ -186,7 +187,10 @@ def viavi_pseudo_component(log: Path, test_dir: Path) -> dict:
 
 def build_inventory(path_str: str) -> dict:
     test_dir, comp_dirs = resolve_test_dir(Path(path_str))
-    comps = [inventory_component(c) for c in comp_dirs]
+    path = Path(path_str).resolve()
+    # A run subdir given directly is inventoried, not the latest run of its component.
+    given_run = path if RUN_SUBDIR_RE.match(path.name) and comp_dirs == [path.parent] else None
+    comps = [inventory_component(c, given_run) for c in comp_dirs]
     comps += [viavi_pseudo_component(v, test_dir) for v in find_viavi_logs(test_dir)]
     testbed = {}
     tb = test_dir / "testbed.json"

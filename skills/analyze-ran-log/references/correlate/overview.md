@@ -34,7 +34,8 @@ Reports rx-ok / rx-ko / missing / contention. Skip for a quick overview; include
 when the per-component summaries already flagged PHY anomalies. In a split run it
 takes the first DU log and lists the other DUs; UE events on their cells read
 `gnb-missing`, so rerun with `--gnb <other du.log>`. It exits with an error on a
-log without PHY lines (CU, or `phy_level` below info).
+gNB log without PHY lines (CU, or `phy_level` below info), and on a UE log without
+them (empty, or PHY logging off in its `log_options`).
 
 ## cross-source block
 

@@ -75,12 +75,40 @@ class AlignClocksTest(unittest.TestCase):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("first co-identified PUSCH", res.stdout)
         # A DU log writes no NGAP, so it is not checked against a pcap.
-        self.assertIn("[log <-> pcap]  skipped: no run dir and no gNB log or --cu", res.stdout)
+        self.assertIn("[log <-> pcap]  skipped: no run dir and du.log writes no NGAP (a DU log); pass --cu", res.stdout)
         self.assertIn("Conclusion: the gNB or CU log", res.stdout)
         res = self.run_script("--ue", str(self.runs["ue.log"]))
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("[log <-> pcap]  skipped: no run dir and no gNB log or --cu", res.stdout)
         self.assertIn("[UE <-> gNB]  skipped: no gNB or DU log (--gnb)", res.stdout)
+
+    def test_du_log_decided_by_content(self):
+        # A DU log named gnb.log, by its banner, and a gNB log named du.log, by its NGAP lines.
+        du = self.dir / "gnb.log"
+        du.write_text("2026-04-29T14:27:20.000000 [GNB     ] [I] ==== DU started ===\n" + CU_LOG + DU_LOG)
+        res = self.run_script("--gnb", str(du), "--ue", str(self.runs["ue.log"]))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("skipped: no run dir and gnb.log writes no NGAP (a DU log); pass --cu", res.stdout)
+        gnb = self.dir / "du.log"
+        gnb.write_text(CU_LOG + DU_LOG)
+        res = self.run_script("--gnb", str(gnb), "--ue", str(self.runs["ue.log"]))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn(f"NGAP log : {gnb}", res.stdout)
+
+    def test_ue_log_without_phy(self):
+        self.runs["ue.log"].write_text("# Started on 2026-04-29 14:27:19\n14:27:21.273 [RRC] UL 0035 setup\n")
+        res = self.run_script(str(self.dir / "test"))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("[UE <-> gNB]  no PHY lines in ue.log", res.stdout)
+
+    def test_run_subdir_is_inventoried(self):
+        # A newer run of the DU has no PHY, so the given older one must be read.
+        newer = self.runs["du.log"].parent.parent / "2026-04-30_09-00-00"
+        newer.mkdir()
+        (newer / "du.log").write_text("2026-04-30T09:00:01.000000 [DU      ] [I] DU started\n")
+        res = self.run_script(str(self.runs["du.log"].parent))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn(f"PHY log  : {self.runs['du.log']}", res.stdout)
 
     def test_cu_log_alone(self):
         # The current dir is not a run and is not searched; the relative --cu path is shown absolute.

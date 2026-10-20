@@ -26,6 +26,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
@@ -37,6 +38,11 @@ import resolve
 
 # OCUDU roles that write NGAP, in the order their logs are picked for the log <-> pcap check.
 NGAP_ROLES = ("gnb", "cu", "cu-cp", "ocu")
+# Bytes of a log scanned for its application: the banner follows the configuration echo.
+APP_SCAN_BYTES = 16 << 20
+_BANNER_RE = re.compile(r"\] ==== (.+) started ===")
+# Applications of a banner that write no NGAP.
+NO_NGAP_APPS = ("DU", "DU low")
 
 
 def stage_for_tshark(pcap: Path) -> Path:
@@ -78,15 +84,34 @@ def gnb_ngsetup_ts(gnb_log: Path):
     return None
 
 
+def writes_ngap(log: Path) -> bool:
+    """Whether log is of an application that writes NGAP, by its banner, else by an NGAP line, in its first bytes."""
+    read = 0
+    with open(log, errors="replace") as f:
+        for line in f:
+            read += len(line)
+            if read > APP_SCAN_BYTES:
+                break
+            if line[:1] != "2":
+                continue
+            if m := _BANNER_RE.search(line):
+                return m.group(1) not in NO_NGAP_APPS
+            if "[NGAP" in line[:40]:
+                return True
+    return False
+
+
 def resolve_ngap_log(path_str, cu_arg, gnb_log):
     """(log of the gNB, CU or CU-CP, or None, why there is none) of a run."""
     if cu_arg:
         return Path(cu_arg).resolve(), ""
     if path_str is None:
         # Only explicit logs: a gNB log also writes NGAP, a DU log does not.
-        if gnb_log is not None and not gnb_log.name.startswith("du"):
-            return gnb_log, ""
-        return None, "no run dir and no gNB log or --cu"
+        if gnb_log is None:
+            return None, "no run dir and no gNB log or --cu"
+        if not writes_ngap(gnb_log):
+            return None, f"no run dir and {gnb_log.name} writes no NGAP (a DU log); pass --cu"
+        return gnb_log, ""
     logs = correlate_radio.ocudu_logs(resolve.build_inventory(path_str), NGAP_ROLES)
     if not logs:
         return None, "no gNB, CU or CU-CP component in the run (pass --cu)"
@@ -98,10 +123,10 @@ def ngap_pcap_beside(log: Path):
     return next(iter(sorted(log.parent.glob("*ngap.pcap"))), None)
 
 
-def first_common_pusch(gnb_log, ue_log, ref_date):
+def first_common_pusch(gnb_log, ue_log, ref):
     """Find the earliest PUSCH present in both logs at the same (slot, rnti)."""
     g = correlate_radio.parse_gnb_phy(gnb_log, "PUSCH", None)
-    u = correlate_radio.parse_ue_phy(ue_log, "PUSCH", None, ref_date)
+    u = correlate_radio.parse_ue_phy(ue_log, "PUSCH", None, ref)
     best = None
     for key in set(g) & set(u):
         pairs, _, _ = correlate_radio._pair_by_time(g[key], u[key])
@@ -143,10 +168,6 @@ def main(argv=None) -> int:
     print(f"NGAP pcap: {pcap}")
     print()
 
-    ref_date = None
-    if gnb_log:
-        first = utils.first_gnb_event_ts(gnb_log)
-        ref_date = first.split("T")[0] if first else None
 
     # 1. log <-> pcap
     if ngap_log and pcap:
@@ -177,7 +198,7 @@ def main(argv=None) -> int:
 
     # 2. UE <-> gNB PHY
     if gnb_log and ue_log:
-        best = first_common_pusch(gnb_log, ue_log, ref_date)
+        best = first_common_pusch(gnb_log, ue_log, correlate_radio.ue_clock_ref(gnb_log, ue_log))
         if best:
             gp, up, key = best
             slot, rnti = key
@@ -193,6 +214,9 @@ def main(argv=None) -> int:
         elif not correlate_radio.has_phy(gnb_log):
             print(f"[UE <-> gNB]  no PHY lines in {gnb_log.name} (a CU log, or phy_level below info); "
                   "pass a gNB or DU log with --gnb")
+        elif not correlate_radio.ue_has_phy(ue_log):
+            print(f"[UE <-> gNB]  no PHY lines in {ue_log.name} (empty, or PHY logging off in its log_options); "
+                  "pass a UE log with PHY lines with --ue")
         else:
             print("[UE <-> gNB]  (no co-identified PUSCH found)")
     else:

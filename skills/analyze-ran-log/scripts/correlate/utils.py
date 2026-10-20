@@ -68,9 +68,37 @@ def parse_gnb_ts(s: str) -> _dt.datetime:
     return _dt.datetime.fromisoformat(s)
 
 
-def parse_hms_ts(s: str, ref_date: str) -> _dt.datetime:
-    """Parse an HH:MM:SS.mmm clock (ue.log/mme.log) using a YYYY-MM-DD anchor."""
-    return _dt.datetime.fromisoformat(f"{ref_date}T{s}")
+class HmsClock:
+    """Dates of the HH:MM:SS.mmm clock of one log (ue.log/mme.log), read in file order.
+
+    ref is a YYYY-MM-DD date, or a datetime that the first time is placed within 12 h of.
+    """
+
+    _HALF_DAY = _dt.timedelta(hours=12)
+    _DAY = _dt.timedelta(days=1)
+
+    def __init__(self, ref):
+        self._ref = ref if isinstance(ref, _dt.datetime) else None
+        self._date = ref.date() if isinstance(ref, _dt.datetime) else _dt.date.fromisoformat(ref)
+        self._last: _dt.datetime | None = None
+
+    def parse(self, s: str) -> _dt.datetime:
+        """Datetime of the next HH:MM:SS.mmm of the log; raises ValueError when malformed."""
+        t = _dt.time.fromisoformat(s)
+        if self._last is None:
+            dt = _dt.datetime.combine(self._date, t)
+            # A log starting on the other side of midnight from the anchor.
+            if self._ref is not None and dt - self._ref > self._HALF_DAY:
+                dt -= self._DAY
+            elif self._ref is not None and self._ref - dt > self._HALF_DAY:
+                dt += self._DAY
+        else:
+            dt = _dt.datetime.combine(self._last.date(), t)
+            # The line clock has no date, so a time far behind the previous one crossed midnight.
+            if self._last - dt > self._HALF_DAY:
+                dt += self._DAY
+        self._last = dt
+        return dt
 
 
 def epoch_to_utc(epoch) -> _dt.datetime:
