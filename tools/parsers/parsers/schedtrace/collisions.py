@@ -6,7 +6,7 @@
 Kinds of collisions, in KINDS: PDSCH with PDSCH (UE, SIB, RAR and paging PDSCHs), PUSCH with PUSCH, PUSCH with
 PUCCH, PDCCH with PDSCH, and PDCCH with PDCCH, whose CCEs overlap in their CORESET.
 
-Allocations are placed as grid.allocations() places them.
+Allocations are placed as grid.allocations() places them, which leaves out PDCCHs out of range of their CORESET.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from itertools import combinations
 from typing import Any
 
 from . import HEADER, event_at, offsets, start_event
-from .grid import Cell, allocations, cell_of
+from .grid import Cell, allocations, cell_of, pdcch_nof_cces
 
 KINDS = ("PDSCH-PDSCH", "PUSCH-PUSCH", "PUSCH-PUCCH", "PDCCH-PDSCH", "PDCCH-PDCCH")
 # Kind of the collision of two channels of grid.allocations(), by their pair, in both orders.
@@ -67,7 +67,7 @@ def slot_collisions(event: dict[str, Any], cell: Cell) -> list[Collision]:
         overlap = [o for ra in a["rects"] for rb in b["rects"] if (o := _rect_overlap(ra, rb))]
         if overlap:
             out.append(Collision(kind, event["slot_tx"], event["timestamp_us"], a, b, overlap))
-    for a, b in combinations(_pdcchs(event), 2):
+    for a, b in combinations(_pdcchs(event, cell), 2):
         if a["coreset_id"] != b["coreset_id"] or first_symbol.get(tuple(a["item"])) != first_symbol.get(tuple(b["item"])):
             continue
         lo, hi = max(a["cce"], b["cce"]), min(a["cce"] + a["nof_cces"], b["cce"] + b["nof_cces"])
@@ -111,13 +111,15 @@ def _rect_overlap(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) ->
     return None
 
 
-def _pdcchs(event: dict[str, Any]) -> list[dict[str, Any]]:
-    """The DL and UL PDCCHs of a slot, with their CCEs."""
+def _pdcchs(event: dict[str, Any], cell: Cell) -> list[dict[str, Any]]:
+    """The DL and UL PDCCHs of a slot, with their CCEs, but those of grid.pdcch_nof_cces() None."""
     decision = event.get("decision") or {}
+    coresets = {cs["id"]: cs for cs in cell.coresets}
     out = []
     for key in ("dl_pdcchs", "ul_pdcchs"):
         for i, p in enumerate(decision.get(key) or []):
-            # The aggregation level is written as its index: 0 is 1 CCE, 4 is 16 CCEs.
-            out.append({"item": [key, i], "rnti": p["rnti"], "dci_type": p["dci_type"], "coreset_id": p["coreset_id"],
-                        "cce": p["cce"], "nof_cces": 1 << p["aggr_lvl"]})
+            nof_cces = pdcch_nof_cces(p, coresets.get(p["coreset_id"]))
+            if nof_cces is not None:
+                out.append({"item": [key, i], "rnti": p["rnti"], "dci_type": p["dci_type"],
+                            "coreset_id": p["coreset_id"], "cce": p["cce"], "nof_cces": nof_cces})
     return out

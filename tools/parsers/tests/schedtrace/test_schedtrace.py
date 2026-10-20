@@ -2,13 +2,15 @@
 # SPDX-License-Identifier: BSD-3-Clause-Open-MPI
 
 import json
+import random
 import tempfile
+import threading
 import unittest
 import warnings
 from pathlib import Path
 
 from parsers import schedtrace
-from parsers.schedtrace import _generated, codegen, grid, schema
+from parsers.schedtrace import _generated, codegen, collisions, grid, schema
 
 # Trace built by data/make_fixtures.sh with flatc from the JSON events, and flatc's decoding of it.
 DATA = Path(__file__).parent / "data"
@@ -41,6 +43,15 @@ def present(value):
     if isinstance(value, list):
         return [present(v) for v in value]
     return value
+
+
+def _raised(fn):
+    """The exception that fn raises, in a list, or an empty list."""
+    try:
+        fn()
+    except Exception as e:
+        return [e]
+    return []
 
 
 class SchedtraceTest(unittest.TestCase):
@@ -299,6 +310,49 @@ class GridTest(unittest.TestCase):
     def test_occupancy(self):
         rects = [{"channel": "PDSCH", "crb_start": 2, "crb_length": 6, "sym_start": 0, "sym_length": 7}]
         self.assertEqual(grid.occupancy(rects, 4), {(0, "PDSCH"): 0.25, (1, "PDSCH"): 0.5})
+
+    def test_pdcchs_out_of_range_are_left_out(self):
+        # CORESET 1 has 4 CCEs: aggregation level index 40, as of a corrupt event, and CCEs 2 to 5 are out of range.
+        pdcch = {"rnti": 1, "dci_type": grid.C_RNTI_F1_1, "coreset_id": 1, "ss_id": 1, "cce": 0}
+        slot = {"decision": {"dl_pdcchs": [{**pdcch, "aggr_lvl": 40}, {**pdcch, "cce": 2, "aggr_lvl": 2},
+                                           {**pdcch, "cce": 2, "aggr_lvl": 1}]}}
+        self.assertEqual({tuple(r["item"]) for r in grid.allocations(slot, self.cell)}, {("dl_pdcchs", 2)})
+
+    def test_garbled_events_are_placed_quickly(self):
+        data = (DATA / "schedtrace_cell0.bin").read_bytes()
+        offsets = schedtrace.offsets(data)
+        rng = random.Random(1)
+
+        def garbled():
+            """The events after the start event with each of their bytes garbled, then with a few garbled at random."""
+            for offset in offsets[1:]:
+                event = data[offset : offset + 4 + int.from_bytes(data[offset : offset + 4], "little")]
+                for pos in range(4, len(event)):
+                    for value in (0x00, 0x28, 0xFF):
+                        yield event[:pos] + bytes([value]) + event[pos + 1 :]
+                for _ in range(500):
+                    garbled = bytearray(event)
+                    for _ in range(rng.randint(2, 4)):
+                        garbled[rng.randrange(4, len(event))] = rng.randrange(256)
+                    yield bytes(garbled)
+
+        def place():
+            for event in garbled():
+                try:
+                    decoded = schedtrace.event_at(event, 0, grid_only=True)
+                except schedtrace.CorruptEventError:
+                    continue
+                if decoded["type"] == "CellSlotEvent":
+                    grid.occupancy(grid.allocations(decoded, self.cell), 4)
+                    collisions.slot_collisions(decoded, self.cell)
+
+        # In a daemon thread, so that a hang fails the test rather than blocking it.
+        errors = []
+        thread = threading.Thread(target=lambda: errors.extend(_raised(place)), daemon=True)
+        thread.start()
+        thread.join(30)
+        self.assertFalse(thread.is_alive(), "placing garbled events hangs")
+        self.assertEqual(errors, [])
 
     def test_rbg_size(self):
         self.assertEqual([grid.rbg_size(n) for n in (24, 52, 106, 273)], [2, 4, 8, 16])

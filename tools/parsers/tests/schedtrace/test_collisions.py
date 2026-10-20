@@ -95,13 +95,14 @@ class CollisionsTest(unittest.TestCase):
         self.assertEqual(self.kinds(event), [])
 
     def test_pdcchs(self):
-        # Aggregation level 2 is 4 CCEs: 0 to 3 and 2 to 5 share 2 and 3, in CORESET 1. CORESET 0, of CRBs 10 to 33 in
-        # symbols 0 and 1, overlaps CORESET 1, so its PDCCH of CRBs 16 to 27 shares REs with both of CORESET 1.
-        event = slot(dl_pdcchs=[pdcch(1, 1, 0, 2), pdcch(2, 0, 2, 2)], ul_pdcchs=[pdcch(3, 1, 2, 2), pdcch(4, 1, 6, 0)])
+        # Aggregation level 1 is 2 CCEs and 2 is 4: 0 to 1 and 0 to 3 share 0 and 1, in CORESET 1 of 4 CCEs, where CCE 6
+        # is past the CORESET. CORESET 0, of CRBs 10 to 33 in symbols 0 and 1, overlaps CORESET 1, so its PDCCH of CRBs
+        # 16 to 27 shares REs with both of CORESET 1.
+        event = slot(dl_pdcchs=[pdcch(1, 1, 0, 1), pdcch(2, 0, 2, 2)], ul_pdcchs=[pdcch(3, 1, 0, 2), pdcch(4, 1, 6, 0)])
         self.assertEqual(self.kinds(event), [
             ("PDCCH-PDCCH", ["dl_pdcchs", 0], ["dl_pdcchs", 1], [(0, 1, 16, 4)]),
             ("PDCCH-PDCCH", ["dl_pdcchs", 1], ["ul_pdcchs", 0], [(0, 1, 16, 4)]),
-            ("PDCCH-PDCCH", ["dl_pdcchs", 0], ["ul_pdcchs", 0], [(2, 2)]),
+            ("PDCCH-PDCCH", ["dl_pdcchs", 0], ["ul_pdcchs", 0], [(0, 2)]),
         ])
 
     def test_pdcchs_of_other_monitoring_symbols(self):

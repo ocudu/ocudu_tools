@@ -8,7 +8,8 @@ Allocations are placed as the trace allows: VRBs map to PRBs one to one (non-int
 the BWP start, and RBGs have the size of TS 38.214 Table 5.1.2.2.1-1 configuration 1 for the size of the BWP. The VRBs
 of PDSCHs of DCI format 1_0 in a common search space (SIB, RAR, paging, fallback) count from the lowest CRB of the
 CORESET of their PDCCH, TS 38.214 5.1.2.2.2, those of the other PDSCHs from the BWP start. PDCCHs take the REG bundles
-of their CCEs in their CORESET, TS 38.211 7.3.2.2, from the first monitoring symbol of their search space. PRACH
+of their CCEs in their CORESET, TS 38.211 7.3.2.2, from the first monitoring symbol of their search space; those of an
+aggregation level or CCEs out of range of their CORESET, as of a corrupt event, are left out. PRACH
 occasions take the RBs of TS 38.211 Table 6.3.3.2-1 from msg1-FrequencyStart and the duration of their format; when the
 PRACH and PUSCH subcarrier spacings differ their symbols are scaled, the start symbol of long formats from 15 kHz,
 TS 38.211 5.3.2, and long formats last past their slot, though occupancy() counts only their first slot. CSI-RS
@@ -41,6 +42,10 @@ _PRACH_LONG_MS = {"0": 1, "1": 3, "2": 3.5, "3": 1}
 _PRACH_RBS = {(1.25, 15): 6, (1.25, 30): 3, (1.25, 60): 2, (5, 15): 24, (5, 30): 12, (5, 60): 6, (15, 15): 12,
               (15, 30): 6, (15, 60): 3, (30, 15): 24, (30, 30): 12, (30, 60): 6, (60, 60): 12, (60, 120): 6,
               (120, 60): 24, (120, 120): 12}
+# RBs of the widest carrier, TS 38.101-1 Table 5.3.2-1.
+MAX_NOF_RBS = 275
+# Highest DlPdcch.aggr_lvl and UlPdcch.aggr_lvl, the index of aggregation level 16.
+MAX_AGGR_LVL_INDEX = 4
 # DlPdcch.dci_type values, as dci_dl_rnti_config_type of OCUDU; all but C_RNTI_F1_1 are DCI format 1_0.
 SI_F1_0, RA_F1_0, C_RNTI_F1_0, TC_RNTI_F1_0, P_RNTI_F1_0, C_RNTI_F1_1 = range(6)
 
@@ -167,10 +172,9 @@ def allocations(slot_event: dict[str, Any], cell: Cell) -> list[dict[str, Any]]:
     for key in ("dl_pdcchs", "ul_pdcchs"):
         for i, p in enumerate(decision.get(key) or []):
             cs, ss = coresets.get(p["coreset_id"]), search_spaces.get(p["ss_id"])
-            if cs is None or ss is None:
+            nof_cces = pdcch_nof_cces(p, cs)
+            if nof_cces is None or ss is None:
                 continue
-            # The aggregation level is written as its index: 0 is 1 CCE, 4 is 16 CCEs.
-            nof_cces = 1 << p["aggr_lvl"]
             info = {"item": [key, i], "rnti": p["rnti"], "dci_type": p["dci_type"], "coreset_id": p["coreset_id"],
                     "ss_id": p["ss_id"], "cce": p["cce"], "nof_cces": nof_cces}
             cce_key = (p["coreset_id"], p["cce"], nof_cces)
@@ -214,10 +218,41 @@ def _add_prach(add: Callable[..., None], index: int, prach: dict[str, Any], cell
         add("UL", "PRACH", sym_start, sym_length, [(first + fd * nof_rbs, nof_rbs)], info)
 
 
+def pdcch_nof_cces(pdcch: dict[str, Any], coreset: dict[str, Any] | None) -> int | None:
+    """CCEs of a DlPdcch or UlPdcch of a slot decision in its Coreset of the cell start event, None when the CORESET is
+    unknown or invalid, or the aggregation level or CCEs out of range, as of a corrupt event.
+    """
+    if coreset is None or not 0 <= pdcch["aggr_lvl"] <= MAX_AGGR_LVL_INDEX or coreset_nof_cces(coreset) == 0:
+        return None
+    # The aggregation level is written as its index: 0 is 1 CCE, 4 is 16 CCEs.
+    nof_cces = 1 << pdcch["aggr_lvl"]
+    return nof_cces if pdcch["cce"] + nof_cces <= coreset_nof_cces(coreset) else None
+
+
+def coreset_nof_cces(coreset: dict[str, Any]) -> int:
+    """CCEs of a Coreset of the cell start event, 0 when its duration, RBs or interleaving parameters are invalid."""
+    nof_symbols = coreset["duration"]
+    interleaving = coreset.get("interleaving")
+    if not 1 <= nof_symbols <= 3:
+        return 0
+    nof_rbs = sum(r["length"] for r in coreset["crbs"])
+    # A CORESET lies in a BWP, of at most 275 RBs.
+    if nof_rbs > MAX_NOF_RBS:
+        return 0
+    nof_regs = nof_rbs * nof_symbols
+    if interleaving:
+        bundle_size, size = interleaving["reg_bundle_size"], interleaving["interleaver_size"]
+        if bundle_size not in (2, 3, 6) or size not in (2, 3, 6) or bundle_size % nof_symbols or \
+                nof_regs % (bundle_size * size):
+            return 0
+    return nof_regs // 6
+
+
 def pdcch_crbs(coreset: dict[str, Any], cce: int, nof_cces: int) -> list[tuple[int, int]]:
     """CRB ranges of the CCEs [cce, cce + nof_cces) of a Coreset of the cell start event, merged where contiguous, with
-    the CCE-to-REG mapping of TS 38.211 7.3.2.2.
+    the CCE-to-REG mapping of TS 38.211 7.3.2.2. CCEs past those of coreset_nof_cces() hold no CRBs.
     """
+    nof_cces = max(0, min(cce + nof_cces, coreset_nof_cces(coreset)) - cce)
     crbs = [c for r in coreset["crbs"] for c in range(r["start"], r["start"] + r["length"])]
     nof_symbols = coreset["duration"]
     nof_regs = len(crbs) * nof_symbols

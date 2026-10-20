@@ -9,7 +9,7 @@
      "pmi": {"n1_n2": 1, "mode": 1, "i_1_1": 4, "i_1_3": 2, "i_2": 1}, "first_tb_wb_cqi": 15, "valid": true}
   ],
   "decision": {
-    "dl_pdcchs": [{"rnti": 17921, "dci_type": 1, "coreset_id": 1, "ss_id": 2, "cce": 4, "aggr_lvl": 2, "harq_id": 3, "ndi": true, "rv": 0, "mcs": 27, "pucch_res_ind": 1}],
+    "dl_pdcchs": [{"rnti": 17921, "dci_type": 1, "coreset_id": 1, "ss_id": 2, "cce": 0, "aggr_lvl": 2, "harq_id": 3, "ndi": true, "rv": 0, "mcs": 27, "pucch_res_ind": 1}],
     "ue_pdschs": [{"rnti": 17921, "rbs_type": "RbgAlloc", "rbs": {"nof_rbgs": 9, "bitmap": 511}, "sym_start": 1, "sym_length": 13,
                    "codewords": [{"rv_index": 0, "mcs_index": 27, "tb_size_bytes": 12345, "new_data": true}], "harq_id": 3, "ue_index": 0, "k1": 4}],
     "puschs": [{"rnti": 17922, "rbs_type": "VrbAlloc", "rbs": {"vrb_start": 5, "vrb_length": 20}, "sym_start": 0, "sym_length": 14, "tb_size_bytes": 900, "ue_index": 1, "k2": 4}],

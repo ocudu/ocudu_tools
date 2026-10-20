@@ -74,7 +74,7 @@
           "dci_type": 1,
           "coreset_id": 1,
           "ss_id": 2,
-          "cce": 4,
+          "cce": 0,
           "aggr_lvl": 2,
           "harq_id": 3,
           "ndi": true,
