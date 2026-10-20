@@ -23,14 +23,17 @@ from pathlib import Path
 import utils
 from parsers.pcap import timeline
 from parsers.pcap.run import PROTOCOLS, is_run_dir
+from parsers.pcap.tshark import TsharkError
+
+DEFAULT_WINDOW_MS = 2000
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("run_dir", help="OCUDU run directory containing the 5 sibling pcaps")
     ap.add_argument("--around", type=float, help="centre epoch for the window")
-    ap.add_argument("--window-ms", type=int, default=2000,
-                    help="full window width in ms (centred on --around). Default 2000.")
+    ap.add_argument("--window-ms", type=int,
+                    help=f"full window width in ms (centred on --around). Default {DEFAULT_WINDOW_MS}.")
     ap.add_argument("--ue", help="filter to events with this id in any protocol, so pair it with --protocols: a "
                                  "protocol UE id as the pcap has it, e.g. an F1AP or NGAP id, or an RNTI in decimal "
                                  "or 0x hex, e.g. 17921 or 0x4601, for MAC; a bare 4601 is decimal")
@@ -48,16 +51,24 @@ def main(argv: list[str] | None = None) -> int:
     if unknown := [p for p in protocols if p not in timeline.PROTOCOLS]:
         print(f"error: unknown --protocols {', '.join(unknown)}; known: {', '.join(timeline.PROTOCOLS)}", file=sys.stderr)
         return 1
-    events = timeline.run_events(
-        utils.TSHARK, run_dir, protocols, around=args.around, window_ms=args.window_ms, ue=args.ue
-    )
+    if args.around is None and args.window_ms is not None:
+        print("warning: --window-ms applies only with --around; ignored", file=sys.stderr)
+    window_ms = DEFAULT_WINDOW_MS if args.window_ms is None else args.window_ms
+    try:
+        events = timeline.run_events(
+            utils.TSHARK, run_dir, protocols, around=args.around, window_ms=window_ms, ue=args.ue
+        )
+    except TsharkError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
 
     if args.json:
         print(json.dumps(events, indent=2))
         return 0
 
     if not events:
-        print("(no events in window)")
+        scope = (" in window" if args.around is not None else "") + (f" of UE {args.ue}" if args.ue else "")
+        print(f"(no events{scope})")
         return 0
     for e in events:
         ue_str = ",".join(e["ue_ids"]) if e["ue_ids"] else "-"

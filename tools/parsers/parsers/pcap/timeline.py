@@ -84,11 +84,13 @@ def run_events(
     around keeps the events within window_ms centred on an epoch, and ue the events with that UE identifier: a protocol
     UE id as the pcap has it, or an RNTI in decimal or 0x hexadecimal, which MAC events match however they print it.
     Missing pcaps are logged as one warning, and unreadable pcaps and pcaps whose time spans do not overlap as warnings.
+    Raises TsharkError when no pcap found is readable.
     """
     run_dir = Path(run_dir)
     pcaps = find_pcaps(run_dir)
     spans: list[tuple[str, float, float]] = []
     out: list[dict[str, Any]] = []
+    failures: list[str] = []
     missing = [proto for proto in protocols if pcaps.get(proto) is None]
     if missing:
         logger.warning("no pcap of %s in %s", ", ".join(missing), run_dir)
@@ -100,11 +102,14 @@ def run_events(
             ev = events(tshark, pcap, proto)
         except TsharkError as e:
             logger.warning("tshark failed for %s: %s", proto, e)
+            failures.append(f"{proto}: {e}")
             continue
         if ev:
             epochs = [e["epoch"] for e in ev]
             spans.append((proto, min(epochs), max(epochs)))
         out.extend(ev)
+    if failures and len(failures) == len(protocols) - len(missing):
+        raise TsharkError("no pcap read; " + "; ".join(failures))
 
     # Captures starting or stopping a few seconds apart are normal, only disjoint ones prevent correlation.
     if len(spans) > 1 and max(s[1] for s in spans) > min(s[2] for s in spans):

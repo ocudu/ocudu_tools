@@ -26,7 +26,8 @@ import utils
 from parsers.pcap import e1ap
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, limit_flag: str = "--limit") -> int:
+    """Runs the script with argv; limit_flag is the flag of the row cap that the truncation hint names."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("pcap", help="path to e1ap.pcap")
     ap.add_argument("--ue", help="filter rows mentioning this identifier value")
@@ -69,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
             r["e1_up_ue_id"] or "-",
         ]))
     if args.limit > 0 and len(out_list) > args.limit:
-        print(f"... {len(out_list) - args.limit} more rows truncated (use --limit 0 to show all)")
+        print(f"... {len(out_list) - args.limit} more rows truncated (use {limit_flag} 0 to show all)")
     return 0
 
 

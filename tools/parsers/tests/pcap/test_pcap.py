@@ -8,8 +8,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from parsers.pcap import capture, e1ap, f1ap, frames, messages, ngap, overview, run, timeline, values
-from parsers.pcap.tshark import Tshark, _filter_stderr, split_fields
+from parsers.pcap import capture, e1ap, f1ap, frames, messages, ngap, overview, run, timeline, tshark, values
+from parsers.pcap.tshark import Tshark, TsharkError, _filter_stderr, split_fields
+from parsers.ran.procedures import proc_name
 
 # A single-UE F1AP capture: F1Setup, RRC and NAS attach, and UEContextRelease.
 F1AP_PCAP = Path(__file__).resolve().parent / "f1ap_pcap_test.pcap"
@@ -58,14 +59,52 @@ class TsharkHelpersTest(unittest.TestCase):
         )
         self.assertEqual(_filter_stderr(stderr), 'tshark: The file "a.pcap" appears to have been cut short in the middle of a packet.')
 
-    def test_cache_path_depends_on_tag(self):
-        ts = Tshark("/tmp/work")
-        self.assertNotEqual(ts.cache_path("a.pcap", "x"), ts.cache_path("a.pcap", "y"))
-        self.assertEqual(ts.cache_path("a.pcap", "x").parent, Path("/tmp/work"))
+    def test_cache_path_depends_on_tag_and_tshark_version(self):
+        with tempfile.TemporaryDirectory() as work, mock.patch.object(Tshark, "version", return_value="TShark 4.4.7"):
+            ts = Tshark(work)
+            self.assertNotEqual(ts.cache_path("a.pcap", "x"), ts.cache_path("a.pcap", "y"))
+            self.assertEqual(ts.cache_path("a.pcap", "x").parent, Path(work))
+            first = ts.cache_path("a.pcap", "x")
+            with mock.patch.object(Tshark, "version", return_value="TShark 4.6.0"):
+                self.assertNotEqual(ts.cache_path("a.pcap", "x"), first)
+
+    def test_version_runs_tshark_once(self):
+        with mock.patch.object(tshark, "_executable", return_value="/opt/tshark-test"), \
+                mock.patch.object(Tshark, "run", return_value=["TShark (Wireshark) 9.9.9."]) as run_mock:
+            ts = Tshark("unused")
+            self.assertEqual((ts.version(), Tshark("unused").version()), ("TShark (Wireshark) 9.9.9.",) * 2)
+            self.assertEqual(run_mock.call_count, 1)
+        tshark._versions.pop("/opt/tshark-test", None)
+
+    def test_missing_tshark_fails_before_staging(self):
+        with tempfile.TemporaryDirectory() as src_dir, tempfile.TemporaryDirectory() as work, \
+                mock.patch.object(tshark, "_READABLE_PREFIXES", ()), mock.patch.object(shutil, "which", return_value=None):
+            pcap = Path(src_dir) / "f1ap.pcap"
+            pcap.write_bytes(b"x")
+            ts = Tshark(work)
+            with self.assertRaisesRegex(TsharkError, "tshark not found"):
+                ts.stage(pcap)
+            self.assertFalse((Path(work) / "pcap-stage").exists())
+
+    def test_default_work_dir_is_private(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(tempfile, "tempdir", tmp):
+            work = tshark.default_work_dir()
+            work.mkdir(mode=0o755)
+            work.chmod(0o755)
+            self.assertEqual(Tshark().work_dir, work)
+            self.assertEqual(work.stat().st_mode & 0o777, 0o700)
+            # Owned by another user: a new private directory instead.
+            with mock.patch.object(tshark, "default_work_dir", return_value=work), \
+                    mock.patch.object(os, "getuid", return_value=os.getuid() + 1), \
+                    self.assertWarnsRegex(UserWarning, "not a directory of this user"):
+                other = Tshark().work_dir
+            self.assertNotEqual(other, work)
+            self.assertEqual((other.stat().st_uid, other.stat().st_mode & 0o777), (os.getuid(), 0o700))
 
     def test_stage_follows_a_replaced_pcap(self):
-        # Outside /tmp, so that the pcap is staged, as when tshark cannot read it in place.
-        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as src_dir, tempfile.TemporaryDirectory() as work, \
+        # No directory read in place, so that the pcap is staged wherever the tree is, as when tshark cannot read it.
+        with tempfile.TemporaryDirectory() as src_dir, tempfile.TemporaryDirectory() as work, \
+                mock.patch.object(tshark, "_READABLE_PREFIXES", ()), mock.patch.object(tshark, "_executable"), \
                 mock.patch.object(Tshark, "_reads_in_place", return_value=False):
             ts = Tshark(work)
             pcap = Path(src_dir) / "f1ap.pcap"
@@ -79,6 +118,15 @@ class TsharkHelpersTest(unittest.TestCase):
             self.assertEqual(ts.stage(pcap).read_bytes(), b"run B")
             # Only the current version stays staged, with no temp files.
             self.assertEqual([p.read_bytes() for p in (Path(work) / "pcap-stage").iterdir()], [b"run B"])
+
+
+class ProcNameTest(unittest.TestCase):
+    def test_absent_and_reserved_codes(self):
+        for code in (None, ""):
+            self.assertEqual((proc_name("f1ap", code), proc_name("f1ap", code, with_code=False)), ("?", "?"))
+        # TS 38.473 reserves F1AP code 9.
+        self.assertEqual(proc_name("f1ap", 9), "9")
+        self.assertEqual(proc_name("f1ap", 10), "UEContextReleaseRequest(10)")
 
 
 class F1apDecodeTest(unittest.TestCase):

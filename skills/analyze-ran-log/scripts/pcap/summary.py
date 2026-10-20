@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         if pcap is None:
             continue
         _section(f"{proto} UEs")
-        mod.main([str(pcap), "--limit", str(args.ue_limit)])
+        mod.main([str(pcap), "--limit", str(args.ue_limit)], limit_flag="--ue-limit")
 
     return 0
 

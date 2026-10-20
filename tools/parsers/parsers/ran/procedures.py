@@ -100,6 +100,7 @@ PROC_CODE_NAMES: dict[str, dict[int, str]] = {
         6: "UEContextRelease",
         7: "UEContextModification",
         8: "UEContextModificationRequired",
+        # 9 is reserved: id-procedure-code-9-not-to-be-used.
         10: "UEContextReleaseRequest",
         11: "InitialULRRCMessageTransfer",
         12: "DLRRCMessageTransfer",
@@ -233,10 +234,10 @@ PROC_CODE_NAMES: dict[str, dict[int, str]] = {
 def proc_name(proto: str, code: str | int | None, *, with_code: bool = True) -> str:
     """Name of a procedureCode of ngap, f1ap or e1ap, as "Name(code)", or "Name" without with_code.
 
-    Unknown codes give the bare number, or "proc-<n>" without with_code. An empty code gives "?" without with_code.
+    Unknown codes give the bare number, or "proc-<n>" without with_code. An empty or None code gives "?".
     """
     if code is None or code == "":
-        return str(code) if with_code else "?"
+        return "?"
     try:
         c = int(code)
     except (TypeError, ValueError):

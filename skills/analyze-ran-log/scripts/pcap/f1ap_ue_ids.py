@@ -29,7 +29,8 @@ from parsers.pcap import f1ap
 from parsers.ran.rnti import normalize, parse_any
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, limit_flag: str = "--limit") -> int:
+    """Runs the script with argv; limit_flag is the flag of the row cap that the truncation hint names."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("pcap", help="path to f1ap.pcap")
     ap.add_argument("--ue", help="keep the UEs of this gNB-CU or gNB-DU UE F1AP id")
@@ -80,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
             ";".join(r["crntis"]) or "-",
         ]))
     if args.limit > 0 and len(out_list) > args.limit:
-        print(f"... {len(out_list) - args.limit} more rows truncated (use --limit 0 to show all)")
+        print(f"... {len(out_list) - args.limit} more rows truncated (use {limit_flag} 0 to show all)")
     return 0
 
 

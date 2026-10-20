@@ -29,6 +29,10 @@ _NOISE_INTROS = (
 _CUT_SHORT = "cut short in the middle of a packet"
 # OCUDU mac.pcap and rlc.pcap wrap NR PDUs in UDP-framed Upper-PDUs, dissected only with these heuristics.
 _READ_ARGS = ("--enable-heuristic", "mac_nr_udp", "--enable-heuristic", "rlc_nr_udp")
+# Directories the AppArmor profile of tshark on Ubuntu lets it read, besides a few system paths.
+_READABLE_PREFIXES = ("/tmp/",)
+# First line of "tshark -v" of each tshark executable run by this process.
+_versions: dict[str, str] = {}
 
 
 class TsharkError(RuntimeError):
@@ -38,6 +42,34 @@ class TsharkError(RuntimeError):
 def default_work_dir() -> Path:
     """Directory of staged pcaps and cached extractions when none is given, private to the user."""
     return Path(tempfile.gettempdir()) / f"ocudu-parsers-{os.getuid()}"
+
+
+def _private_dir(path: Path, tighten: bool) -> Path:
+    """path, created private to the user, or a new private temporary directory when another user owns it.
+
+    tighten removes the access of others to an existing path.
+    """
+    try:
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        st = path.lstat()
+    except OSError:
+        st = None
+    # Another user could plant or read staged pcaps and cached extractions in a directory of theirs.
+    if st is None or st.st_uid != os.getuid() or not path.is_dir() or path.is_symlink():
+        fallback = Path(tempfile.mkdtemp(prefix=f"{path.name}-"))
+        warnings.warn(f"{path} is not a directory of this user; using {fallback}")
+        return fallback
+    if tighten and st.st_mode & 0o077:
+        path.chmod(0o700)
+    return path
+
+
+def _executable() -> str:
+    """Path of tshark; raises TsharkError when it is not on PATH."""
+    tshark = shutil.which("tshark")
+    if not tshark:
+        raise TsharkError("tshark not found on PATH")
+    return tshark
 
 
 def split_fields(line: str, expected: int, sep: str = "\t") -> list[str]:
@@ -61,13 +93,22 @@ class Tshark:
         on_cache: Callable[[Path, bool], None] | None = None,
         cache: bool = True,
     ):
-        self.work_dir = Path(work_dir) if work_dir is not None else default_work_dir()
+        self._given_work_dir = Path(work_dir) if work_dir is not None else None
+        self._work_dir: Path | None = None
         self.on_cache = on_cache
         self.cache = cache
         # Whether tshark reads each pcap in place, by resolved path.
         self._readable: dict[Path, bool] = {}
         # Known fields of each list of fields checked, which depend on the tshark build only.
         self._valid: dict[tuple[str, ...], list[str]] = {}
+
+    @property
+    def work_dir(self) -> Path:
+        """Directory of staged pcaps and cached extractions, the one given or default_work_dir(), see _private_dir()."""
+        if self._work_dir is None:
+            given = self._given_work_dir is not None
+            self._work_dir = _private_dir(self._given_work_dir if given else default_work_dir(), tighten=not given)
+        return self._work_dir
 
     def run(self, args: Sequence[str], *, check: bool = True) -> list[str]:
         """Runs tshark with args, returning its non-empty stdout lines. Raises TsharkError if it fails and check, except
@@ -77,9 +118,7 @@ class Tshark:
 
     def _run(self, args: Sequence[str], check: bool = True) -> tuple[list[str], bool]:
         """The non-empty stdout lines of tshark run with args, and whether the pcap was read whole, see run()."""
-        tshark = shutil.which("tshark")
-        if not tshark:
-            raise TsharkError("tshark not found on PATH")
+        tshark = _executable()
         extra = list(_READ_ARGS) if "-r" in args else []
         proc = subprocess.run([tshark, *extra, *args], check=False, capture_output=True, text=True)
         lines = [line for line in proc.stdout.splitlines() if line]
@@ -93,17 +132,21 @@ class Tshark:
         return lines, True
 
     def version(self) -> str:
-        """First line of "tshark -v"."""
-        lines = self.run(["-v"])
-        return lines[0] if lines else "unknown"
+        """First line of "tshark -v", run once per process and tshark executable."""
+        tshark = _executable()
+        if tshark not in _versions:
+            lines = self.run(["-v"])
+            _versions[tshark] = lines[0] if lines else "unknown"
+        return _versions[tshark]
 
     def stage(self, pcap: str | os.PathLike[str]) -> Path:
         """Returns a path to the pcap that tshark can read: the pcap itself when tshark reads it, else a link or copy in
         the work directory, of the pcap's current size and mtime.
         """
         src = Path(pcap).resolve()
-        # The AppArmor profile of tshark on Ubuntu only lets it read under /tmp and a few system paths.
-        if str(src).startswith("/tmp/") or self._reads_in_place(src):
+        # Without tshark, staging would copy the pcap, maybe of gigabytes, for nothing.
+        _executable()
+        if str(src).startswith(_READABLE_PREFIXES) or self._reads_in_place(src):
             return src
         st = src.stat()
         source = hashlib.sha256(str(src).encode()).hexdigest()[:16]
@@ -166,14 +209,17 @@ class Tshark:
         return remaining
 
     def cache_path(self, pcap: str | os.PathLike[str], tag: str) -> Path:
-        """Cache file of an extraction from a pcap, identified by tag, for the pcap's current size and mtime."""
+        """Cache file of an extraction from a pcap, identified by tag, for the pcap's current size and mtime and the
+        tshark version. Raises TsharkError when tshark is missing.
+        """
         src = Path(pcap).resolve()
         try:
             st = src.stat()
             version = f"{st.st_size}\0{st.st_mtime_ns}"
         except OSError:
             version = ""
-        digest = hashlib.sha256(f"{src}\0{version}\0{tag}".encode()).hexdigest()[:16]
+        # Dissectors, and so extractions, change across tshark builds.
+        digest = hashlib.sha256(f"{src}\0{version}\0{self.version()}\0{tag}".encode()).hexdigest()[:16]
         return self.work_dir / f"pcap-cache-{digest}.tsv"
 
     def iter_fields(
