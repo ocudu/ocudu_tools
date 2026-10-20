@@ -169,14 +169,17 @@ events = timeline.run_events(tshark, "run_dir", ["ngap", "f1ap"], ue="0")
 `tshark` reads pcaps through a link or copy in the work directory, since the AppArmor profile of `tshark` on Ubuntu only
 lets it read under `/tmp`, and dissects the MAC and RLC PDUs of `mac.pcap` and `rlc.pcap` through the `mac_nr_udp` and
 `rlc_nr_udp` heuristics. A pcap whose last record is cut short, e.g. by a crash, gives its complete records, with a
-warning. Field extractions are cached in the work directory by pcap path, size and mtime, and a tag, by default the
-fields and filter. `run.find_pcaps()` finds the pcaps of each protocol by file name, `<proto>.pcap` or with a prefix,
-e.g. `gnb_f1ap.pcap`, and those missing from a Retina run directory (`YYYY-MM-DD_HH-MM-SS`) in its parent when that is
-the directory of an OCUDU component (`ocudu-gnb-*`, `ocudu-du-*`, `ocudu-cu-*`, ...), e.g. the `f1ap.pcap` of a split
-DU. The paths are relative when the run directory is, unless it is a symbolic link. `run.check_pcap()` checks that one
-of the known dissectors binds the first frame of a pcap. `messages.messages()` lists the NGAP, F1AP or E1AP messages of
-a pcap with their procedure, outcome, UE identifiers and cause, as `<group>:<value>` named by the value tables of
-tshark, e.g. `protocol:unspecified`, `frames.summaries()` the one-line tshark summary of each frame and
+warning. Field extractions are cached in the work directory by pcap path, size and mtime, tshark version, and a tag, by
+default the fields and filter. The default work directory, `ocudu-parsers-<uid>` under the temp dir, is created private
+(0700); one owned by another user is replaced by a new temporary directory, with a warning. A missing `tshark` raises
+`TsharkError` before any pcap is staged. `timeline.run_events()` warns about each pcap it cannot read and raises
+`TsharkError` when it reads none. `run.find_pcaps()` finds the pcaps of each protocol by file name, `<proto>.pcap` or
+with a prefix, e.g. `gnb_f1ap.pcap`, and those missing from a Retina run directory (`YYYY-MM-DD_HH-MM-SS`) in its parent
+when that is the directory of an OCUDU component (`ocudu-gnb-*`, `ocudu-du-*`, `ocudu-cu-*`, ...), e.g. the `f1ap.pcap`
+of a split DU. The paths are relative when the run directory is, unless it is a symbolic link. `run.check_pcap()` checks
+that one of the known dissectors binds the first frame of a pcap. `messages.messages()` lists the NGAP, F1AP or E1AP
+messages of a pcap with their procedure, outcome, UE identifiers and cause, as `<group>:<value>` named by the value
+tables of tshark, e.g. `protocol:unspecified`, `frames.summaries()` the one-line tshark summary of each frame and
 `frames.decode()` decodes one frame. The `rrc` of an F1AP message is the RRC message of its RRC container, None without
 one, e.g. for the `UEContextSetupRequest` of a handover target, whose `HandoverPreparationInformation` holds the
 source's `rrcReconfiguration`, which is not counted beside a container. RRC, NAS and cause fields that a `tshark` build
@@ -206,11 +209,13 @@ for ev in schedtrace.read("schedtrace_cell0.bin"):
 
 OCUDU writes one `schedtrace_cell<N>.bin` per cell when the `trace.schedtrace` option is enabled: an 8-byte header
 (magic `SCHT`, then the major and minor version of the file format as little-endian `uint16`) and a series of
-size-prefixed FlatBuffers `CellEvent` buffers. `read()` and `events()` yield each as a dict with `timestamp_us`,
-`type` (`CellStartEvent`, `CellSlotEvent` or `CellStopEvent`) and its fields: tables as dicts, vectors as lists, enums
-by name, unions with their member as `type`, absent optional fields as `None`. An incomplete last event, e.g. of a
-trace being written, is left out. A size prefix over `MAX_EVENT_SIZE` (1 MiB) is corrupt: the events from it are left
-out, with a warning.
+size-prefixed FlatBuffers `CellEvent` buffers. `read()` and `events()` yield each as a dict with `timestamp_us`, `type`
+(`CellStartEvent`, `CellSlotEvent` or `CellStopEvent`) and its fields: tables as dicts, vectors as lists, enums by name,
+unions with their member as `type`, absent optional fields as `None`. An incomplete last event, e.g. of a trace being
+written, is left out. An event is corrupt when its size prefix is below `MIN_EVENT_SIZE` (12 bytes) or over
+`MAX_EVENT_SIZE` (1 MiB), or when its FlatBuffer does not decode: `read()`, `events()` and `offsets()` stop at it, with
+a warning. `offsets()` checks only the size prefix and the root table of each FlatBuffer, so `event_at()` raises
+`schedtrace.CorruptEventError`, a `ValueError`, for an event whose fields do not decode.
 
 `schedtrace.FORMAT_VERSION` is the version of the schemas of `schedtrace/fbs/`, from their `FileFormatVersionMajor`
 and `FileFormatVersionMinor` enums. Traces of another major version, and traces without a header, written before OCUDU versioned the
@@ -276,7 +281,9 @@ for t, record, *values in agg.ue_rows():
 PDSCH lines of the slot decisions, optionally in the lines matching a regex and split by the nearest value of another
 key before each value in its line. Values with a unit are scaled as METRICS fields are. Ranges of
 `chunks.chunk_ranges()` scan independently. Without a key, `scan_lines()` gives the lines matching the regex, with their
-text, logger, level, UE index and RNTI, the first token of those the RNTI filter of `search` matches.
+text, logger, level, UE index and RNTI, the first token of those the RNTI filter of `search` matches. Lines with CRLF
+ends are matched without their `\r`, so that `$` of a filter matches at their end; `adhoc.crlf_anchors()` gives a regex
+whose `$` anchors also match before a `\r`.
 
 ```python
 import os
@@ -311,20 +318,20 @@ print(procedures.stats(procedures.latencies(create, "start", "done")))
 ```
 
 Search entries are a timestamped line and its continuation lines, so filters match ASN.1 bodies too, and the
-configuration echo is left out unless asked for. Time bounds are ISO dates or timestamps, with "T" or a space, or times
-of day, compared to the same precision; `search.iso_bound()` gives a bound the "T" form. An RNTI filter matches `rnti=`,
-`c-rnti=`, `tc-rnti=` and `crnti=` tokens, not `ra-rnti=` or `temp_crnti=`. Procedures are the `proc="..."` traces of
-the DU (`PROCEDURES`): stages that a build does not log are skipped. `console.summarize()` reads the console output of
-an application, `metrics_json.rollup()` its `metrics.json`, and `config.parse_config()` also gives the cell, AMF, duplex
-and pcap options. The `ocudu_log_search.py`, `ocudu_log_summary.py` and `ocudu_ue_proc_latency.py` scripts of the
-analyze-ran-log skill print them. `summary.summarize()` counts the handovers completed (`ho_count`) on the target side,
-from info lines: intra-CU ones by `"Intra CU Handover Target Routine" finished successfully`, whose source side finishes
-at debug, conditional intra-CU ones by `CHO inter-DU completion finalized`, and NGAP ones by their `HandoverNotify`. Xn
-and conditional inter-CU handovers log no completion at info. `reconf_with_sync_count` counts the
-`reconfigurationWithSync` of RRC bodies, which RRC logs at debug, and `ngap_handover_count` the NGAP `HandoverRequired`
-and `HandoverRequest` PDUs. `app` is the application of the `==== <app> started ===` banner: `gNB`, `DU`, `CU`, `CU-CP`,
-`CU-UP` or `DU low`, which log it and the build line under GNB (gNB and DU), CU, CU-CP, CU-UP or APP (DU low). `loggers`
-are the loggers of the log's entries.
+configuration echo is left out unless asked for. Lines may end in LF or CRLF. Time bounds are ISO dates or timestamps,
+with "T" or a space, or times of day, compared to the same precision; `search.iso_bound()` gives a bound the "T" form.
+An RNTI filter matches `rnti=`, `c-rnti=`, `tc-rnti=` and `crnti=` tokens, not `ra-rnti=` or `temp_crnti=`. Procedures
+are the `proc="..."` traces of the DU (`PROCEDURES`): stages that a build does not log are skipped.
+`console.summarize()` reads the console output of an application, `metrics_json.rollup()` its `metrics.json`, and
+`config.parse_config()` also gives the cell, AMF, duplex and pcap options. The `ocudu_log_search.py`,
+`ocudu_log_summary.py` and `ocudu_ue_proc_latency.py` scripts of the analyze-ran-log skill print them.
+`summary.summarize()` counts the handovers completed (`ho_count`) on the target side, from info lines: intra-CU ones by
+`"Intra CU Handover Target Routine" finished successfully`, whose source side finishes at debug, conditional intra-CU
+ones by `CHO inter-DU completion finalized`, and NGAP ones by their `HandoverNotify`. Xn and conditional inter-CU
+handovers log no completion at info. `reconf_with_sync_count` counts the `reconfigurationWithSync` of RRC bodies, which
+RRC logs at debug, and `ngap_handover_count` the NGAP `HandoverRequired` and `HandoverRequest` PDUs. `app` is the
+application of the `==== <app> started ===` banner: `gNB`, `DU`, `CU`, `CU-CP`, `CU-UP` or `DU low`, which log it and
+the build line under GNB (gNB and DU), CU, CU-CP, CU-UP or APP (DU low). `loggers` are the loggers of the log's entries.
 
 ### UEs of a run
 
