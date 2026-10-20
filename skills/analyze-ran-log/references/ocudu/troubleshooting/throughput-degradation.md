@@ -31,12 +31,13 @@ In `gnb.log` the `[METRICS]` rows are the per-period summary. The
 ## Investigation checklist
 
 1. Read the summary script's "Scheduler Metrics" section first.
-2. If any of `late_dl_harqs`, `late_ul_harqs`, `failed_pdcch_allocs`,
-   `error_indications` are non-zero, find the timestamp window where they
-   spiked:
+2. If any of `late_dl_harqs`, `late_ul_harqs`, the failed PDCCH counters
+   (`failed_dl_pdcch` / `failed_ul_pdcch` / `failed_common_{dl,ul}_pdcch`; older
+   builds: one `failed_pdcch`), `error_indications` are non-zero, find the
+   timestamp window where they spiked:
    ```bash
    python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --layer METRICS \
-       --pattern "late_dl_harqs=[^0]|failed_pdcch=[^0]" --max-lines 20
+       --pattern "late_dl_harqs=[1-9]|failed_(common_)?(dl_|ul_)?pdcch=[1-9]" --max-lines 20
    ```
 3. Compare MCS to channel quality. With high SNR (`pusch_snr_db > 25`) the
    MCS should be near the cell's max (27 for 256QAM, 28 for 64QAM); much
@@ -57,7 +58,8 @@ In `gnb.log` the `[METRICS]` rows are the per-period summary. The
   non-zero throttles DL on purpose.
 - **ZMQ simulator host overloaded** — the gNB's metric latency spikes correlate
   with `Late HARQs`. Check `top` / `ps_info_gnb.txt`.
-- **Wrong PRACH config** — many `nof_prach_preambles` but no UE creations.
+- **Wrong PRACH config** — many PRACH preambles (`total_prach_preambles`; up to
+  v26.04: `nof_prach_preambles`) but no UE creations.
 - **Spectrum overlap / wrong ARFCN** — UE log won't find the cell (handoff to
   the `amari-ue` type).
 

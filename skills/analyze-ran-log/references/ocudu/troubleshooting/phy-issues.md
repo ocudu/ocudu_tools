@@ -16,7 +16,7 @@ persistent `crc=KO` on PUSCH, late HARQs, ZMQ "Waiting for data" stalls
 | `[SCHED   ] [W] [...] Late UL HARQ` | UL HARQ ack window missed |
 | `[zmq:rx:0:0] [I] Waiting for data.` after a UE released | Normal idle in simulator; persistent before any UE attached means the UE side didn't start |
 | `[METRICS ] ... msg3_nok=N (N > 0)` | MSG3 decode failures — RACH initial UL attempt failed |
-| `[METRICS ] ... failed_pdcch=N` | Scheduler couldn't place a PDCCH for that UE in time |
+| `[METRICS ] ... failed_dl_pdcch=N` / `failed_ul_pdcch=N` (older builds: `failed_pdcch=N`) | Scheduler couldn't place a PDCCH in time; grep `failed_(common_)?(dl_\|ul_)?pdcch=[1-9]` |
 
 ## Investigation checklist
 

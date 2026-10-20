@@ -30,10 +30,15 @@ at step 11 is usually benign, see `../reference/ue-release.md`.
 3. Was the cause IE in the command an error? The cause is carried in the
    NGAP body — visible in `ngap.pcap` (handoff to the `pcap` type), or in
    `gnb.log` only when `ngap_level: info` and `hex_max_size > 0`.
-4. For UEs that never released (creations > releases), find the missing UE:
+4. For UEs that never released (creations > removals), list each CU-CP UE
+   context (`<creation ts> ue=N`) whose `ue=N` was created again, or the log
+   ended, before its removal finished. `ue=` indexes are reused, so compare per
+   creation; the CU-UP also logs `ue=N: UE created`, hence the `CU-CP` anchor:
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --pattern "UE created" --max-lines 50
-   python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --pattern '"UE Removal Routine" finished' --max-lines 50
+   LC_ALL=C grep -aE '\[CU-CP +\] \[I\] ue=[0-9]+( c-rnti=0x[0-9a-f]+: UE created|: "UE Removal Routine" finished)' gnb.log \
+     | awk '{ match($0, /ue=[0-9]+/); u = substr($0, RSTART, RLENGTH) }
+            /UE created/ { if (u in p) print p[u]; p[u] = $1 " " u; next }
+            { delete p[u] } END { for (u in p) print p[u] }' | sort
    ```
 
 ## Cross-references

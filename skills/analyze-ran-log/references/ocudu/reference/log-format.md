@@ -57,35 +57,47 @@ YYYY-MM-DDTHH:MM:SS.uuuuuu [LAYER   ] [LVL] MESSAGE
 
 | Tag | Subsystem | Notes |
 |---|---|---|
-| `[GNB     ]` | Top-level binary | Start/stop banner, build info, PCAP open/close |
+| `[GNB     ]` | Top-level binary | Start/stop banner, build info, PCAP open/close (`[CU      ]` / `[DU      ]` in the split `cu` / `du` binaries) |
+| `[APP     ]` | Application | Resource-usage / energy reader, app-level notices |
 | `[CONFIG  ]` | Config parser | Echoed config + worker-pool init lines |
 | `[ALL     ]` | Cross-cutting | Worker lifecycle, PCAP save/close |
 | `[IO-EPOLL]` | I/O reactor | fd registrations, UDP rx counts |
 | `[SCTP-GW ]` | NGAP transport | N2 bind/connect lifecycle |
 | `[UDP-GW  ]` | GTP-U transport | Bind, MMSG settings |
 | `[NGAP    ]` | NGAP protocol | NG setup + UE-associated PDUs (`Tx PDU`, `Rx PDU`) |
+| `[XNAP    ]` / `[CU-CP-XN]` | XnAP protocol / Xn-C gateway | Inter-gNB Xn setup and handover PDUs |
+| `[NRPPA   ]` | NRPPa protocol | Positioning |
+| `[E1AP    ]` | E1AP ASN.1 conversion | Rare; E1AP PDUs are under `CU-CP-E1` / `CU-UP-E1` |
+| `[E2AP    ]`, `[E2SM-KPM]`, `[E2SM-RC ]`, `[E2SM-CCC]`, `[E2-DU   ]`, `[E2-CU-CP]`, `[E2-CU-UP]` | E2 agent | Only with E2 enabled |
 | `[CU-CP   ]` | CU control-plane | UE creation, routines (Initial Context Setup, UE Removal), AMF connection |
 | `[CU-CP-F1]` | CU side of F1AP | UEContextSetup, DL/UL RRC message transfer |
 | `[CU-CP-E1]` | CU-CP side of E1AP | E1 setup, BearerContext{Setup,Modification,Release} |
-| `[CU-UP   ]` | CU-UP user-plane | CU-UP lifecycle, PDU session attach/disconnect |
+| `[CU-UP   ]` | CU-UP user-plane | UE (bearer context) creation, F1-U attach, `Modified DRB`, PDU session disconnect |
 | `[CU-UP-E1]` | CU-UP side of E1AP | E1 setup, BearerContext echoes |
-| `[CU-F1-U ]` | CU side of F1-U | UL data path |
+| `[CU-F1-U ]` / `[F1-U    ]` | CU side of F1-U | UL data path |
 | `[CU-UEMNG]` | CU UE manager | (rare; usage varies) |
 | `[DU      ]` | DU top-level | DU-High start/stop |
 | `[DU-MNG  ]` | DU manager | UE Create/Delete, cell limits, SIB1 dump |
 | `[DU-F1   ]` | DU side of F1AP | UEContextSetup ack, UEContextRelease |
 | `[DU-F1-U ]` | DU side of F1-U | DL data path |
+| `[RLC     ]` | RLC layer | Bearer config (`RLC AM configured`), TX/RX PDU per DRB/SRB |
 | `[RRC     ]` | RRC layer | CCCH/DCCH UL/DL message names (`rrcSetup`, `rrcReconfiguration`, etc.) |
 | `[PDCP    ]` | PDCP layer | TX/RX PDU per DRB/SRB |
 | `[SDAP    ]` | SDAP | QoS flow mapping |
+| `[ROHC    ]` | ROHC | Header compression (only when configured) |
 | `[GTPU    ]` | GTP-U | UL TX, DL RX, tunnel adds |
 | `[MAC     ]` | MAC scheduler/PDU | DL PDU, UL subPDU, procedure progress |
 | `[SCHED   ]` | Slot-level scheduler | `Slot decisions pci=N` lines, PRACH events, cell creation |
 | `[PHY     ]` | Lower-PHY events | PDCCH, PDSCH, PUCCH, PUSCH, PRACH detection |
+| `[OFH     ]` | Open fronthaul (split 7.2) | eCPRI/C-plane/U-plane timing, late/early packets |
+| `[RU      ]` / `[RF      ]` | RU / radio session | SDR RU and radio driver lifecycle |
+| `[HWACC   ]`, `[EAL     ]` | Hardware acceleration / DPDK | Only with DPDK or accelerators |
+| `[NTN     ]` | NTN | Orbital / Doppler updates (NTN configs only) |
 | `[SEC     ]` | Security | K_gNB and derived keys (logged as empty when hex disabled) |
 | `[METRICS ]` | Metrics emitter | Per-period scheduler metrics row in log |
 | `[FAPI    ]` | FAPI interface | (rare in current runs) |
-| `[zmq:*]` | ZMQ radio driver | TX/RX bind, "Waiting for data" idle messages after stop |
+| `[zmq:rx:N:N]` / `[zmq:tx:N:N]` | ZMQ radio driver | TX/RX bind, "Waiting for data" idle messages after stop |
+| `[SCTP    ]`, `[ASN1    ]`, `[F1AP-ASN1-PCK]`, `[E1AP-ASN1-PCK]`, `[E2-SUBSCRIBER]` | Support | Rare: DTLS, ASN.1 and packer errors, E2 subscriptions |
 
 The exact set of tags present depends on which layers are enabled — see
 `config-format.md` § Common overrides and what they enable.
@@ -164,15 +176,19 @@ When `metrics.enable_log: true` and `layers.enable_sched: true`, the `[METRICS]`
 tag emits one line every ~1s like:
 
 ```
-[METRICS ] Scheduler cell pci=1 metrics: total_dl_brate=14.6Mbps total_ul_brate=6.56Mbps nof_prbs=270 nof_dl_slots=897 nof_ul_slots=897 nof_prach_preambles=1 error_indications=0 ... nof_ues=1 ... msg3_ok=1 msg3_nok=0 late_dl_harqs=0 late_ul_harqs=0 ... events=[{rnti=0x4601 slot=34.3 type=ue_create}, {rnti=0x4601 slot=41.1 type=ue_reconf}]
+[METRICS ] Scheduler cell pci=1 metrics: total_dl_brate=14.6Mbps total_ul_brate=6.56Mbps nof_prbs=270 nof_dl_slots=897 nof_ul_slots=897 total_prach_preambles=1 error_indications=0 ... failed_dl_pdcch=0 failed_common_dl_pdcch=0 failed_ul_pdcch=0 failed_common_ul_pdcch=0 failed_uci=0 nof_ues=1 ... msg3_ok=1 msg3_nok=0 late_dl_harqs=0 late_ul_harqs=0 ... events=[{rnti=0x4601 slot=34.3 type=ue_create}, {rnti=0x4601 slot=41.1 type=ue_reconf}]
 ```
 
 Useful fields:
 - `total_dl_brate` / `total_ul_brate` — throughput on that cell that period.
-- `nof_prach_preambles` — PRACH attempts seen in the period.
+- `total_prach_preambles` (up to v26.04: `nof_prach_preambles`) — PRACH attempts
+  seen in the period. Match both with `(nof|total)_prach_preambles`.
 - `msg3_ok` / `msg3_nok` — MSG3 decode outcome counters.
-- `late_dl_harqs` / `late_ul_harqs` / `failed_pdcch` / `failed_uci` —
-  scheduler-detected errors (should be 0 in healthy runs).
+- `late_dl_harqs` / `late_ul_harqs` / `failed_dl_pdcch` / `failed_ul_pdcch` /
+  `failed_uci` — scheduler-detected errors (should be 0 in healthy runs).
+  `failed_common_dl_pdcch` / `failed_common_ul_pdcch` are the common-SS part of
+  the PDCCH counts. Older builds log one `failed_pdcch`; match all with
+  `failed_(common_)?(dl_|ul_)?pdcch=[1-9]`.
 - `nof_ues` — UEs active in the cell that period.
 - `events=[...]` — discrete scheduler events with slot timestamps:
   `ue_create`, `ue_reconf`, `ue_remove`, `ue_reestablish`, `harq_ack_timeout`,

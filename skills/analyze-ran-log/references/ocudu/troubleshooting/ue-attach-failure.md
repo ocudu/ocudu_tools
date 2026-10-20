@@ -68,16 +68,22 @@ output**, not real warnings — they report per-UE creation latency for
 performance tracking.
 
 When `Initial Context Setup OK : K/N` shows K < N, the gap is the most
-useful single signal. Find which UEs missed it:
+useful single signal. Find which UEs missed it, one `<creation ts> ue=N` line per
+CU-CP UE context whose `ue=N` was created again, or the log ended, before its
+ICS finished. `ue=` indexes are reused, so compare per creation, not per index;
+the CU-UP also logs `ue=N: UE created`, hence the `CU-CP` anchor:
 
 ```bash
 C="${CLAUDE_CODE_TMPDIR:-/tmp}/claude-skills-${CLAUDE_CODE_SESSION_ID}"; mkdir -p "$C"
-python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --pattern "UE created" \
-    | grep -oE "ue=[0-9]+" | sort -u > "$C/ocudu-created.txt"
-python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --pattern '"Initial Context Setup Routine" finished' \
-    | grep -oE "ue=[0-9]+" | sort -u > "$C/ocudu-ics-done.txt"
-comm -23 "$C/ocudu-created.txt" "$C/ocudu-ics-done.txt"
+LC_ALL=C grep -aE '\[CU-CP +\] \[I\] ue=[0-9]+( c-rnti=0x[0-9a-f]+: UE created|: "Initial Context Setup Routine" finished)' gnb.log \
+  | awk '{ match($0, /ue=[0-9]+/); u = substr($0, RSTART, RLENGTH) }
+         /UE created/ { if (u in p) print p[u]; p[u] = $1 " " u; next }
+         { delete p[u] } END { for (u in p) print p[u] }' | sort > "$C/ocudu-missed-ics.txt"
+wc -l < "$C/ocudu-missed-ics.txt"
 ```
+
+Do not build this from `ocudu_log_search.py`: it stops at its `--max-lines` cap
+(default 200) and prints its `... N more` note to stdout.
 
 ## Cross-references
 

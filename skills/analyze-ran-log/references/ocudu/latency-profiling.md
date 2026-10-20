@@ -36,8 +36,9 @@ Key properties:
 - **Declarative + graceful degradation.** Stages live in a registry of
   `proc="..."` markers. Builds that emit only `Procedure started/finished` yield
   the end-to-end total; builds with the granular MAC/DU stage traces get the
-  full per-stage breakdown. Absent stages are skipped (`n=0`), so the same tool
-  works on mainline and instrumented branches.
+  full per-stage breakdown. A transition whose stages the log lacks has no row
+  (a procedure with none prints `no latency: only stage ... logged`), so the
+  same tool works on mainline and instrumented branches.
 - **Instance-correct.** Records are keyed per `(ue, procedure)` and re-opened on
   each procedure start, so UE-id reuse across re-creations and multiple
   reconfigurations per UE are counted as separate instances.
@@ -49,7 +50,8 @@ Reading the output: a flat, low-variance stage (small mean≈p99 gap) points at 
 fixed timer; a large mean-vs-p50 gap points at burst/queue contention. Compare
 branches/builds on mean + tail to see which phase dominates.
 
-Extending it: add an entry to the `PROCS` registry (procedure name → ordered
+Extending it: add an entry to the `PROCEDURES` registry of
+`parsers.log.procedures` (procedure name → ordered
 `(stage_key, exact_label)` list) and, for racing stages, a `TRANSITIONS` entry.
 
 ## Attributing UE-lifecycle latency

@@ -13,13 +13,13 @@ Context Setup — see `ue-attach.md`.
 | 1 | NGAP | `Rx PDU ... InitialContextSetupRequest` (contains PDU session list) |
 | 2 | CU-CP-E1 | `Tx PDU ... BearerContextSetupRequest` |
 | 3 | CU-UP-E1 | `Rx PDU ... BearerContextSetupRequest` |
-| 4 | CU-UP | `ue=N: PDU session psi=N attached, dl_teid=..., ul_teid=...` |
+| 4 | CU-UP | `ue=N: UE created` (the bearer context; the PDU session setup itself logs only at debug: `PDU session uplink tunnel info: psi=N local_teid=... peer_teid=... peer_addr=...`) |
 | 5 | CU-UP-E1 | `Tx PDU ... BearerContextSetupResponse` |
 | 6 | CU-CP-E1 | `Rx PDU ... BearerContextSetupResponse` |
 | 7 | CU-CP-F1 | `Tx PDU ... UEContextModificationRequest` (registers the DRBs at the DU; the DU returns its F1-U DL TEIDs) |
 | 8 | CU-CP-E1 | `Tx PDU ... BearerContextModificationRequest` (with DRB DL/UL teids) |
 | 9 | CU-UP-E1 | `Tx PDU ... BearerContextModificationResponse` |
-| 10 | CU-UP | `Attaching dl_teid=... to F1-U tunnel with ul_teid=...` |
+| 10 | CU-UP | `ue=N: Attaching dl_teid={Addr=... TEID=0x...} to F1-U tunnel with ul_teid=0x...`, then `ue=N: Modified DRB1. psi=1 f1u_teid=0x...` |
 | 11 | RRC  | `DCCH DL rrcReconfiguration` (carries DRB config, RLC bearer config, PDCP) |
 | 12 | RRC  | `DCCH UL rrcReconfigurationComplete` |
 | 13 | GTPU | `Tunnel added. teid=0xNNNNNN` (one per direction) |

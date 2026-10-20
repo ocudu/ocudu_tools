@@ -46,14 +46,23 @@ print it), `0x4601`, or `17921` (decimal, as F1AP pcaps hold it). Exception:
 the same precision.
 
 `--layer` is an **exact** tag match, not a substring — pass a tag that really
-appears in the log. There is **no `F1AP` or `E1AP` tag**; F1AP/E1AP traffic is
-split by endpoint. The full set (`reference/log-format.md` § Layer tags):
+appears in the log. There is **no `F1AP` tag**, and F1AP/E1AP PDUs are logged by
+endpoint (`CU-CP-F1`, `DU-F1`, `CU-CP-E1`, `CU-UP-E1`); `E1AP` only tags E1AP
+ASN.1 conversion messages. Tags of the OCUDU loggers (`reference/log-format.md`
+§ Layer tags), present only when their layer logs:
 
 ```
-ALL CONFIG GNB RRC NGAP SCTP-GW PDCP SDAP SEC MAC SCHED PHY FAPI METRICS
-CU-CP CU-CP-F1 CU-CP-E1 CU-UEMNG CU-UP CU-UP-E1 CU-F1-U
-DU DU-F1 DU-F1-U DU-MNG GTPU UDP-GW IO-EPOLL
+ALL APP CONFIG GNB CU DU EAL METRICS
+RRC NGAP XNAP NRPPA E1AP E2AP E2SM-KPM E2SM-RC E2SM-CCC ASN1 F1AP-ASN1-PCK E1AP-ASN1-PCK
+CU-CP CU-CP-F1 CU-CP-E1 CU-CP-XN CU-UEMNG E2-CU-CP
+CU-UP CU-UP-E1 CU-F1-U F1-U GTPU PDCP SDAP ROHC SEC E2-CU-UP
+DU DU-MNG DU-F1 DU-F1-U MAC SCHED RLC FAPI PHY OFH RU RF HWACC NTN E2-DU
+SCTP-GW SCTP UDP-GW IO-EPOLL E2-SUBSCRIBER
+zmq:rx:<stream>:<ch> zmq:tx:<stream>:<ch>
 ```
+
+List the tags of one log with
+`LC_ALL=C grep -aoE '^\S+ \[[^]]+\]' gnb.log | sed -E 's/.*\[ *//; s/ *\]$//' | sort | uniq -c`.
 
 | Question | Command |
 |---|---|
