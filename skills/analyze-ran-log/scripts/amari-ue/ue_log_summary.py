@@ -13,12 +13,13 @@ Usage:
   python3 ue_log_summary.py <path>
 
 <path> can be:
-  - ue.log file directly
+  - a UE log file directly (ue.log, ue0.log, ...)
   - Run directory containing ue.log (e.g. 2026-05-18_18-17-34/)
   - Component directory amarisoft-ue-N/ (finds latest timestamp subdirectory)
   - Retina test directory test_gnb[...] (finds latest amarisoft-ue-N/ subdir)
 """
 
+import itertools
 import re
 import sys
 from collections import Counter
@@ -29,25 +30,50 @@ from pathlib import Path
 # Path resolution
 # ---------------------------------------------------------------------------
 
-def resolve_run_dir(path_str: str) -> Path:
+PRIMARY = "ue.log"
+# First lines of a ue.log: its "#" header or a timestamped record.
+HEAD_RE = re.compile(
+    r"^(# (lteue\b|Started on |Log file format)|\d{2}:\d{2}:\d{2}\.\d{3} \[\w+\] )", re.M
+)
+
+
+def is_ue_log_head(path: Path, n_lines: int = 60) -> bool:
+    """True if the first lines of path look like an Amarisoft UE log."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            head = "".join(itertools.islice(f, n_lines))
+    except OSError:
+        return False
+    return bool(HEAD_RE.search(head))
+
+
+def resolve_ue_log(path_str: str) -> Path:
+    """The UE log of an input: the file itself, or the latest ue.log at or under a directory."""
     p = Path(path_str).resolve()
 
     if p.is_file():
-        return p.parent
+        if is_ue_log_head(p) or p.stat().st_size == 0:
+            return p
+        # A sibling artifact (stdout.log, amarisoft_ue.cfg) stands for its run directory.
+        if (p.parent / PRIMARY).is_file() and p.name != PRIMARY:
+            return p.parent / PRIMARY
+        raise FileNotFoundError(f"{p} does not look like an Amarisoft UE log")
 
-    if (p / "ue.log").exists():
-        return p
+    if (p / PRIMARY).is_file():
+        return p / PRIMARY
 
-    # Component dir or test dir: find deepest subdir that has ue.log
-    candidates = sorted(
-        [d for d in p.rglob("ue.log") if d.is_file()],
-        key=lambda f: str(f)
-    )
+    # Lexicographic order of the YYYY-MM-DD_HH-MM-SS run subdirs is time order.
+    candidates = sorted(f for f in p.rglob(PRIMARY) if f.is_file())
     if candidates:
-        # Prefer the latest timestamp subdir (lexicographic sort works for ISO dates)
-        return candidates[-1].parent
+        return candidates[-1]
 
-    raise FileNotFoundError(f"No ue.log found under {p}")
+    others = sorted(f.name for f in p.glob("ue*.log") if f.is_file())
+    hint = f" (found {', '.join(others)}: pass the file)" if others else ""
+    raise FileNotFoundError(f"No {PRIMARY} found under {p}{hint}")
+
+
+def resolve_run_dir(path_str: str) -> Path:
+    return resolve_ue_log(path_str).parent
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +144,9 @@ RRC_MSG_RE = re.compile(r"(\S+)\s+(\S+)\s+([\w\-]+):\s*(.*)")
 # Match the brace, not the bare word — diagnostic lines (e.g. "PDCP reestablish ...
 # without reconfigurationWithSync ... ignore it") mention the word but are not HOs.
 RECONFIG_SYNC_RE = re.compile(r"reconfigurationWithSync\s*\{")
+# Failure wording of record headers, e.g. "Random access failure",
+# "Contention resolution failed or timer expired", "Registration reject".
+ERROR_RE = re.compile(r"\b(fail(ed|ure)?|error|expired|reject)\b", re.IGNORECASE)
 
 
 def parse_ue_log(ue_log: Path) -> dict:
@@ -143,7 +172,7 @@ def parse_ue_log(ue_log: Path) -> dict:
 
     with open(ue_log, encoding="utf-8", errors="replace") as f:
         for raw in f:
-            line = raw.rstrip("\n")
+            line = raw.rstrip("\r\n")
             if not line:
                 continue
 
@@ -166,10 +195,6 @@ def parse_ue_log(ue_log: Path) -> dict:
                 result["ho_count"] += 1
                 continue
 
-            # Count error markers
-            if "[E]" in line or " ERROR " in line:
-                result["error_count"] += 1
-
             m = LINE_RE.match(line)
             if not m:
                 continue
@@ -177,6 +202,10 @@ def parse_ue_log(ue_log: Path) -> dict:
             ts = m.group(1)
             layer = m.group(2)
             rest = m.group(4)
+
+            # ue.log has no severity field. PHY crc=FAIL is counted on its own.
+            if layer != "PHY" and ERROR_RE.search(rest):
+                result["error_count"] += 1
 
             if result["start_time"] is None:
                 result["start_time"] = ts
@@ -277,13 +306,14 @@ def parse_stdout(stdout_log: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 def ts_delta_seconds(t1: str, t2: str) -> float | None:
-    """Compute seconds between two HH:MM:SS.mmm timestamps (same day assumed)."""
+    """Seconds from t1 to the next occurrence of t2, both HH:MM:SS.mmm."""
     try:
         def to_sec(t):
             h, m, s = t.split(":")
             return int(h) * 3600 + int(m) * 60 + float(s)
-        return to_sec(t2) - to_sec(t1)
-    except Exception:
+        # The clock has no date, so an end before the start crossed midnight.
+        return (to_sec(t2) - to_sec(t1)) % 86400
+    except ValueError:
         return None
 
 
@@ -292,12 +322,14 @@ def ts_delta_seconds(t1: str, t2: str) -> float | None:
 # ---------------------------------------------------------------------------
 
 def summarize(path_str: str):
-    run_dir = resolve_run_dir(path_str)
-    ue_log = run_dir / "ue.log"
+    ue_log = resolve_ue_log(path_str)
+    run_dir = ue_log.parent
     stdout_log = run_dir / "stdout.log"
     cfg_path = run_dir / "amarisoft_ue.cfg"
 
     print(f"Run directory : {run_dir}")
+    if ue_log.name != PRIMARY:
+        print(f"UE log        : {ue_log.name}")
     print()
 
     cfg = parse_cfg(cfg_path)

@@ -16,7 +16,7 @@ handover and reestablishment sequences, see `../reference/handover.md`.
    bearer-only.
 3. Check if RLF occurred instead of clean HO:
    ```bash
-   grep -n "reestablishment\|crc=FAIL" ue.log | head -20
+   grep -n "RRC reestablishment request\|crc=FAIL" ue.log | head -20
    ```
 
 ### HO: seen but UE lost connectivity (CBR loss spike)

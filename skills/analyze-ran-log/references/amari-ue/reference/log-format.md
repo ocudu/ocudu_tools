@@ -184,8 +184,8 @@ grep -n "\[RRC\].*DCCH-NR:" ue.log
 # Handovers (reconfigurationWithSync appears in body)
 grep -n "reconfigurationWithSync {" ue.log
 
-# RRC reestablishment
-grep -n "reestablishment" ue.log | grep "\[RRC\]"
+# RRC reestablishment messages
+grep -n "\[RRC\] .* RRC reestablishment" ue.log
 
 # PRACH attempts
 grep -n "PRACH:" ue.log
@@ -196,8 +196,9 @@ grep -n "crc=FAIL" ue.log
 # All PROD/sim events
 grep -n "SIM-Event" ue.log
 
-# Error lines (Amarisoft uses [E] for errors)
-grep -n "\[E\]" ue.log
+# Failure records. ue.log has no severity field; failures read e.g.
+# "Contention resolution failed or timer expired", "Random access failure".
+grep -nE "^\S+ \[(MAC|RRC|NAS|RLC|PDCP|PROD)\] .*\b([Ff]ail(ed|ure)?|[Ee]rror|expired|[Rr]eject)\b" ue.log
 
 # CBR traffic results
 grep -E "CBR_RECV|CBR_SEND" stdout.log

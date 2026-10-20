@@ -40,17 +40,21 @@ UL-SCH (PCC)
 python3 ${CLAUDE_SKILL_DIR}/scripts/viavi/viavi_log_summary.py <log>
 ```
 
-The **Throughput / BLER (GETSTATS)** section reports the dump count, per-UE stat
-records, peak DL/UL average throughput, and max DL/UL SCH BLER across all dumps —
+The **Throughput / BLER (GETSTATS)** section reports the dump count, the per-UE
+and COMBINED (`UE ID: 0-32`, all UEs summed) record counts, and for each kind the
+peak DL/UL average throughput and max DL/UL SCH BLER across its records —
 representative without picking one unrepresentative dump (early/teardown dumps
-cover only 1–2 UEs).
+cover only 1–2 UEs). Do not compare a COMBINED throughput with a per-UE target.
 
-For one UE's dumps over time:
+For one UE's records over time (each with its stat rows, which carry the header's
+timestamp):
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/viavi/viavi_log_search.py <log> \
   --pattern "UE ID: N " --after <HH:MM:SS:mmm> --before <HH:MM:SS:mmm>
 ```
+
+By hand: `LC_ALL=C grep -a -A30 'UE ID: N ' <log>`.
 
 ## Reading the result
 

@@ -77,11 +77,12 @@ forcing a full re-attach.
 ### Grep for reestablishments
 
 ```bash
-# All reestablishment events
-grep -n "reestablishment" ue.log | grep "\[RRC\]"
+# All reestablishment messages (request, reestablishment, complete)
+grep -n "\[RRC\] .* RRC reestablishment" ue.log
 
-# Count
-grep -c "reestablishment" ue.log
+# Count of attempts. A bare "reestablishment" also matches body lines
+# (reestablishmentCause) and "reestablish ... without reconfigurationWithSync" notes.
+grep -c "RRC reestablishment request" ue.log
 
 # PHY failures before reestablishment (look for CRC FAIL spike)
 grep -n "crc=FAIL" ue.log | head -20

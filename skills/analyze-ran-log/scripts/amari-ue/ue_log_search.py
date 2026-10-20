@@ -13,7 +13,7 @@ return the entire block.
 Usage:
   python3 ue_log_search.py <path> [options]
 
-<path>: ue.log file or any directory (resolved the same way as ue_log_summary.py)
+<path>: a UE log file or any directory (resolved the same way as ue_log_summary.py)
 
 Options:
   --layer <LAYER>       Filter by log layer: NAS, RRC, PHY, MAC, RLC, PDCP, PROD, TRX
@@ -21,7 +21,9 @@ Options:
   --cell <cell_id>      Filter by cell index (2-char decimal, e.g. 00, 01)
   --after <ts>          Only include lines at or after HH:MM:SS.mmm
   --before <ts>         Only include lines at or before HH:MM:SS.mmm
-  --pattern <regex>     Additional regex pattern (searched across entire block)
+                        (a log crossing midnight: each time is its first
+                        occurrence at or after the first log line)
+  --pattern <regex>     Additional regex, case-insensitive (searched across entire block)
   --count               Print match count only (no block content)
   --max-lines <N>       Max output lines before truncation (default: 200)
 
@@ -44,27 +46,38 @@ Examples:
       --after 12:24:34.000 --before 12:24:35.000
 """
 
+import argparse
 import re
 import sys
-import argparse
-from pathlib import Path
+
+import ue_log_summary  # reuse resolve_ue_log()
 
 
 LINE_RE = re.compile(r"^(\d{2}:\d{2}:\d{2}\.\d{3}) \[(\w+)\]")
+HMS_RE = re.compile(r"^(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)$")
+DAY = 86400.0
+HALF_DAY = DAY / 2
 
 
-def resolve_ue_log(path_str: str) -> Path:
-    p = Path(path_str).resolve()
-    if p.is_file() and p.name == "ue.log":
-        return p
-    if p.is_file():
-        return p  # allow other file paths too
-    if (p / "ue.log").exists():
-        return p / "ue.log"
-    candidates = sorted(p.rglob("ue.log"), key=lambda f: str(f))
-    if candidates:
-        return candidates[-1]
-    raise FileNotFoundError(f"No ue.log found at or under {p}")
+def hms_seconds(s: str) -> float:
+    m = HMS_RE.match(s)
+    if not m:
+        raise ValueError(s)
+    return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+
+
+def _hms_arg(s: str) -> float:
+    try:
+        return hms_seconds(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not HH:MM:SS[.mmm]: {s!r}")
+
+
+def _regex_arg(s: str) -> re.Pattern:
+    try:
+        return re.compile(s, re.IGNORECASE | re.MULTILINE)
+    except re.error as e:
+        raise argparse.ArgumentTypeError(f"invalid regex {s!r}: {e}")
 
 
 def parse_args(argv=None):
@@ -76,16 +89,42 @@ def parse_args(argv=None):
     ap.add_argument("--layer", help="Layer filter (NAS, RRC, PHY, MAC, RLC, PDCP, PROD, TRX)")
     ap.add_argument("--ue", help="UE ID filter (4-char hex, e.g. 0001, 000a)")
     ap.add_argument("--cell", help="Cell ID filter (e.g. 00, 01)")
-    ap.add_argument("--after", help="Start timestamp HH:MM:SS.mmm (inclusive)")
-    ap.add_argument("--before", help="End timestamp HH:MM:SS.mmm (inclusive)")
-    ap.add_argument("--pattern", help="Regex pattern (searched across full block)")
+    ap.add_argument("--after", type=_hms_arg,
+                    help="Start timestamp HH:MM:SS.mmm (inclusive)")
+    ap.add_argument("--before", type=_hms_arg,
+                    help="End timestamp HH:MM:SS.mmm (inclusive)")
+    ap.add_argument("--pattern", type=_regex_arg,
+                    help="Regex pattern, case-insensitive (searched across full block)")
     ap.add_argument("--count", action="store_true", help="Print count only")
     ap.add_argument("--max-lines", type=int, default=200,
                     help="Max output lines before truncation (default: 200)")
     return ap.parse_args(argv)
 
 
-def block_matches(header_line: str, body_lines: list[str], args) -> bool:
+class LogClock:
+    """Seconds since the first log day of the HH:MM:SS.mmm line times, read in file order."""
+
+    def __init__(self):
+        self.first: float | None = None
+        self._day = 0.0
+        self._last: float | None = None
+
+    def elapsed(self, ts: str) -> float:
+        sec = hms_seconds(ts)
+        if self.first is None:
+            self.first = sec
+        # The line clock has no date, so a time far behind the previous one crossed midnight.
+        elif self._last - sec > HALF_DAY:
+            self._day += DAY
+        self._last = sec
+        return self._day + sec
+
+    def bound(self, sec: float) -> float:
+        """A --after/--before time placed at its first occurrence at or after the first line."""
+        return sec if sec >= self.first else sec + DAY
+
+
+def block_matches(header_line: str, body_lines: list[str], args, clock: LogClock) -> bool:
     ts_m = LINE_RE.match(header_line)
     if not ts_m:
         return False
@@ -93,9 +132,10 @@ def block_matches(header_line: str, body_lines: list[str], args) -> bool:
     layer = ts_m.group(2)
 
     # Time range
-    if args.after and ts < args.after:
+    t = clock.elapsed(ts)
+    if args.after is not None and t < clock.bound(args.after):
         return False
-    if args.before and ts > args.before:
+    if args.before is not None and t > clock.bound(args.before):
         return False
 
     # Layer filter
@@ -121,15 +161,15 @@ def block_matches(header_line: str, body_lines: list[str], args) -> bool:
         return False
 
     # Pattern filter (across entire block, multiline so ^ and $ work per line)
-    if args.pattern:
-        if not re.search(args.pattern, full_text, re.IGNORECASE | re.MULTILINE):
-            return False
+    if args.pattern and not args.pattern.search(full_text):
+        return False
 
     return True
 
 
 def search(args):
-    log_path = resolve_ue_log(args.path)
+    log_path = ue_log_summary.resolve_ue_log(args.path)
+    clock = LogClock()
 
     output_blocks = []
 
@@ -140,7 +180,7 @@ def search(args):
         nonlocal current_header, current_body
         if current_header is None:
             return
-        if block_matches(current_header, current_body, args):
+        if block_matches(current_header, current_body, args, clock):
             block_text = current_header
             if current_body:
                 block_text += "\n" + "\n".join(current_body)
@@ -150,7 +190,7 @@ def search(args):
 
     with open(log_path, encoding="utf-8", errors="replace") as f:
         for raw in f:
-            line = raw.rstrip("\n")
+            line = raw.rstrip("\r\n")
             if not line:
                 continue
             if line.startswith("#"):

@@ -124,6 +124,33 @@ class UeLogSearchTest(unittest.TestCase):
         self.assertIn("15:45:02.702 [RRC] UL 0001 00 CCCH-NR: RRC setup request", output)
         self.assertIn("ue-Identity randomValue:", output)
 
+    def test_timestamp_window_across_midnight(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "ue.log"
+            log.write_text(
+                "23:59:59.000 [NAS] -  0001 New state : 5GMM-REGISTERED   CM-CONNECTED\n"
+                "23:59:59.900 [PROD] -  - SIM-Event: deregister\n"
+                "00:00:00.100 [NAS] -  0001 New state : 5GMM-DEREGISTERED   CM-IDLE\n"
+                "00:00:01.000 [PROD] -  - SIM-Event: power_off\n"
+            )
+
+            def count(*args: str) -> int:
+                proc = subprocess.run([sys.executable, str(SCRIPT), str(log), *args, "--count"],
+                                      capture_output=True, text=True, check=True)
+                return int(proc.stdout)
+
+            self.assertEqual(count("--after", "23:59:59.500"), 3)
+            self.assertEqual(count("--after", "23:59:59.500", "--before", "00:00:00.500"), 2)
+            self.assertEqual(count("--before", "00:00:00.100"), 3)
+
+    def test_bad_arguments_exit_2(self):
+        for args in (("--pattern", "("), ("--after", "1:2")):
+            proc = subprocess.run([sys.executable, str(SCRIPT), self.tmpdir.name, *args],
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("error: argument", proc.stderr)
+            self.assertNotIn("Traceback", proc.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

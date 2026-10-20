@@ -37,13 +37,17 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/amari-ue/ue_log_search.py <ue.log> \
 
 | Question | Command |
 |---|---|
-| "How many handovers?" | `--pattern reconfigurationWithSync --count` |
-| "When did UE attach?" | `--layer NAS --pattern "REGISTERED\s+CM-CONNECTED"` |
+| "How many handovers?" | `--pattern "reconfigurationWithSync \{" --count` (the bare word also matches "... without reconfigurationWithSync" notes) |
+| "When did UE attach?" | `--layer NAS --pattern "5GMM-REGISTERED\s+CM-CONNECTED"` (unanchored, `REGISTERED` also matches `5GMM-DEREGISTERED`) |
 | "All PRACH attempts" | `--layer PHY --pattern "PRACH:"` |
 | "What cells did the UE see?" | `--layer PHY --pattern "PSS:"` |
 | "What was the final NAS state?" | `--layer NAS` then tail |
-| "Did the UE reestablish?" | `--pattern "reestablishment" --layer RRC` |
+| "Did the UE reestablish?" | `--layer RRC --pattern "RRC reestablishment request"` |
 | "What band/BW was used?" | read `amarisoft_ue.cfg` (fields: `reference/config-format.md`) or `grep "^RF" stdout.log` |
+
+`--pattern` is a case-insensitive regex. `--after`/`--before` take each time at
+its first occurrence at or after the first log line, so a window across midnight
+works.
 
 Regex alternation can't be written inside a markdown table cell, so these live
 here — copy them verbatim, the pipe must **not** be backslash-escaped:

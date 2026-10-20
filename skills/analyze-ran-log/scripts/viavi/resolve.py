@@ -6,7 +6,7 @@
 """Resolve and inventory a VIAVI command-log input in one shot.
 
 Locates the command log (a *_Command_Log*.txt/.zip file → itself; a directory
-containing one → the newest, preferring the .txt over its identical .zip),
+containing one → the newest basename, preferring its .txt over its identical .zip),
 confirms it is non-empty and carries the VIAVI signature in its first lines, and
 prints a compact verdict. Exits non-zero (BAIL) if no usable command log is
 found or the content does not look like a VIAVI log.
@@ -45,10 +45,15 @@ def build_report(given: Path) -> dict:
     report["format"] = "zip" if log.suffix.lower() == ".zip" else "txt"
     if log.stat().st_size == 0:
         return {**report, "ok": False, "bail": f"{log.name} is empty (0 bytes)"}
+    try:
+        with viavi_log_summary.open_log(log) as f:
+            f.read(1)
+    except viavi_log_summary.READ_ERRORS as e:
+        return {**report, "ok": False, "bail": f"cannot read: {e}"}
     if not viavi_log_summary.is_viavi_head(log):
         return {**report, "ok": False,
                 "bail": f"{log.name} does not look like a VIAVI command log "
-                        "(no RSET/CMPI signature in its first lines)"}
+                        "(no RSET/CMPI/TMAE signature in its first lines)"}
 
     report["size_mb"] = round(log.stat().st_size / 1e6, 1)
     report["ok"] = True

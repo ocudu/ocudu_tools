@@ -34,7 +34,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/viavi/viavi_log_search.py <command-log> \
 
 | Question | Command |
 |---|---|
-| "How many UEs registered?" | `--event "NR REGISTRATION IND" --count` |
+| "How many registration events?" | `--event "NR REGISTRATION IND" --count` (events, not UEs: a UE registers again after each reconnect) |
 | "Did any random access fail?" | `--event "Random Access Error" --count` |
 | "Show everything for UE 113" | `--ue 113` |
 | "When did UE 113 first connect?" | `--ue 113 --event "NR CONNECTION IND"` |
@@ -47,6 +47,16 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/viavi/viavi_log_search.py <command-log> \
 `--event` is a **substring** filter on `I: CMPI` lines — use the precise form
 (`"NR REGISTRATION IND"`, not `"REGISTRATION IND"`, which also matches
 `DEREGISTRATION IND`).
+
+`--ue N` matches `UE Id:N` / `UE ID: N`, not a COMBINED GETSTATS range
+(`UE ID: 0-32`). `--after`/`--before` take each time at its first occurrence at or
+after the first log line, so a window across midnight works.
+
+Distinct UEs that registered (the count of events above overstates it):
+
+```bash
+LC_ALL=C grep -a 'NR REGISTRATION IND' "$L" | grep -oE 'UE Id: ?[0-9]+' | tr -d ' ' | sort -u | wc -l
+```
 
 Otherwise use the canonical greps in `reference/log-format.md` § Key grep recipes;
 cap with `| head -n 200` and spill larger results to `viavi-query-<sha>.txt`.

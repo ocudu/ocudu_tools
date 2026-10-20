@@ -5,16 +5,15 @@
 
 """Resolve and inventory an Amarisoft UE-log input in one shot.
 
-Locates the run directory (a ue.log file → its parent; a directory containing
-ue.log → itself; a component dir `amarisoft-ue-N/` or a Retina `test_gnb[...]`
-dir → the latest `YYYY-MM-DD_HH-MM-SS/` subdir that has a ue.log), confirms the
-ue.log is present and non-empty, lists the analysis artifacts found, and warns
-when a test directory holds more than one UE component (so the caller can scope
-to one rather than silently taking the latest). Prints a compact verdict and
-exits non-zero if no usable ue.log can be found.
+Locates the UE log (a UE log file → itself, e.g. ue.log or ue0.log; a directory
+containing ue.log → its ue.log; a component dir `amarisoft-ue-N/` or a Retina
+`test_gnb[...]` dir → the ue.log of the latest `YYYY-MM-DD_HH-MM-SS/` subdir),
+confirms it is non-empty and looks like a UE log, lists the analysis artifacts
+found, and warns when the input holds more than one UE component directory (so
+the caller can scope to one rather than silently taking the latest). Prints a
+compact verdict and exits non-zero if no usable UE log can be found.
 
-Unlike pcaps, UE logs are plain text with nothing to validate — this is
-resolution + inventory only, not a format preflight.
+This is resolution + inventory with a first-lines check, not a format preflight.
 
 Usage:
     resolve.py <path>
@@ -29,7 +28,7 @@ import json
 import sys
 from pathlib import Path
 
-import ue_log_summary  # reuse resolve_run_dir()
+import ue_log_summary  # reuse resolve_ue_log() / is_ue_log_head()
 
 PRIMARY = "ue.log"
 ARTIFACTS = ("ue.log", "stdout.log", "amarisoft_ue.cfg")
@@ -41,22 +40,22 @@ def _is_component_name(name: str) -> bool:
     return any(fnmatch.fnmatch(name, g) for g in COMPONENT_GLOBS)
 
 
-def find_components(root: Path) -> list[str]:
-    """Names of distinct UE components (each holding a ue.log) under root.
+def find_components(root: Path) -> list[Path]:
+    """Distinct UE component directories (each holding a ue.log) under root.
 
     For every ue.log beneath `root`, walk up to the nearest component-named
-    ancestor; the set of those is what a test directory exposes. Returns [] when
-    `root` is at or below a single run/component (no ambiguity to flag).
+    ancestor. Returns [] when `root` is at or below a single run/component (no
+    ambiguity to flag).
     """
-    comps: set[str] = set()
+    comps: set[Path] = set()
     for log in root.rglob(PRIMARY):
         if not log.is_file():
             continue
         for anc in log.parents:
-            if _is_component_name(anc.name):
-                comps.add(anc.name)
+            if anc == root or root not in anc.parents:
                 break
-            if anc == root:
+            if _is_component_name(anc.name):
+                comps.add(anc)
                 break
     return sorted(comps)
 
@@ -66,31 +65,37 @@ def build_report(given: Path) -> dict:
     if not given.exists():
         return {**report, "ok": False, "bail": f"not found: {given}"}
 
-    components = find_components(given.resolve()) if given.is_dir() else []
+    root = given.resolve()
+    components = find_components(root) if given.is_dir() else []
 
     try:
-        run_dir = ue_log_summary.resolve_run_dir(str(given))
+        primary = ue_log_summary.resolve_ue_log(str(given))
     except FileNotFoundError as e:
         return {**report, "ok": False, "bail": str(e)}
 
+    run_dir = primary.parent
     report["run_dir"] = str(run_dir)
-    primary = run_dir / PRIMARY
-    if not primary.is_file():
-        return {**report, "ok": False, "bail": f"{PRIMARY} missing in {run_dir}"}
+    if primary.name != PRIMARY:
+        report["ue_log"] = primary.name
     if primary.stat().st_size == 0:
-        return {**report, "ok": False, "bail": f"{PRIMARY} is empty (0 bytes)"}
+        return {**report, "ok": False, "bail": f"{primary.name} is empty (0 bytes)"}
+    if not ue_log_summary.is_ue_log_head(primary):
+        return {**report, "ok": False,
+                "bail": f"{primary.name} does not look like an Amarisoft UE log "
+                        "(no '#' header or HH:MM:SS.mmm [LAYER] record in its first lines)"}
 
-    report["present"] = [a for a in ARTIFACTS if (run_dir / a).is_file()]
-    report["missing"] = [a for a in ARTIFACTS if not (run_dir / a).is_file()]
+    present = [primary.name] + [a for a in ARTIFACTS[1:] if (run_dir / a).is_file()]
+    report["present"] = present
+    report["missing"] = [a for a in ARTIFACTS[1:] if not (run_dir / a).is_file()]
     cfg_path = run_dir / "amarisoft_ue.cfg"
     if cfg_path.is_file():
         cfg = ue_log_summary.parse_cfg(cfg_path)
         report["simulated_ues"] = cfg["ue_count"]
         report["n_ue_groups"] = cfg["n_ue_groups"]
     if len(components) > 1:
-        report["components"] = components
+        report["components"] = [str(c.relative_to(root)) for c in components]
         report["resolved_component"] = next(
-            (c for c in components if c in str(run_dir)), None
+            (str(c.relative_to(root)) for c in components if c in run_dir.parents), None
         )
     report["ok"] = True
     return report
@@ -101,6 +106,8 @@ def render_text(r: dict) -> str:
     if r.get("bail"):
         return "\n".join(lines + [f"verdict: BAIL — {r['bail']}"])
     lines.append(f"run dir: {r['run_dir']}")
+    if r.get("ue_log"):
+        lines.append(f"UE log:  {r['ue_log']}")
     present = ", ".join(r["present"]) if r["present"] else "none"
     line = f"present: {present}"
     if r["missing"]:

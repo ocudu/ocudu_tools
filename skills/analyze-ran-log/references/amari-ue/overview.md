@@ -11,8 +11,11 @@ Resolve already reported the run dir and which of `ue.log`, `stdout.log`,
 ## run summary script
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/amari-ue/ue_log_summary.py <run-dir>
+python3 ${CLAUDE_SKILL_DIR}/scripts/amari-ue/ue_log_summary.py <run-dir | UE log file>
 ```
+
+A file is parsed as given (e.g. `ue0.log`), with its directory's `stdout.log` and
+`amarisoft_ue.cfg`; a directory needs a `ue.log` at or under it.
 
 Emits, in one pass:
 
@@ -21,7 +24,9 @@ Emits, in one pass:
 - UE software version and RF port info
 - NAS state timeline (deduped, state changes only)
 - Key RRC messages (setup, reconfigurations, reestablishments)
-- Procedure counts: PRACH attempts, handovers, reestablishments, PHY CRC failures
+- Procedure counts: PRACH attempts, handovers, reestablishments, PHY CRC failures,
+  error log lines (non-PHY records with fail/failed/failure/error/expired/reject,
+  e.g. `Contention resolution failed or timer expired`; ue.log has no severity field)
 - Traffic stats: CBR sent/received with loss percentage
 - Sim events timeline (power_on, cbr_recv/cbr_send, power_off, quit)
 - Anomalies (packet loss > 1%, PHY errors, unexpected final NAS state)

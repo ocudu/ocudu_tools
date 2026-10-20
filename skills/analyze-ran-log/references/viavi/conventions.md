@@ -34,9 +34,11 @@ to the `troubleshooting/` doc to load.
 
 The dispatcher runs `scripts/viavi/resolve.py`, which accepts the `.txt`, the
 `.zip`, or a directory containing either, and resolves to the command-log file
-(newest if several; the `.txt` is preferred over its identical `.zip`). It
-confirms the file is non-empty and carries the VIAVI signature (`RSET` / `C: RSET
-0x00 Ok` / `I: CMPI` in the first lines), then prints the path, format, size, and
+(newest basename if several; a `.txt` is preferred over its identical `.zip`).
+It confirms the file is non-empty and readable (a broken `.zip` bails) and
+carries the VIAVI signature (`RSET` / `C: RSET 0x00 Ok` / `I: CMPI`, or for a
+log cut before the RSET `I: TMAE 0x` / `C: PORT|CONNECT|ABOT 0x`, in the first
+lines), then prints the path, format, size, and
 a `verdict:` line. **Bail if the verdict is not OK.**
 
 **Scope** — a single command log already aggregates *all* simulated UEs (often
@@ -52,6 +54,6 @@ cross-product over a multi-hour run is large.
   `errors="replace"`.
 - Read the `.zip` in place (the scripts do, via `zipfile`); don't extract a
   55 MB `.txt` to disk just to grep it.
-- Most of the file is **continuation lines** (GETSTATS rows, `Cell Info:`
-  bodies); use `viavi_log_search.py` (block-aware) rather than line greps when
-  you need whole records.
+- Records span several lines (untimestamped `Cell Info:` bodies, GETSTATS rows
+  that repeat their header's timestamp); use `viavi_log_search.py` (block-aware)
+  rather than line greps when you need whole records.

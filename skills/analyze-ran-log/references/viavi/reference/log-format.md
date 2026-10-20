@@ -23,8 +23,10 @@ DD/MM/YY HH:MM:SS:mmm <payload>
 - During the shutdown phase a literal `... ` is inserted between the timestamp and
   payload (`14:58:47:947 ... C: ELOG 0x00 Ok`).
 - **Continuation lines** carry no timestamp — they are the body of the record
-  above (an RRC event's `Cell Info:`, a `REGISTRATION IND` body, the rows of a
-  GETSTATS dump). They make up the bulk of the file.
+  above (an RRC event's `Cell Info:`, a `REGISTRATION IND` body).
+- **GETSTATS rows are timestamped**: every row of a dump repeats the timestamp of
+  its `UE ID:` header, so a line grep returns only the header; take the rows with
+  `grep -a -A30` or `viavi_log_search.py`, which groups them with their header.
 
 ### Payload classes
 
@@ -62,6 +64,9 @@ The tail of a clean run shows `STOP_LOGGING`, then `DISCONNECT` (`C: DISCONNECT 
 | `RRC Cell Selection: UE Id: N` (+ `Cell Info:` body) | UE (re)selected a cell |
 | `RRC Handover Complete: UE Id: N` (+ `Old/New Cell Info:` body) | HO finished onto the new cell |
 | `RRC RRC Connection Re-establishment Started: UE Id: N` | Reestablishment began (often right after an RA error) |
+| `RRC UE Id:N: RRC Re-establishment Dropped (…): Check whether RRC_DISABLE_CONNECTION_REESTABLISHMENT setp enabled or UE not registered` | Reestablishment not attempted |
+| `RRC UE Id:N: User Triggered RRC Re-establishment Error (…): AS security not activated …` | Reestablishment refused before AS security / DRB setup |
+| `MTE 0 NR LOWER LAYER FAILURE IND:UE Id:N` | Radio link lost below RRC (RLF) |
 | `MTE 0 NR CONNECTION IND:UE Id:N` | RRC connection up |
 | `MTE 0 NR DISCONNECTION IND:UE Id:N` | RRC connection released |
 | `MTE 0 NR CONNECTION FAILED IND:UE Id:N` | Connection attempt failed; the multi-line body gives the cause, e.g. `RRC: RRC Connection Establishment timed out (T300/T319 expired)` (UE never got a valid RRCSetup) |
@@ -69,7 +74,7 @@ The tail of a clean run shows `STOP_LOGGING`, then `DISCONNECT` (`C: DISCONNECT 
 | `MTE 0 NR DEREGISTRATION IND:UE Id:N` | Deregistered |
 | `MTE 0 NR PDU SESSION MODIFICATION IND:UE Id:N` | PDU session modified |
 | `MTE 0 NR PLMN LOSS IND` / `PLMN RECOVERY IND` | Lost / recovered PLMN |
-| `ORAN_RU <RU>: ORAN: CU PLANE ACTIVE` | O-RAN C-plane up for that RU (bring-up gate) |
+| `ORAN_RU <RU>: ORAN: CU PLANE ACTIVE` or `ORAN_RU ORAN: CU PLANE ACTIVE (Ru <n> on server)` | O-RAN C-plane up for that RU (bring-up gate) |
 | `LN RLC maximum retransmissions reached` | RLC hit max retx (radio-link trouble) |
 | `NRLNULCTRL Warning …` / `NRLNDLSRP Warning …` | UL power-control / DL SRP warnings |
 
@@ -79,9 +84,12 @@ event lines and `UE Id: 113` (with a space) on RRC events — match both with
 
 ### GETSTATS dump
 
-Triggered by `C: FORW 0x00 Ok MTE GETSTATS [ALL] [<ue-list>] [COMBINED]`. Each
+Triggered by `C: FORW 0x00 Ok MTE GETSTATS [<stats>] [<ue-list>] [<ue-list>]`. Each
 dump covers the UE subset in `<ue-list>`; a measurement round fires several dumps
-back-to-back, so iterate across all of them rather than trusting one. Per UE:
+back-to-back, so iterate across all of them rather than trusting one. A
+`[COMBINED]` UE list gives one record for all UEs, headed by a UE ID range
+(`UE ID: 0-32   (Radio Context: …`); its throughput is the sum over the UEs, not
+a per-UE value. Per UE (every row carries the header's timestamp, stripped here):
 
 ```
 UE ID: 68   (Radio Context: 0   Cell ID: 1   DL Freq: 3705.060 MHz)
@@ -138,7 +146,9 @@ LC_ALL=C grep -a 'Random Access Complete' "$L" \
 
 # Mobility
 LC_ALL=C grep -ac 'RRC Handover Complete' "$L"
-LC_ALL=C grep -ac 'RRC Connection Re-establishment' "$L"
+LC_ALL=C grep -ac 'RRC Connection Re-establishment Started' "$L"
+LC_ALL=C grep -ac 'RRC Re-establishment Dropped\|RRC Re-establishment Error' "$L"
+LC_ALL=C grep -ac 'NR LOWER LAYER FAILURE IND' "$L"
 
 # O-RAN bring-up gate
 LC_ALL=C grep -a 'CU PLANE ACTIVE' "$L"
@@ -146,13 +156,17 @@ LC_ALL=C grep -a 'CU PLANE ACTIVE' "$L"
 # Failed command responses (anything other than 0x00)
 LC_ALL=C grep -aoE 'C: [A-Z_]+ 0x[0-9A-Fa-f]+' "$L" | grep -v ' 0x00$'
 
-# GETSTATS dumps (count the C: responses, not the command echoes) and per-UE records
+# GETSTATS dumps (count the C: responses, not the command echoes), per-UE and
+# COMBINED records, and one UE's record with its timestamped rows
 LC_ALL=C grep -ac 'C: FORW .* GETSTATS' "$L"
-LC_ALL=C grep -ac '^[0-9/]* [0-9:]* UE ID: ' "$L"
+LC_ALL=C grep -acE '^[0-9/]* [0-9:]* UE ID: [0-9]+ ' "$L"
+LC_ALL=C grep -acE '^[0-9/]* [0-9:]* UE ID: [0-9]+-[0-9]+ ' "$L"
+LC_ALL=C grep -a -A30 'UE ID: 113 ' "$L" | head -n 200
 
 # Run time span (first / last timestamp)
 LC_ALL=C grep -aoE '^[0-9]{2}/[0-9]{2}/[0-9]{2} [0-9:]{12}' "$L" | sed -n '1p;$p'
 ```
 
 Prefer the helper scripts (`viavi_log_summary.py`, `viavi_log_search.py`) over
-hand grep — they handle the `.zip`, CRLF, and multi-line blocks for you.
+hand grep — they handle the `.zip`, CRLF, multi-line blocks and GETSTATS records
+for you.
