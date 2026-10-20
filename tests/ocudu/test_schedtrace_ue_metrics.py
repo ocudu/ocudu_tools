@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -77,6 +78,25 @@ class SchedtraceUeMetricsTest(unittest.TestCase):
         res = run(str(TRACE), "--rnti", "zz")
         self.assertNotEqual(res.returncode, 0)
         self.assertIn("invalid RNTI", res.stderr)
+
+
+    def test_zero_tail(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "schedtrace_cell0.bin"
+            path.write_bytes(TRACE.read_bytes() + bytes(4096))
+            for workers in ("1", "2"):
+                res = run(str(path), "--summary", "-j", workers)
+                self.assertEqual(res.returncode, 0, res.stderr)
+                self.assertIn("slots=1", res.stdout)
+                self.assertIn("corrupt schedtrace event size 0", res.stderr)
+
+    def test_empty_trace(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "schedtrace_cell0.bin"
+            path.write_bytes(b"")
+            res = run(str(path))
+        self.assertEqual(res.returncode, 1)
+        self.assertIn(f"ERROR: {path}: cannot mmap an empty file", res.stderr)
 
 
 if __name__ == "__main__":

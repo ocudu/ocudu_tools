@@ -91,6 +91,55 @@ class SchedtraceTest(unittest.TestCase):
             with self.assertWarnsRegex(UserWarning, f"{path}: corrupt"):
                 self.assertEqual(len(list(schedtrace.read(path))), 1)
 
+    def test_zero_tail_warns(self):
+        data = (DATA / "schedtrace_cell0.bin").read_bytes()
+        size = len(data)
+        data += bytes(4096)
+        with self.assertWarnsRegex(UserWarning, f"corrupt schedtrace event size 0 at offset {size}"):
+            self.assertEqual(len(list(schedtrace.events(data))), 3)
+        with self.assertWarnsRegex(UserWarning, "corrupt"):
+            self.assertEqual(schedtrace.offsets(data), schedtrace.offsets(data[:size]))
+        with self.assertRaises(schedtrace.CorruptEventError):
+            schedtrace.event_at(data, size)
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "schedtrace_cell0.bin"
+            path.write_bytes(data)
+            with self.assertWarnsRegex(UserWarning, f"{path}: corrupt"):
+                self.assertEqual(len(list(schedtrace.read(path))), 3)
+
+    def test_corrupt_root_warns(self):
+        data = bytearray((DATA / "schedtrace_cell0.bin").read_bytes())
+        second = schedtrace.offsets(data)[1]
+        data[second + 4 : second + 8] = (1 << 31).to_bytes(4, "little")
+        with self.assertWarnsRegex(UserWarning, f"corrupt schedtrace event at offset {second}"):
+            self.assertEqual(len(list(schedtrace.events(data))), 1)
+        with self.assertWarnsRegex(UserWarning, "corrupt"):
+            self.assertEqual(schedtrace.offsets(data), [schedtrace.HEADER.size])
+        with self.assertRaisesRegex(schedtrace.CorruptEventError, f"offset {second}"):
+            schedtrace.event_at(data, second)
+
+    def test_event_at_an_offset_past_the_end(self):
+        data = (DATA / "schedtrace_cell0.bin").read_bytes()
+        for offset in (len(data) - 2, len(data) + 10):
+            with self.assertRaises(schedtrace.CorruptEventError):
+                schedtrace.event_at(data, offset)
+
+    def test_garbled_bytes_do_not_raise(self):
+        data = (DATA / "schedtrace_cell0.bin").read_bytes()
+        # Each byte of the events garbled, the decoding stops at the corrupt event or decodes wrong values.
+        for pos in range(schedtrace.HEADER.size, len(data)):
+            for value in (0x00, 0xFF):
+                garbled = data[:pos] + bytes([value]) + data[pos + 1 :]
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    for grid_only in (False, True):
+                        list(schedtrace.events(garbled, grid_only))
+                    for offset in schedtrace.offsets(garbled):
+                        try:
+                            schedtrace.event_at(garbled, offset)
+                        except schedtrace.CorruptEventError:
+                            pass
+
     def test_offsets_stop_at_the_end_of_the_contents(self):
         data = (DATA / "schedtrace_cell0.bin").read_bytes()
         self.assertEqual(schedtrace.offsets(data[:-5], end=len(data)), schedtrace.offsets(data[:-5]))
@@ -231,6 +280,21 @@ class GridTest(unittest.TestCase):
         rects = grid.allocations(slot, self.cell)
         # Resource 1: format 2 of 2 PRBs at PRB 40, hopping to PRB 7 for the second of its 2 symbols.
         self.assertEqual([(r["sym_start"], r["sym_length"], r["crb_start"], r["crb_length"]) for r in rects], [(12, 1, 40, 2), (13, 1, 7, 2)])
+
+    def test_csi_rs_is_clipped_to_the_bwp(self):
+        # CRBs 0 to 60 in the DL BWP of CRBs 2 to 54.
+        slot = {"decision": {"csi_rs": [{"symbol0": 5, "crbs": {"start": 0, "length": 60}, "row": 1}]}}
+        rects = grid.allocations(slot, self.cell)
+        self.assertEqual([(r["sym_start"], r["crb_start"], r["crb_length"]) for r in rects], [(5, 2, 52)])
+
+    def test_long_prach_start_symbol_counts_15khz_symbols(self):
+        # In a 30 kHz UL BWP: format 0 from 15 kHz symbol 7, the first symbol of the second slot of the subframe, and
+        # format 3 from 15 kHz symbol 2, 30 kHz symbol 4.
+        slot = {"decision": {"prachs": [{"format": 0, "start_symbol": 7, "nof_occasions": 1, "index_fd_ra": 0},
+                                        {"format": 3, "start_symbol": 2, "nof_occasions": 1, "index_fd_ra": 0}]}}
+        rects = grid.allocations(slot, self.cell)
+        self.assertEqual([(r["sym_start"], r["sym_length"], r["crb_start"], r["crb_length"]) for r in rects],
+                         [(0, 28, 3, 3), (4, 28, 3, 12)])
 
     def test_occupancy(self):
         rects = [{"channel": "PDSCH", "crb_start": 2, "crb_length": 6, "sym_start": 0, "sym_length": 7}]

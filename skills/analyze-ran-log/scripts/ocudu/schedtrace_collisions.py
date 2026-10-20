@@ -118,6 +118,12 @@ def time_text(timestamp_us: int) -> str:
     return datetime.fromtimestamp(timestamp_us / 1e6, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")
 
 
+def error_text(path: Path, e: Exception) -> str:
+    """The message of an error of a trace, which starts with its path."""
+    # Messages of parsers.schedtrace start with the path, those of mmap do not.
+    return str(e) if str(e).startswith(str(path)) else f"{path}: {e}"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("path")
@@ -149,7 +155,7 @@ def main() -> int:
         # FormatError, of an unsupported trace, is a ValueError too, as is a trace without its start event; mmap
         # raises ValueError for an empty file.
         except ValueError as e:
-            print(f"ERROR: {e}", file=sys.stderr)
+            print(f"ERROR: {error_text(path, e)}", file=sys.stderr)
             status = 1
             continue
         slots_per_frame = round(0.01 / cell.slot_duration_s)

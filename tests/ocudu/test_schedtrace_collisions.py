@@ -57,9 +57,21 @@ class SchedtraceCollisionsTest(unittest.TestCase):
             header_only.write_bytes(TRACE.read_bytes()[:8])
             empty.write_bytes(b"")
             res = run(d)
-        # Both are reported, the run going on past the first.
+        # Both are reported with their paths, the run going on past the first.
         self.assertEqual(res.returncode, 1)
         self.assertEqual(res.stderr.count("ERROR:"), 2, res.stderr)
+        self.assertIn(f"ERROR: {header_only}: the trace does not start", res.stderr)
+        self.assertIn(f"ERROR: {empty}: cannot mmap an empty file", res.stderr)
+
+    def test_zero_tail(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "schedtrace_cell0.bin"
+            path.write_bytes(TRACE.read_bytes() + bytes(4096))
+            for workers in ("1", "2"):
+                res = run(str(path), "-j", workers)
+                self.assertEqual(res.returncode, 0, res.stderr)
+                self.assertIn("0 collisions", res.stdout)
+                self.assertIn("corrupt schedtrace event size 0", res.stderr)
 
     def test_overlap_text(self):
         spec = importlib.util.spec_from_file_location("schedtrace_collisions", SCRIPT)

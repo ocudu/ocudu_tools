@@ -212,6 +212,12 @@ def print_table(header: tuple, rows: list[tuple]) -> None:
         print("  ".join(str(c).rjust(w) for c, w in zip(row, widths)).rstrip())
 
 
+def error_text(path: Path, e: Exception) -> str:
+    """The message of an error of a trace, which starts with its path."""
+    # Messages of parsers.schedtrace start with the path, those of mmap do not.
+    return str(e) if str(e).startswith(str(path)) else f"{path}: {e}"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("path")
@@ -247,9 +253,10 @@ def main() -> int:
             workers = min(MAX_DEFAULT_WORKERS, os.cpu_count() or 1) if path.stat().st_size >= PARALLEL_MIN_SIZE else 1
         try:
             res = read_trace(path, workers, opts)
-        # FormatError, of an unsupported trace, is a ValueError too, as is a trace without its start event.
+        # FormatError, of an unsupported trace, is a ValueError too, as is a trace without its start event; mmap
+        # raises ValueError for an empty file.
         except ValueError as e:
-            print(f"ERROR: {e}", file=sys.stderr)
+            print(f"ERROR: {error_text(path, e)}", file=sys.stderr)
             status = 1
             continue
         print(f"== {path}")

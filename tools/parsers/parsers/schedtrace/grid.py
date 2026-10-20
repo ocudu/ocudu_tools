@@ -10,8 +10,10 @@ of PDSCHs of DCI format 1_0 in a common search space (SIB, RAR, paging, fallback
 CORESET of their PDCCH, TS 38.214 5.1.2.2.2, those of the other PDSCHs from the BWP start. PDCCHs take the REG bundles
 of their CCEs in their CORESET, TS 38.211 7.3.2.2, from the first monitoring symbol of their search space. PRACH
 occasions take the RBs of TS 38.211 Table 6.3.3.2-1 from msg1-FrequencyStart and the duration of their format; when the
-PRACH and PUSCH subcarrier spacings differ their symbols are scaled, and long formats last past their slot, though
-occupancy() counts only their first slot. SRS is left out. The UL allocations of a slot decision are those transmitted in its slot.
+PRACH and PUSCH subcarrier spacings differ their symbols are scaled, the start symbol of long formats from 15 kHz,
+TS 38.211 5.3.2, and long formats last past their slot, though occupancy() counts only their first slot. CSI-RS
+wider than the DL BWP spans the BWP, TS 38.331 CSI-FrequencyOccupation. SRS is left out. The UL allocations of a slot
+decision are those transmitted in its slot.
 """
 
 from __future__ import annotations
@@ -136,7 +138,10 @@ def allocations(slot_event: dict[str, Any], cell: Cell) -> list[dict[str, Any]]:
     for i, s in enumerate(decision.get("ssbs") or []):
         add("DL", "SSB", s["sym_start"], s["sym_length"], [(s["crbs"]["start"], s["crbs"]["length"])], {"item": ["ssbs", i], "ssb_index": s["ssb_index"]})
     for i, c in enumerate(decision.get("csi_rs") or []):
-        add("DL", "CSI-RS", c["symbol0"], 1, [(c["crbs"]["start"], c["crbs"]["length"])], {"item": ["csi_rs", i], "row": c["row"]})
+        # CSI-RS wider than the BWP spans the BWP, TS 38.331 CSI-FrequencyOccupation.
+        lo = max(c["crbs"]["start"], dl["crb_start"])
+        hi = min(c["crbs"]["start"] + c["crbs"]["length"], dl["crb_start"] + dl["crb_length"])
+        add("DL", "CSI-RS", c["symbol0"], 1, [(lo, hi - lo)], {"item": ["csi_rs", i], "row": c["row"]})
     for i, p in enumerate(decision.get("puschs") or []):
         shared("UL", "PUSCH", p, ul, {"item": ["puschs", i], "rnti": p["rnti"], "harq_id": p["harq_id"], "tbs": p["tb_size_bytes"],
                                       "rv": p["rv_index"], "nof_retxs": p["nof_retxs"], "k2": p["k2"], "ue_index": p["ue_index"]})
@@ -188,7 +193,10 @@ def _add_prach(add: Callable[..., None], index: int, prach: dict[str, Any], cell
     pusch_khz = SCS_KHZ.get(cell.ul_bwp["scs"], 15)
     if fmt in _PRACH_LONG_MS:
         prach_khz = 5 if fmt == "3" else 1.25
-        start, length = prach["start_symbol"], round(_PRACH_LONG_MS[fmt] * NOF_SYMBOLS * pusch_khz / 15)
+        # The start symbol counts symbols of 15 kHz, TS 38.211 5.3.2; its PUSCH symbol may fall in a later slot of the
+        # subframe, the slot of the Prach.
+        start = round(prach["start_symbol"] * pusch_khz / 15) % NOF_SYMBOLS
+        length = round(_PRACH_LONG_MS[fmt] * NOF_SYMBOLS * pusch_khz / 15)
         times = [(start, length)]
     else:
         prach_khz = SCS_KHZ.get(cell.prach.get("scs"), pusch_khz)
