@@ -81,6 +81,8 @@ class CompileFilterTest(unittest.TestCase):
                 self.assertEqual(rows(expr), [1, 2, 3])
         self.assertEqual(rows("rnti == 0x4601"), [4, 5])
         self.assertEqual(rows("rnti == 17921"), [4, 5])
+        # Bare digits are hex, as logs print RNTIs, while a stored integer is the RNTI's value.
+        self.assertEqual(rows("rnti == 68"), [])
         self.assertEqual(rows("rnti == 'n/a'"), [6])
         self.assertEqual(rows("rnti == c_rnti"), [1, 3, 4])
         self.assertEqual(rows("c_rnti == 0x44"), [1, 3])

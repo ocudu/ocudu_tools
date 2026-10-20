@@ -33,6 +33,8 @@ MAX_TEXT = 500
 _UE_RE = re.compile(r"(?<![\w-])ue=(\d+)")
 # The UE RNTI tokens of search.Filter, not the RA-RNTI or MsgB-RNTI of a random access, which is no UE's.
 _RNTI_RE = re.compile(r"(?<![\w-])(?:c-|tc-|c)?rnti=(0x[0-9a-fA-F]+)")
+# Inline global flags, e.g. (?x), which re takes at the start of a pattern only.
+_GLOBAL_FLAGS_RE = re.compile(r"(?:\(\?[aiLmsux]+\))*")
 
 
 @dataclass(frozen=True)
@@ -166,6 +168,7 @@ def crlf_anchors(pattern: str) -> str:
     """A regular expression whose $ anchors also match before the CR of a CRLF line end, which re does not."""
     out: list[str] = []
     i, n, in_class = 0, len(pattern), False
+    verbose = "x" in _GLOBAL_FLAGS_RE.match(pattern).group()
     while i < n:
         c = pattern[i]
         if c == "\\":
@@ -184,6 +187,13 @@ def crlf_anchors(pattern: str) -> str:
         elif pattern.startswith("(?#", i):
             # A comment ends at the first ), so its text is kept as it is.
             j = pattern.find(")", i)
+            j = n if j == -1 else j + 1
+            out.append(pattern[i:j])
+            i = j
+            continue
+        elif verbose and c == "#":
+            # A verbose comment ends at the line end, so its text is kept as it is.
+            j = pattern.find("\n", i)
             j = n if j == -1 else j + 1
             out.append(pattern[i:j])
             i = j

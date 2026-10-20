@@ -143,8 +143,9 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
   (`0x` and 4 lowercase digits): SQL normalizes their values, whether stored as `0x44`, `0x0044`, `0X4601` or 17921,
   and the operand is read as `parse_any()` reads a user's RNTI, so `rnti == 0x44`, `0x0044`, `44` and `'0x44'` select
   the same rows of a log, a schedtrace or a pcap. A bare number is hex unless too large for an RNTI, then decimal
-  (`17921` is `0x4601`). Log events and lanes store their RNTI normalized, so that joins and grouping by RNTI agree
-  with the other sources.
+  (`17921` is `0x4601`), as logs print RNTIs and the views show them, while a stored integer is the RNTI's value:
+  `rnti == 44` selects a stored 68 (`0x0044`) and `rnti == 68` does not. Log events and lanes store their RNTI
+  normalized, so that joins and grouping by RNTI agree with the other sources.
 - A filter applies to the series and the statistics of its plot.
 - Statistics (F4) per series over the visible window: count, min, max, mean from SQL; p50, p95, p99 in
   Python, from an evenly spaced sample when the window has more than 2M points.
@@ -228,7 +229,9 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
   too, rather than stopping the server. `PcapSource.accepts()` takes any pcap, since its protocol is only known from
   tshark, too slow for listing directories, and the error on the page tells why it is not shown.
   Logs are files with a log entry in their first 200 lines or 64 KB, or in their last 64 KB, e.g. an excerpt that
-  starts within the configuration echo, and empty `.log` files, of a run that wrote nothing yet.
+  starts within the configuration echo, and empty `.log` files, of a run that wrote nothing yet. HTML renders of logs,
+  e.g. the `gnb.log.html` and `stdout.log.html` of Retina, are not, so that a run does not hold its log twice: files
+  named `.html` or `.htm`, starting with `<!DOCTYPE` or `<html`, or with an entry whose level is an HTML tag.
   Opening an open file selects its tab. `DELETE /api/runs/{id}` closes a run and releases the stores of its sources
   that no other run uses; `POST` and `DELETE /api/runs/{id}/sources` add and remove files of a run. Ids are not
   reused.
@@ -493,7 +496,8 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
 - `parsers.schedtrace.grid` places the allocations of a slot as rectangles of symbols and CRBs. The trace has no
   VRB-to-PRB interleaving, RBG configuration or SRS frequency resources, so VRBs map to PRBs one to one, RBGs have the
   configuration 1 size of the BWP, and SRS is left out. PDSCHs of DCI format 1_0 in a common search space are placed
-  from the CORESET of their PDCCH, matched to it in the slot, PDCCHs from the REG bundles of their CCEs, and PRACH
+  from the CORESET of their PDCCH, matched to it in the slot, PDCCHs from the REG bundles of their CCEs, but those of
+  an aggregation level or CCEs out of range of their CORESET, as of a corrupt event, which are left out, and PRACH
   occasions from msg1-FrequencyStart and their format; long PRACH formats last past their slot, counted in the
   occupancy only in their first. The UL allocations of a slot decision are transmitted in its slot.
 - The grid shares the time axis of the plots, at which allocations are sub-pixel, so it changes its level of detail

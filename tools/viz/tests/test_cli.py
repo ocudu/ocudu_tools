@@ -25,6 +25,15 @@ class FailingSource(LogMetricsSource):
         raise ValueError("unsupported pcap")
 
 
+class NamingFailingSource(LogMetricsSource):
+    """Logs that fail to parse with an error that names them."""
+
+    name = "naming_failing"
+
+    def parse(self, path, writer, progress=None):
+        raise ValueError(f"{path.name}: unsupported pcap")
+
+
 class ProgressTest(unittest.TestCase):
     def test_one_line_for_all_files(self):
         out = io.StringIO()
@@ -46,17 +55,19 @@ class OpenRunsTest(unittest.TestCase):
     def test_file_failing_to_parse_is_added_in_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp).resolve()
-            log, bad = write_log(d / "gnb.log"), write_log(d / "bad.log")
+            log, bad, named = write_log(d / "gnb.log"), write_log(d / "bad.log"), write_log(d / "named.log")
             cache = StoreCache(d / "cache")
             registry = SourceRegistry(cache, [LogMetricsSource()], [d])
             with contextlib.redirect_stderr(io.StringIO()) as err:
-                _open_runs(registry, cache, [(d, True, [(log, LogMetricsSource()), (bad, FailingSource())])])
+                _open_runs(registry, cache, [(d, True, [(log, LogMetricsSource()), (bad, FailingSource()),
+                                                        (named, NamingFailingSource())])])
             # Events parse in the background, and must finish before the cache is removed.
-            entries = [wait_ready(registry, i) for i in range(2)]
-            self.assertEqual([e.status for e in entries], ["ready", "error"])
-            self.assertEqual(entries[1].error, "bad.log: unsupported pcap")
-            self.assertEqual(registry.runs()[0].source_ids, [0, 1])
-            self.assertIn("unsupported pcap", err.getvalue())
+            entries = [wait_ready(registry, i) for i in range(3)]
+            self.assertEqual([e.status for e in entries], ["ready", "error", "error"])
+            # An error that names its file names it once.
+            self.assertEqual([e.error for e in entries[1:]], ["bad.log: unsupported pcap", "named.log: unsupported pcap"])
+            self.assertEqual(registry.runs()[0].source_ids, [0, 1, 2])
+            self.assertIn(f"{named}: unsupported pcap\n", err.getvalue())
 
 
 if __name__ == "__main__":

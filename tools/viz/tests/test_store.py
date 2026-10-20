@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
 # SPDX-License-Identifier: BSD-3-Clause-Open-MPI
 
+import re
 import tempfile
 import unittest
 from unittest import mock
@@ -222,6 +223,20 @@ class StoreTest(unittest.TestCase):
                          [True, True, True, False, False])
         self.assertGreater(len(self.cache.open(excerpt, source).datasets), 0)
         self.assertEqual(self.cache.open(empty, source).datasets, {})
+
+    def test_html_renders_of_logs_are_rejected(self):
+        source = LogMetricsSource()
+        lines = write_log(self.dir / "gnb.log", nof_seconds=400).read_text().splitlines(keepends=True)
+        # As Retina renders logs: a page whose entries have their level as an HTML tag.
+        level = '<b><p style="color:green;display:inline">[I]</p></b> '
+        render = "".join(re.sub(r"\[[A-Z]\] ", lambda _: level, line, count=1) for line in lines)
+        page = "\n\n<!DOCTYPE html>\n<html>\n<head>\n" + "".join(f"  .c{i} {{}}\n" for i in range(5000)) + render
+        (self.dir / "gnb.log.html").write_text(page)
+        (self.dir / "gnb.log.htm").write_text("".join(lines))
+        # A page without its head, whose entries without a level have no markup.
+        (self.dir / "page.txt").write_text("".join(f"  .c{i} {{}}\n" for i in range(5000)) + render)
+        self.assertEqual([source.accepts(self.dir / n) for n in ("gnb.log.html", "gnb.log.htm", "page.txt")],
+                         [False, False, False])
 
     def test_search_crlf_log(self):
         log = write_log(self.dir / "lf.log")

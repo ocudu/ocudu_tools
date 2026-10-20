@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import parallel
-from .registry import SourceRegistry
+from .registry import SourceRegistry, error_text
 from .sources.base import SourceType
 from .sources.log_metrics import LogMetricsSource
 from .sources.pcap import PcapSource
@@ -161,8 +161,9 @@ def _open_runs(
                 continue
             result = results[(f, st)]
             if isinstance(result, Exception):
-                print(f"ocudu-viz: {f}: {result}", file=sys.stderr)
-                source_ids.append(registry.add_error(f, st, f"{f.name}: {result}").id)
+                text = error_text(f, result)
+                print(f"ocudu-viz: {f}: {text}", file=sys.stderr)
+                source_ids.append(registry.add_error(f, st, f"{f.name}: {text}").id)
             else:
                 source_ids.append(registry.add_store(result, st).id)
         registry.add_run(path, is_dir, source_ids)

@@ -208,6 +208,16 @@ def _parsers_version() -> str:
 _ACCEPT_BYTES = 64 << 10
 
 
+def _entry_kind(line: str) -> str | None:
+    """"entry" for a line that starts a log entry, "markup" for one of a log rendered in markup, its level as an HTML
+    tag after the logger, else None.
+    """
+    m = preamble.match_preamble(line)
+    if m is None:
+        return None
+    return "markup" if line.startswith("<", m.end()) else "entry"
+
+
 class LogMetricsSource:
     """One time series dataset per METRICS layer, and the events of the log. Records are log lines, identified by
     line number.
@@ -217,9 +227,13 @@ class LogMetricsSource:
     version = f"9+parsers-{_parsers_version()}"
 
     def accepts(self, path: Path) -> bool:
-        """Files with a log entry in their first 200 lines or 64 KB or in their last 64 KB, and empty .log files."""
+        """Files with a log entry in their first 200 lines or 64 KB or in their last 64 KB, and empty .log files, but
+        HTML renders of logs.
+        """
         # The end tells excerpts that start within the configuration echo, and empty logs are of runs that wrote
-        # nothing yet.
+        # nothing yet. Renders, e.g. the gnb.log.html of Retina, hold log entries too, which would duplicate the log.
+        if path.suffix.lower() in (".html", ".htm"):
+            return False
         size = _ACCEPT_BYTES
         try:
             with path.open("rb") as f:
@@ -233,12 +247,11 @@ class LogMetricsSource:
                     tail = f.read(size).partition(b"\n")[2]
         except OSError:
             return False
-        if b"\0" in head:
+        if b"\0" in head or head.lstrip().lower().startswith((b"<!doctype", b"<html")):
             return False
-        lines = head.decode("utf-8", "replace").splitlines()[:200]
-        return any(preamble.match_preamble(line) for line in lines) or any(
-            preamble.match_preamble(line) for line in tail.decode("utf-8", "replace").splitlines()
-        )
+        lines = head.decode("utf-8", "replace").splitlines()[:200] + tail.decode("utf-8", "replace").splitlines()
+        kinds = {_entry_kind(line) for line in lines}
+        return "entry" in kinds and "markup" not in kinds
 
     def parse(self, path: Path, writer: DatasetWriter, progress: ProgressFn | None = None) -> None:
         writer.set_notes(_event_notes(path))

@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
 # SPDX-License-Identifier: BSD-3-Clause-Open-MPI
 
+import re
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -89,9 +90,14 @@ class AdhocTest(unittest.TestCase):
             (r"[]$]$", r"[]$](?=\r?$)"),
             (r"[^]$]$", r"[^]$](?=\r?$)"),
             (r"(?#$)$", r"(?#$)(?=\r?$)"),
+            # A [ in a verbose comment opens no set; a # is a comment only in verbose patterns.
+            ("(?x) a # [ $\n b$", "(?x) a # [ $\n b(?=\\r?$)"),
+            ("(?ix)[#]$", "(?ix)[#](?=\\r?$)"),
+            ("a#$", "a#(?=\\r?$)"),
         ]:
             with self.subTest(pattern=pattern):
                 self.assertEqual(adhoc.crlf_anchors(pattern), want)
+        self.assertTrue(re.search(adhoc.crlf_anchors("(?x) a # [ c\n b$"), "ab\r", re.MULTILINE))
 
     def test_lines_take_the_rnti_of_a_ue(self):
         self.path.write_text(

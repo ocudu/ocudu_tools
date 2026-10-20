@@ -12,8 +12,11 @@ Grammar:
     operand    := NUMBER | STRING | HEX | WORD
 A WORD naming a field compares against that field, any other WORD is a string.
 
-RNTI fields, e.g. rnti or c_rnti, compare in the form of parsers.ran.rnti.normalize(), e.g. 0x0044, whether stored as
-0x44, 0x0044 or 68: their values are normalized in SQL and their operands as parsers.ran.rnti.parse_any() reads them.
+RNTI fields, e.g. rnti or c_rnti, compare in the form of parsers.ran.rnti.normalize(), e.g. 0x0044. Their values are
+normalized in SQL, text of 0x hex in any case and integers by their value, so 0x44, 0x0044 and 68 are all 0x0044.
+Operands are read as parsers.ran.rnti.parse_any() reads them, as logs print RNTIs: bare digits are hex unless too large
+for an RNTI, then decimal. So rnti == 44 and rnti == 0x44 match a stored 68, rnti == 68 does not, and rnti == 17921
+matches a stored 0x4601.
 """
 
 from __future__ import annotations

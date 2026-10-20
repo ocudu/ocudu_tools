@@ -21,6 +21,14 @@ from .store import Store, StoreCache
 MAX_RUN_FILES = 20
 
 
+def error_text(path: Path, error: Exception) -> str:
+    """The message of an error of parsing a file, without the file's name or path that it may start with."""
+    text = str(error)
+    for prefix in (f"{path}: ", f"{path.name}: "):
+        text = text.removeprefix(prefix)
+    return text
+
+
 class OpenError(ValueError):
     """A file that cannot be opened as a source."""
 
@@ -342,7 +350,7 @@ class SourceRegistry:
             # Any parsing failure is reported on the source rather than crashing the server.
             with self._lock:
                 if entry.status == "parsing":
-                    entry.status, entry.error = "error", f"{entry.path.name}: {e}"
+                    entry.status, entry.error = "error", f"{entry.path.name}: {error_text(entry.path, e)}"
             return
         with self._lock:
             # A source closed while it was parsing stays closed.
