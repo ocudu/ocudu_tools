@@ -75,7 +75,8 @@ class AlignClocksTest(unittest.TestCase):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("first co-identified PUSCH", res.stdout)
         # A DU log writes no NGAP, so it is not checked against a pcap.
-        self.assertIn("[log <-> pcap]  skipped: no run dir and du.log writes no NGAP (a DU log); pass --cu", res.stdout)
+        self.assertIn("[log <-> pcap]  skipped: no run dir and du.log has no banner or NGAP line: a DU log, or "
+                      "ngap_level below info; pass --cu", res.stdout)
         self.assertIn("Conclusion: the gNB or CU log", res.stdout)
         res = self.run_script("--ue", str(self.runs["ue.log"]))
         self.assertEqual(res.returncode, 0, res.stderr)
@@ -88,12 +89,33 @@ class AlignClocksTest(unittest.TestCase):
         du.write_text("2026-04-29T14:27:20.000000 [GNB     ] [I] ==== DU started ===\n" + CU_LOG + DU_LOG)
         res = self.run_script("--gnb", str(du), "--ue", str(self.runs["ue.log"]))
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn("skipped: no run dir and gnb.log writes no NGAP (a DU log); pass --cu", res.stdout)
+        self.assertIn("skipped: no run dir and gnb.log writes no NGAP (a DU or CU-UP log); pass --cu", res.stdout)
         gnb = self.dir / "du.log"
         gnb.write_text(CU_LOG + DU_LOG)
         res = self.run_script("--gnb", str(gnb), "--ue", str(self.runs["ue.log"]))
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn(f"NGAP log : {gnb}", res.stdout)
+
+    def test_log_without_banner_or_ngap(self):
+        # A gNB log with NGAP below info is checked against the pcap beside it; a CU-UP log is not.
+        gnb = self.dir / "gnb.log"
+        gnb.write_text(DU_LOG)
+        (self.dir / "gnb_ngap.pcap").write_bytes(b"")
+        res = self.run_script("--gnb", str(gnb), "--ue", str(self.runs["ue.log"]))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn(f"NGAP log : {gnb}", res.stdout)
+        self.assertIn(f"NGAP pcap: {self.dir / 'gnb_ngap.pcap'}", res.stdout)
+        self.assertIn("note: gnb.log has no banner or NGAP line: a DU log, or ngap_level below info", res.stdout)
+        gnb.write_text("2026-04-29T14:27:20.000000 [CU-UP   ] [I] ==== CU-UP started ===\n" + CU_LOG)
+        res = self.run_script("--gnb", str(gnb))
+        self.assertIn("skipped: no run dir and gnb.log writes no NGAP (a DU or CU-UP log)", res.stdout)
+
+    def test_whole_hour_offset_warned(self):
+        self.runs["ue.log"].write_text(UE_LOG.replace("14:27", "15:27"))
+        res = self.run_script(str(self.dir / "test"))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("(no co-identified PUSCH found)\n   warning: no event pairs, but the UE clock shifted by -1 h",
+                      res.stdout)
 
     def test_ue_log_without_phy(self):
         self.runs["ue.log"].write_text("# Started on 2026-04-29 14:27:19\n14:27:21.273 [RRC] UL 0035 setup\n")

@@ -83,6 +83,10 @@ from parsers.ran.rnti import normalize, parse_any  # noqa: E402
 # the nearest in wall-clock within this tolerance (well below one wrap, well
 # above the ~10 ms gNB decode-log latency).
 MATCH_TOL = timedelta(seconds=0.5)
+# Whole-hour shifts of the UE clock tried when no event pairs, e.g. a UE log in local time beside a gNB log in UTC.
+HOUR_SHIFTS = [h for h in range(-14, 15) if h]
+# Common (slot, rnti) keys sampled when trying them.
+SHIFT_SAMPLE_KEYS = 200
 
 
 # --------------------------------------------------------------------------
@@ -147,8 +151,12 @@ def ue_has_phy(ue_log) -> bool:
 def ue_clock_ref(gnb_log, ue_log):
     """Date anchor of the HH:MM:SS clock of ue_log, see utils.HmsClock, or None.
 
-    UE and gNB share UTC, so the first gNB event anchors it; else the `# Started on` header of the UE log.
+    The `# Started on` date and time of the UE log; else the first gNB event, as UE and gNB share UTC; else the
+    `# Started on` date.
     """
+    started = utils.started_on(ue_log)
+    if started:
+        return started
     first = utils.first_gnb_event_ts(gnb_log)
     return utils.parse_gnb_ts(first) if first else utils.started_on_date(ue_log)
 
@@ -280,6 +288,31 @@ def _pair_by_time(glist, ulist):
     return pairs, g_only, u_only
 
 
+def whole_hour_offset(gnb_ev, ue_ev):
+    """(hours, paired, events) of the whole-hour shift of the UE clock that pairs most of a sample of the events of
+    gnb_ev and ue_ev, both {(slot, rnti): [event, ...]}, or None when no shift pairs most of them."""
+    keys = sorted(set(gnb_ev) & set(ue_ev), key=str)[:SHIFT_SAMPLE_KEYS]
+    if any(e["dt"] is None for k in keys for e in ue_ev[k]):
+        return None
+    events = sum(min(len(gnb_ev[k]), len(ue_ev[k])) for k in keys)
+    best = (None, 0)
+    for h in HOUR_SHIFTS:
+        shift = timedelta(hours=h)
+        paired = sum(len(_pair_by_time(gnb_ev[k], [dict(u, dt=u["dt"] + shift) for u in ue_ev[k]])[0])
+                     for k in keys)
+        if paired > best[1]:
+            best = (h, paired)
+    return (best[0], best[1], events) if best[1] * 2 > events else None
+
+
+def hour_offset_warning(offset) -> str:
+    """Warning of an offset of whole_hour_offset."""
+    hours, paired, events = offset
+    side = "ahead of" if hours < 0 else "behind"
+    return (f"warning: no event pairs, but the UE clock shifted by {hours:+d} h pairs {paired} of {events} sampled "
+            f"events: the UE log is {abs(hours)} h {side} the gNB log (a timezone mismatch); times are compared as is")
+
+
 def near(a, b) -> bool:
     """Whether events a and b are within MATCH_TOL in wall-clock, or either has no timestamp."""
     return a["dt"] is None or b["dt"] is None or abs(a["dt"] - b["dt"]) <= MATCH_TOL
@@ -340,6 +373,7 @@ def take_unknown_rnti(unknown, g):
 # --------------------------------------------------------------------------
 
 def correlate(gnb_log, ue_log, kind, rnti_filter, ref):
+    """(rows, Counter of statuses, whole_hour_offset when no event pairs or None)."""
     kind_u = kind.upper()
     is_ul = kind_u in UL_KINDS
     gnb_ev = parse_gnb_phy(gnb_log, kind_u, rnti_filter)
@@ -373,6 +407,9 @@ def correlate(gnb_log, ue_log, kind, rnti_filter, ref):
                 if u is not None:
                     pairs.append((g, u))
                     g_only.remove(g)
+    offset = None
+    if not any(pairs for pairs, _, _ in joined.values()):
+        offset = whole_hour_offset(gnb_ev, ue_ev)
 
     for key in keys:
         slot, rnti = key
@@ -428,7 +465,7 @@ def correlate(gnb_log, ue_log, kind, rnti_filter, ref):
     for slot, ues in unknown.items():
         for u in ues:
             emit("gnb-missing", slot, UNKNOWN_RNTI, None, u)
-    return rows, counts
+    return rows, counts, offset
 
 
 # Statuses worth surfacing first. "ue-extra-tx/contention" is expected during
@@ -504,12 +541,14 @@ def main(argv=None) -> int:
         print("  subsequent Msg3 PUSCH (exact (SFN.slot, RNTI) join), not the raw index.")
         return 0
 
-    rows, counts = correlate(gnb_log, ue_log, args.kind, rnti_filter, ref)
+    rows, counts, offset = correlate(gnb_log, ue_log, args.kind, rnti_filter, ref)
     print(f"\n{args.kind.upper()} correlation on (SFN.slot, RNTI):")
     total = sum(counts.values())
     print(f"  total correlated events: {total}")
     for status, n in counts.most_common():
         print(f"    {n:6d}  {status}")
+    if offset:
+        print(f"\n  {hour_offset_warning(offset)}")
 
     shown = [r for r in rows if (args.only == "all" or r["status"] in ANOMALY_STATUSES)]
     if not shown:

@@ -29,6 +29,11 @@ joining sources.
   separate tester/UE box, a remote 5GC, an unsynced or other-TZ host. A VIAVI
   command log is **tester-local** (observed multi-hour offset; its window may not
   even overlap the gNB run).
+- **Whole-hour offset ⇒ timezone mismatch.** When nothing pairs on `(SFN.slot,
+  RNTI)` but a whole-hour shift of the UE clock pairs most events,
+  `correlate_radio.py` and `align_clocks.py` warn with the offset (seen: a UE log
+  1 h ahead of the gNB log). Their statuses then mean nothing; subtract the
+  offset before comparing wall-clocks.
 - **So: prefer the clock-independent key `(SFN.slot, RNTI)` + RNTI/TC-RNTI chains
   (below).** Before any wall-clock compare against an off-host source, measure Δ
   from one uniquely-matched event (RNTI/TC-RNTI, NGAP setup); don't assume 0.

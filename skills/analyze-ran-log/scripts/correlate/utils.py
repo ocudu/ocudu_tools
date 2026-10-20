@@ -60,7 +60,7 @@ GNB_TS_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+")
 # ue.log / mme.log line clock: 14:27:21.273  (HH:MM:SS.mmm, UTC, no date)
 HMS_TS_RE = re.compile(r"\b(\d{2}:\d{2}:\d{2}\.\d+)")
 # ue.log / mme.log header anchor: "# Started on 2026-04-29 14:27:19"
-STARTED_ON_RE = re.compile(r"#\s*Started on\s+(\d{4}-\d{2}-\d{2})\s")
+STARTED_ON_RE = re.compile(r"#\s*Started on\s+(\d{4}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}:\d{2}))?\b")
 
 
 def parse_gnb_ts(s: str) -> _dt.datetime:
@@ -106,8 +106,7 @@ def epoch_to_utc(epoch) -> _dt.datetime:
     return _dt.datetime.fromtimestamp(float(epoch), tz=_dt.timezone.utc).replace(tzinfo=None)
 
 
-def started_on_date(log_path) -> str | None:
-    """Read the `# Started on YYYY-MM-DD ...` date anchor from a ue.log/mme.log header."""
+def _started_on(log_path) -> re.Match | None:
     try:
         with open(log_path, errors="replace") as f:
             for _ in range(40):
@@ -116,10 +115,22 @@ def started_on_date(log_path) -> str | None:
                     break
                 m = STARTED_ON_RE.search(line)
                 if m:
-                    return m.group(1)
+                    return m
     except OSError:
         return None
     return None
+
+
+def started_on_date(log_path) -> str | None:
+    """Read the `# Started on YYYY-MM-DD ...` date anchor from a ue.log/mme.log header."""
+    m = _started_on(log_path)
+    return m.group(1) if m else None
+
+
+def started_on(log_path) -> _dt.datetime | None:
+    """Datetime of the `# Started on YYYY-MM-DD HH:MM:SS` header of a ue.log/mme.log, None without its time."""
+    m = _started_on(log_path)
+    return _dt.datetime.fromisoformat(f"{m.group(1)} {m.group(2)}") if m and m.group(2) else None
 
 
 def first_gnb_event_ts(gnb_log) -> str | None:

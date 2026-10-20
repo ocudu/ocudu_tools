@@ -174,6 +174,45 @@ class CorrelateRadioTest(unittest.TestCase):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("1  rx-ok", res.stdout)
 
+    def test_ue_log_starting_half_a_day_after_the_gnb_log(self):
+        # The `# Started on` header anchors the UE clock, not the first gNB event over 12 h earlier.
+        (self.dir / "gnb.log").write_text(
+            "2026-09-29T08:00:00.000000 [PHY     ] [I] [  100.1] PDCCH: rnti=0x460b\n"
+            "2026-09-29T20:30:00.021595 [PHY     ] [I] [  127.14] PUSCH: rnti=0x460b tbs=11 crc=OK sinr=97.0dB\n")
+        for header in ("# Started on 2026-09-29 20:29:59 [abc][def]\n", "# Started on 2026-09-29 23:59:59\n"):
+            (self.dir / "ue.log").write_text(header + "20:30:00.013 [PHY] UL 0035 00 460b  127.14 PUSCH: harq=0\n")
+            res = self.run_script(None)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertIn("1  rx-ok", res.stdout, header)
+
+    def test_midnight_crossing_from_the_header(self):
+        (self.dir / "gnb.log").write_text(
+            "2026-04-30T00:00:00.021595 [PHY     ] [I] [  127.14] PUSCH: rnti=0x460b tbs=11 crc=OK sinr=97.0dB\n")
+        (self.dir / "ue.log").write_text(
+            "# Started on 2026-04-29 23:59:58\n"
+            "23:59:59.973 [PHY] UL 0035 00 460b  123.14 PUSCH: harq=0 tb_len=11\n"
+            "00:00:00.013 [PHY] UL 0035 00 460b  127.14 PUSCH: harq=0 tb_len=11\n")
+        res = self.run_script(None)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("1  rx-ok", res.stdout)
+        self.assertIn("1  gnb-missing", res.stdout)
+
+    def test_whole_hour_offset_warned(self):
+        gnb = "".join(f"2026-04-29T14:27:{s:02d}.021595 [PHY     ] [I] [  127.{s}] PUSCH: rnti=0x460b crc=OK "
+                      "sinr=9.0dB\n" for s in range(10))
+        ue = "".join(f"15:27:{s:02d}.013 [PHY] UL 0035 00 460b  127.{s} PUSCH: harq=0\n" for s in range(10))
+        (self.dir / "gnb.log").write_text(gnb)
+        (self.dir / "ue.log").write_text(ue)
+        res = self.run_script(None)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("UE clock shifted by -1 h pairs 10 of 10 sampled events: the UE log is 1 h ahead of the gNB "
+                      "log", res.stdout)
+        # Events that pair at all are not checked for a shift.
+        (self.dir / "ue.log").write_text(ue.replace("15:27:00", "14:27:00"))
+        res = self.run_script(None)
+        self.assertIn("1  rx-ok", res.stdout)
+        self.assertNotIn("warning", res.stdout)
+
     def test_run_subdir_is_used(self):
         for run_name, du in (("2026-04-29_14-27-00", GNB_LOG), ("2026-04-30_09-00-00", "")):
             for comp, name, text in (("ocudu-du-1", "du.log", du), ("amarisoft-ue-1", "ue.log", UE_LOG)):

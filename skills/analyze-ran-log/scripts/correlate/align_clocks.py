@@ -42,7 +42,7 @@ NGAP_ROLES = ("gnb", "cu", "cu-cp", "ocu")
 APP_SCAN_BYTES = 16 << 20
 _BANNER_RE = re.compile(r"\] ==== (.+) started ===")
 # Applications of a banner that write no NGAP.
-NO_NGAP_APPS = ("DU", "DU low")
+NO_NGAP_APPS = ("DU", "DU low", "CU-UP")
 
 
 def stage_for_tshark(pcap: Path) -> Path:
@@ -84,8 +84,11 @@ def gnb_ngsetup_ts(gnb_log: Path):
     return None
 
 
-def writes_ngap(log: Path) -> bool:
-    """Whether log is of an application that writes NGAP, by its banner, else by an NGAP line, in its first bytes."""
+def writes_ngap(log: Path) -> bool | None:
+    """Whether log is of an application that writes NGAP, by its banner, else by an NGAP line, in its first bytes.
+
+    None when it has neither.
+    """
     read = 0
     with open(log, errors="replace") as f:
         for line in f:
@@ -98,19 +101,25 @@ def writes_ngap(log: Path) -> bool:
                 return m.group(1) not in NO_NGAP_APPS
             if "[NGAP" in line[:40]:
                 return True
-    return False
+    return None
 
 
 def resolve_ngap_log(path_str, cu_arg, gnb_log):
-    """(log of the gNB, CU or CU-CP, or None, why there is none) of a run."""
+    """(log of the gNB, CU or CU-CP, or None, why there is none or a note on the log) of a run."""
     if cu_arg:
         return Path(cu_arg).resolve(), ""
     if path_str is None:
         # Only explicit logs: a gNB log also writes NGAP, a DU log does not.
         if gnb_log is None:
             return None, "no run dir and no gNB log or --cu"
-        if not writes_ngap(gnb_log):
-            return None, f"no run dir and {gnb_log.name} writes no NGAP (a DU log); pass --cu"
+        ngap = writes_ngap(gnb_log)
+        if ngap is False:
+            return None, f"no run dir and {gnb_log.name} writes no NGAP (a DU or CU-UP log); pass --cu"
+        if ngap is None:
+            unknown = f"{gnb_log.name} has no banner or NGAP line: a DU log, or ngap_level below info"
+            if gnb_log.name.startswith("du"):
+                return None, f"no run dir and {unknown}; pass --cu"
+            return gnb_log, f"{unknown}; checked as a gNB log"
         return gnb_log, ""
     logs = correlate_radio.ocudu_logs(resolve.build_inventory(path_str), NGAP_ROLES)
     if not logs:
@@ -154,6 +163,7 @@ def main(argv=None) -> int:
         path = "."
     gnb_log, ue_log, _ = correlate_radio.resolve_logs(path, args.gnb, args.ue)
     ngap_log, ngap_why = resolve_ngap_log(path, args.cu, gnb_log)
+    ngap_note = ngap_why if ngap_log else ""
     pcap = Path(args.pcap).resolve() if args.pcap else None
     if pcap is None and ngap_log is not None:
         pcap = ngap_pcap_beside(ngap_log)
@@ -166,6 +176,8 @@ def main(argv=None) -> int:
     print(f"UE  log  : {ue_log}")
     print(f"NGAP log : {ngap_log}")
     print(f"NGAP pcap: {pcap}")
+    if ngap_note:
+        print(f"   note: {ngap_note}")
     print()
 
 
@@ -219,6 +231,11 @@ def main(argv=None) -> int:
                   "pass a UE log with PHY lines with --ue")
         else:
             print("[UE <-> gNB]  (no co-identified PUSCH found)")
+            ref = correlate_radio.ue_clock_ref(gnb_log, ue_log)
+            offset = correlate_radio.whole_hour_offset(correlate_radio.parse_gnb_phy(gnb_log, "PUSCH", None),
+                                                       correlate_radio.parse_ue_phy(ue_log, "PUSCH", None, ref))
+            if offset:
+                print(f"   {correlate_radio.hour_offset_warning(offset)}")
     else:
         print(f"[UE <-> gNB]  skipped: no {'gNB or DU log (--gnb)' if gnb_log is None else 'UE log (--ue)'}")
     print()
