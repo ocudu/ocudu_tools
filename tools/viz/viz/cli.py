@@ -13,7 +13,7 @@ import sys
 import tempfile
 import threading
 import webbrowser
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -127,6 +127,47 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _open_runs(
+    registry: SourceRegistry, cache: StoreCache, runs: list[tuple[Path, bool, list[tuple[Path, SourceType]]]]
+) -> None:
+    """Parses the files of runs given as (path, is_dir, [(file, source type)]) and adds the runs to the registry. A
+    file that fails to parse is added in status "error", as when opened from the page.
+    """
+
+    # All the files are parsed at once, like the files of a run opened from the page: logs in the worker pool, pcaps
+    # in tshark processes. Files of a directory that their type parses only on request, e.g. MAC and RLC pcaps, are
+    # left for the page to parse, unless cached.
+    def on_request(f: Path, st: SourceType, is_dir: bool) -> bool:
+        check = getattr(st, "on_request", None)
+        return is_dir and check is not None and check(f) and not cache.is_cached(f, st)
+
+    tasks = [(f, st) for _, is_dir, typed in runs for f, st in typed if not on_request(f, st, is_dir)]
+    results: dict[tuple[Path, SourceType], Store | Exception] = {}
+    if tasks:
+        progress = _Progress([f.name for f, _ in tasks])
+        with ThreadPoolExecutor(min(len(tasks), os.cpu_count() or 1), thread_name_prefix="parse") as executor:
+            futures = [executor.submit(cache.open, f, st, progress.reporter(i)) for i, (f, st) in enumerate(tasks)]
+            for task, future in zip(tasks, futures):
+                try:
+                    results[task] = future.result()
+                except Exception as e:
+                    results[task] = e
+        progress.finish()
+    for path, is_dir, typed in runs:
+        source_ids = []
+        for f, st in typed:
+            if on_request(f, st, is_dir):
+                source_ids.append(registry.add_deferred(f, st).id)
+                continue
+            result = results[(f, st)]
+            if isinstance(result, Exception):
+                print(f"ocudu-viz: {f}: {result}", file=sys.stderr)
+                source_ids.append(registry.add_error(f, st, f"{f.name}: {result}").id)
+            else:
+                source_ids.append(registry.add_store(result, st).id)
+        registry.add_run(path, is_dir, source_ids)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     cache = StoreCache(args.cache_dir, int(args.cache_size * (1 << 30)), enabled=not args.no_cache)
@@ -171,27 +212,7 @@ def main(argv: list[str] | None = None) -> int:
             typed.append((f.resolve(), source_type))
         runs.append((path.resolve(), is_dir, typed))
 
-    # All the files are parsed at once, like the files of a run opened from the page: logs in the worker pool, pcaps
-    # in tshark processes. Files of a directory that their type parses only on request, e.g. MAC and RLC pcaps, are
-    # left for the page to parse, unless cached.
-    def on_request(f: Path, st: SourceType, is_dir: bool) -> bool:
-        check = getattr(st, "on_request", None)
-        return is_dir and check is not None and check(f) and not cache.is_cached(f, st)
-
-    tasks = [(f, st) for _, is_dir, typed in runs for f, st in typed if not on_request(f, st, is_dir)]
-    stores: Iterator[Store] = iter(())
-    if tasks:
-        progress = _Progress([f.name for f, _ in tasks])
-        with ThreadPoolExecutor(min(len(tasks), os.cpu_count() or 1), thread_name_prefix="parse") as executor:
-            futures = [executor.submit(cache.open, f, st, progress.reporter(i)) for i, (f, st) in enumerate(tasks)]
-            stores = iter([future.result() for future in futures])
-        progress.finish()
-    for path, is_dir, typed in runs:
-        source_ids = [
-            registry.add_deferred(f, st).id if on_request(f, st, is_dir) else registry.add_store(next(stores), st).id
-            for f, st in typed
-        ]
-        registry.add_run(path, is_dir, source_ids)
+    _open_runs(registry, cache, runs)
 
     # Imported late so that --help and argument errors do not pay for the web stack.
     import uvicorn

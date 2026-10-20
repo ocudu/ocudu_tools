@@ -208,6 +208,45 @@ class StoreTest(unittest.TestCase):
                 back.append(after)
             self.assertEqual(back, want[::-1])
 
+    def test_accepts(self):
+        source = LogMetricsSource()
+        log = write_log(self.dir / "gnb.log", nof_seconds=400)
+        # An excerpt that starts within a configuration echo longer than what the start is looked at for.
+        excerpt = self.dir / "excerpt.txt"
+        excerpt.write_text("".join(f"  key{i}: {i}\n" for i in range(5000)) + log.read_text())
+        empty = self.dir / "empty.log"
+        empty.write_bytes(b"")
+        (self.dir / "empty.txt").write_bytes(b"")
+        (self.dir / "notes.txt").write_text("".join(f"line {i}\n" for i in range(5000)))
+        self.assertEqual([source.accepts(self.dir / n) for n in ("gnb.log", "excerpt.txt", "empty.log", "empty.txt", "notes.txt")],
+                         [True, True, True, False, False])
+        self.assertGreater(len(self.cache.open(excerpt, source).datasets), 0)
+        self.assertEqual(self.cache.open(empty, source).datasets, {})
+
+    def test_search_crlf_log(self):
+        log = write_log(self.dir / "lf.log")
+        crlf = self.dir / "crlf.log"
+        crlf.write_bytes(log.read_bytes().replace(b"\n", b"\r\n"))
+        lines = log.read_text().splitlines()
+        want = next(i for i, line in enumerate(lines, start=1) if line.endswith("Slot decisions") and i > 1)
+        for path in (log, crlf):
+            store = self.cache.open(path, LogMetricsSource())
+            self.assertEqual(store.search("slot decisions$", regex=True, after=1)["record"], want, path.name)
+
+    def test_search_invalid_bytes_expression(self):
+        store = self.cache.open(write_log(self.dir / "gnb.log"), LogMetricsSource())
+        # Valid as text, but not as the bytes a log is searched as.
+        with self.assertRaisesRegex(QueryError, "Search: bad escape"):
+            store.search(r"\N{LATIN CAPITAL LETTER A}", regex=True)
+
+    def test_short_rnti_normalized(self):
+        path = self.dir / "short.log"
+        path.write_text(f'{_ts(1)} [DU-MNG  ] [I] ue=0 rnti=0x44 proc="UE Create": Procedure started...\n')
+        store = self.cache.open(path, LogMetricsSource())
+        self.cache.open_events(store, LogMetricsSource())
+        self.assertEqual([e["rnti"] for e in store.events()["events"]], ["0x0044"])
+        self.assertEqual([lane["rnti"] for lane in store.trace()["lanes"]], ["0x0044"])
+
     def test_trace_failed_creation(self):
         lines = [
             f'{_ts(1)} [DU-MNG  ] [I] ue=0 rnti=0x4601 proc="UE Create": Procedure started...',
@@ -236,6 +275,11 @@ class StoreTest(unittest.TestCase):
         evs = store.events()["events"]
         self.assertEqual([(e["record"], e["count"], e["ue"]) for e in evs], [(1, 5, None), (6, None, None), (7, None, None), (8, 2, 3), (10, None, 4)])
         self.assertAlmostEqual(evs[0]["span"], 0.8)
+        # A window inside the span of a repeated warning has it.
+        t = evs[0]["t"]
+        self.assertEqual([e["record"] for e in store.events(t + 0.3, t + 0.4)["events"]], [1])
+        self.assertEqual([e["record"] for e in store.trace(t + 0.3, t + 0.4)["events"]], [1])
+        self.assertEqual(store.events(t + 0.9, t + 1.0)["events"], [])
         # Counts are of the lines.
         self.assertEqual(store.event_counts, {"warning": 10})
 

@@ -33,6 +33,11 @@ class SearchTest(unittest.TestCase):
         self.assertEqual(entries[1][1:], ["  rrcReconfiguration {", "    reconfigurationWithSync", "  }"])
         self.assertEqual(len(list(search.entries(LOG, include_config_echo=True))), 6)
 
+    def test_crlf_entries(self):
+        crlf = [line.replace("\n", "\r\n") for line in LOG]
+        self.assertEqual(list(search.entries(crlf)), list(search.entries(LOG)))
+        self.assertEqual([e.splitlines()[0][11:21] for e in search.search(crlf, search.Filter(pattern="late HARQ$"))], ["15:45:02.2"])
+
     def test_echo_of_other_nodes_is_left_out(self):
         header = "2026-07-27T15:44:57.315000 [CONFIG  ] [I] Input configuration (only non-default values):"
         self.assertEqual(len(list(search.entries([LOG[0], header, *LOG[2:]]))), 5)

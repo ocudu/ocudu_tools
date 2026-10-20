@@ -11,6 +11,9 @@ Grammar:
     op         := "==" | "=" | "!=" | "<" | "<=" | ">" | ">="
     operand    := NUMBER | STRING | HEX | WORD
 A WORD naming a field compares against that field, any other WORD is a string.
+
+RNTI fields, e.g. rnti or c_rnti, compare in the form of parsers.ran.rnti.normalize(), e.g. 0x0044, whether stored as
+0x44, 0x0044 or 68: their values are normalized in SQL and their operands as parsers.ran.rnti.parse_any() reads them.
 """
 
 from __future__ import annotations
@@ -22,16 +25,19 @@ from contextlib import closing
 from dataclasses import dataclass
 from typing import Any
 
+from parsers.ran import rnti as rnti_util
+
 _TOKEN_RE = re.compile(
     r"\s*(?:"
     r"(?P<op>==|!=|<=|>=|=|<|>)"
     r"|(?P<paren>[()])"
     r"|(?P<string>\"[^\"]*\"|'[^']*')"
-    r"|(?P<hex>0x[0-9a-fA-F]+)\b"
+    r"|(?P<hex>0[xX][0-9a-fA-F]+)\b"
     r"|(?P<number>[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\b"
     r"|(?P<word>[A-Za-z_][\w.#-]*)"
     r")"
 )
+_RNTI_FIELD_RE = re.compile(r".*rnti", re.IGNORECASE)
 _KEYWORDS = {"and", "or", "not", "is", "null"}
 _SQL_OPS = {"==": "=", "=": "=", "!=": "!=", "<": "<", "<=": "<=", ">": ">", ">=": ">="}
 
@@ -131,6 +137,7 @@ class _Parser:
             self.fail("Expected a field name but found", tok)
         if tok.text not in self.fields:
             self.fail("Unknown field", tok)
+        is_rnti = _is_rnti(tok.text)
         column = self.quote_field(tok.text)
 
         if self.accept_keyword("is"):
@@ -143,23 +150,47 @@ class _Parser:
         op = self.next("a comparison operator")
         if op.kind != "op":
             self.fail("Expected a comparison operator but found", op)
-        return f"({column} {_SQL_OPS[op.text]} {self.operand()})"
+        if is_rnti:
+            column = _rnti_sql(column)
+        return f"({column} {_SQL_OPS[op.text]} {self.operand(is_rnti)})"
 
-    def operand(self) -> str:
+    def operand(self, is_rnti: bool = False) -> str:
         tok = self.next("a value")
-        if tok.kind == "number":
+        if tok.kind == "word" and tok.text in self.fields:
+            column = self.quote_field(tok.text)
+            return _rnti_sql(column) if is_rnti and _is_rnti(tok.text) else column
+        if is_rnti and tok.kind in ("number", "string", "hex", "word"):
+            text = tok.text[1:-1] if tok.kind == "string" else tok.text
+            # A value that is no RNTI compares as given, matching no normalized one.
+            self.params.append(rnti_util.parse_any(text) or text)
+        elif tok.kind == "number":
             self.params.append(float(tok.text) if any(c in tok.text for c in ".eE") else int(tok.text))
         elif tok.kind == "string":
             self.params.append(tok.text[1:-1])
         elif tok.kind == "hex":
             self.params.append(tok.text)
         elif tok.kind == "word":
-            if tok.text in self.fields:
-                return self.quote_field(tok.text)
             self.params.append(tok.text)
         else:
             self.fail("Expected a value but found", tok)
         return "?"
+
+
+def _is_rnti(field: str) -> bool:
+    return _RNTI_FIELD_RE.fullmatch(field) is not None
+
+
+def _rnti_sql(column: str) -> str:
+    """SQL of the value of an RNTI column as parsers.ran.rnti.normalize() gives it: integers, and 0x hex text of up to
+    4 digits in any case, as 0x and 4 lowercase digits. Other values are left as they are.
+    """
+    low = f"lower({column})"
+    return (
+        f"(CASE WHEN typeof({column}) = 'integer' AND {column} BETWEEN 0 AND 65535 THEN printf('0x%04x', {column}) "
+        f"WHEN typeof({column}) = 'text' AND length({column}) BETWEEN 3 AND 6 AND {low} GLOB '0x*' "
+        f"AND NOT substr({low}, 3) GLOB '*[^0-9a-f]*' THEN '0x' || substr('000' || substr({low}, 3), -4) "
+        f"ELSE {column} END)"
+    )
 
 
 def compile_filter(expr: str, fields: dict[str, str], quote_field: Callable[[str], str]) -> tuple[str, list[Any]]:

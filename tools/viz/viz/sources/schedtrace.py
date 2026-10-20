@@ -10,6 +10,7 @@ import json
 import mmap
 import re
 import struct
+import warnings
 from collections import Counter
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -83,8 +84,12 @@ class SchedtraceSource:
                 return None
             if not offsets:
                 return None
-            first = schedtrace.event_at(mm, offsets[0])["timestamp_us"] / 1e6
-            last = schedtrace.event_at(mm, offsets[-1])["timestamp_us"] / 1e6
+            try:
+                first = schedtrace.event_at(mm, offsets[0], grid_only=True)["timestamp_us"] / 1e6
+                last = schedtrace.event_at(mm, offsets[-1], grid_only=True)["timestamp_us"] / 1e6
+            except schedtrace.CorruptEventError:
+                # The events that decode are only known once parsed, so the span is left to parse() too.
+                return None
         return RunIdentity(None, first, last)
 
     def parse(self, path: Path, writer: DatasetWriter, progress: ProgressFn | None = None) -> None:
@@ -92,7 +97,10 @@ class SchedtraceSource:
             offsets = schedtrace.offsets(mm)
             if not offsets:
                 return
-            start = schedtrace.event_at(mm, offsets[0])
+            try:
+                start = schedtrace.event_at(mm, offsets[0])
+            except schedtrace.CorruptEventError:
+                start = {"type": None}
         cell = grid_util.cell_of(start) if start["type"] == "CellStartEvent" else None
         if cell is None:
             raise ValueError(f"{path.name}: the trace does not start with the start event of its cell.")
@@ -130,6 +138,10 @@ class SchedtraceSource:
                 t_max = res["t_max"] if t_max is None else max(t_max, res["t_max"])
             if progress:
                 progress(hi, size)
+            if res["corrupt"] is not None:
+                # As parsers.schedtrace does, the events from a corrupt one are left out.
+                warnings.warn(f"{path.name}: {res['corrupt']}, the events from it are left out.")
+                break
         writer.add_grid_cells([_cells_row(key, b) for key, b in bins.items()])
         for name, fields, rows, units, context in (
             (_UE_DATASET, ue_metrics.UE_FIELDS, agg.ue_rows(), ue_metrics.UE_UNITS, ["rnti", "ue_index"]),
@@ -159,7 +171,10 @@ class SchedtraceSource:
         if not 1 <= record <= len(offsets):
             raise ValueError(f"No event {record}.")
         with path.open("rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
-            return schedtrace.event_at(mm, offsets[record - 1])
+            try:
+                return schedtrace.event_at(mm, offsets[record - 1])
+            except schedtrace.CorruptEventError as e:
+                raise ValueError(f"Event {record} does not decode: {e}") from None
 
     def grid(self, path: Path, store: Any, t0: float | None, t1: float | None, width: int) -> dict[str, Any]:
         """The resource grid of a time window for a chart width in pixels, with "anchors", slots as [time, slot_tx], to
@@ -253,7 +268,7 @@ def _parse_chunk(path: str, start: int, end: int, first_record: int, cell_dict: 
     """Parses the events of the byte range [start, end) of a trace, the first being record first_record: their texts,
     the grid slots, the occupancy of the bins of LEVELS they fall in, as rows of the bins within the range ("cells")
     and parts of the bins that span other ranges ("partial_bins"), and how many slots have DL, UL or both shared or
-    control channels.
+    control channels. A corrupt event ends the range, its error as "corrupt", else None.
     """
     cell = grid_util.Cell(**cell_dict)
     duration = cell.slot_duration_s
@@ -265,11 +280,17 @@ def _parse_chunk(path: str, start: int, end: int, first_record: int, cell_dict: 
     agg = ue_metrics.Aggregator()
     items: dict[str, list[tuple]] = {kind: [] for kind in ue_metrics.ITEM_FIELDS}
     t_min = t_max = None
+    corrupt = None
     with open(path, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
         offsets = schedtrace.offsets(mm, start, end)
         for i, offset in enumerate(offsets):
             record = first_record + i
-            event = schedtrace.event_at(mm, offset, grid_only=True)
+            try:
+                event = schedtrace.event_at(mm, offset, grid_only=True)
+            except schedtrace.CorruptEventError as e:
+                corrupt = str(e).removesuffix(".")
+                offsets = offsets[:i]
+                break
             t = event["timestamp_us"] / 1e6
             t_min = t if t_min is None else min(t_min, t)
             t_max = t if t_max is None else max(t_max, t)
@@ -312,7 +333,7 @@ def _parse_chunk(path: str, start: int, end: int, first_record: int, cell_dict: 
         else:
             partial[(level, index)] = b
     return {"texts": texts, "slots": slots, "cells": cells, "partial_bins": partial, "items": items, "agg": agg,
-            "mixed": mixed, "t_min": t_min, "t_max": t_max}
+            "mixed": mixed, "t_min": t_min, "t_max": t_max, "corrupt": corrupt}
 
 
 def _column_types(fields: tuple[str, ...], rows: list[tuple]) -> dict[str, set[str]]:

@@ -72,6 +72,27 @@ class AdhocTest(unittest.TestCase):
         self.assertEqual(rows[3][0], epoch("2026-10-12T13:35:41.001500"))
         self.assertEqual(rows[3][4:], (None, None, None, None))
 
+    def test_crlf_lines(self):
+        crlf = Path(self.tmp.name) / "crlf.log"
+        crlf.write_bytes(LOG.replace("\n", "\r\n").encode())
+        size = crlf.stat().st_size
+        res = adhoc.scan(str(crlf), 0, size, 1, adhoc.Spec("tbs", filter=r"tbs=\d+$"))
+        self.assertEqual([(line, value) for _, line, _, value, _ in res["rows"]], [(1, 5889), (1, 12)])
+        rows = adhoc.scan_lines(str(crlf), 0, size, 1, adhoc.Spec(None, filter=r"tbs=\d+$"))
+        self.assertEqual([(line, text) for _, line, _, text, *_ in rows], [(1, LOG.splitlines()[0]), (3, LOG.splitlines()[2])])
+
+    def test_crlf_anchors(self):
+        for pattern, want in [
+            (r"a$", r"a(?=\r?$)"),
+            (r"a\$", r"a\$"),
+            (r"[$]$", r"[$](?=\r?$)"),
+            (r"[]$]$", r"[]$](?=\r?$)"),
+            (r"[^]$]$", r"[^]$](?=\r?$)"),
+            (r"(?#$)$", r"(?#$)(?=\r?$)"),
+        ]:
+            with self.subTest(pattern=pattern):
+                self.assertEqual(adhoc.crlf_anchors(pattern), want)
+
     def test_lines_take_the_rnti_of_a_ue(self):
         self.path.write_text(
             "2026-10-12T13:35:41.000000 [SCHED   ] [D] RAR allocation for ra-rnti=0x10b was postponed.\n"

@@ -105,7 +105,8 @@ def scan(path: str, start: int, end: int, first_line: int, spec: Spec) -> dict:
                 line_no += count_newlines(mm, counted_to, line_start)
                 counted_to = line_start
                 line_end = mm.find(b"\n", pos, end)
-                line = mm[line_start: end if line_end == -1 else line_end]
+                # Without the \r of a CRLF line end, so that $ of the filter matches there.
+                line = mm[line_start: end if line_end == -1 else line_end].removesuffix(b"\r")
                 t = None
                 if keep is None or keep.search(line.decode("utf-8", "replace")):
                     t = times.at(line_start)
@@ -131,7 +132,7 @@ def scan_lines(path: str, start: int, end: int, first_line: int, spec: Spec) -> 
     Returns rows of (time in seconds since the epoch, line number, line offset, text of at most MAX_TEXT characters,
     logger, level letter, UE index, RNTI), in file order, the last four None when the line has none.
     """
-    pattern = re.compile(spec.filter.encode(), re.IGNORECASE | re.MULTILINE)
+    pattern = re.compile(crlf_anchors(spec.filter).encode(), re.IGNORECASE | re.MULTILINE)
     rows: list[tuple] = []
     if end <= start:
         return rows
@@ -151,7 +152,7 @@ def scan_lines(path: str, start: int, end: int, first_line: int, spec: Spec) -> 
             if t is None:
                 continue
             line_end = mm.find(b"\n", line_start, end)
-            text = mm[line_start: end if line_end == -1 else line_end].decode("utf-8", "replace")
+            text = mm[line_start: end if line_end == -1 else line_end].removesuffix(b"\r").decode("utf-8", "replace")
             pre = preamble.match_header(text)
             ue = _UE_RE.search(text)
             rnti = _RNTI_RE.search(text)
@@ -159,6 +160,41 @@ def scan_lines(path: str, start: int, end: int, first_line: int, spec: Spec) -> 
                          pre.group("level") if pre else None, int(ue.group(1)) if ue else None,
                          rnti.group(1).lower() if rnti else None))
     return rows
+
+
+def crlf_anchors(pattern: str) -> str:
+    """A regular expression whose $ anchors also match before the CR of a CRLF line end, which re does not."""
+    out: list[str] = []
+    i, n, in_class = 0, len(pattern), False
+    while i < n:
+        c = pattern[i]
+        if c == "\\":
+            out.append(pattern[i: i + 2])
+            i += 2
+            continue
+        if in_class:
+            in_class = c != "]"
+        elif c == "[":
+            # A ] first in a set, after its ^ if any, is a literal.
+            j = i + 1 + pattern.startswith("^", i + 1)
+            j += pattern.startswith("]", j)
+            out.append(pattern[i:j])
+            i, in_class = j, True
+            continue
+        elif pattern.startswith("(?#", i):
+            # A comment ends at the first ), so its text is kept as it is.
+            j = pattern.find(")", i)
+            j = n if j == -1 else j + 1
+            out.append(pattern[i:j])
+            i = j
+            continue
+        elif c == "$":
+            out.append(r"(?=\r?$)")
+            i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
 
 
 class _EntryTimes:

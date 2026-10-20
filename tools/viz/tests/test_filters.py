@@ -65,6 +65,26 @@ class CompileFilterTest(unittest.TestCase):
         self.assertEqual(conn.execute(f"SELECT pci FROM t WHERE {sql} ORDER BY pci", params).fetchall(), [(1,), (2,)])
 
 
+    def test_rnti_forms_compare_equal(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute('CREATE TABLE t ("i", "rnti", "c_rnti")')
+        values = [(1, "0x44", "0x0044"), (2, "0x0044", None), (3, 68, 68), (4, "0X4601", "0x4601"), (5, 17921, None), (6, "n/a", None)]
+        conn.executemany("INSERT INTO t VALUES (?, ?, ?)", values)
+        fields = {"i": "number", "rnti": "text", "c_rnti": "text"}
+
+        def rows(expr):
+            sql, params = compile_filter(expr, fields, quote)
+            return [i for (i,) in conn.execute(f"SELECT i FROM t WHERE {sql} ORDER BY i", params)]
+
+        for expr in ("rnti == 0x44", "rnti == 0x0044", "rnti == 0X44", "rnti == '0x44'", "rnti == 44"):
+            with self.subTest(expr=expr):
+                self.assertEqual(rows(expr), [1, 2, 3])
+        self.assertEqual(rows("rnti == 0x4601"), [4, 5])
+        self.assertEqual(rows("rnti == 17921"), [4, 5])
+        self.assertEqual(rows("rnti == 'n/a'"), [6])
+        self.assertEqual(rows("rnti == c_rnti"), [1, 3, 4])
+        self.assertEqual(rows("c_rnti == 0x44"), [1, 3])
+
 
 class FilterRowsTest(unittest.TestCase):
     def test_filter_rows(self):

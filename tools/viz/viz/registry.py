@@ -265,6 +265,13 @@ class SourceRegistry:
             self._entries.append(entry)
         return entry
 
+    def add_error(self, path: Path, source_type: SourceType, error: str) -> SourceEntry:
+        """Adds a file that failed to parse before the server started, in status "error"."""
+        with self._lock:
+            entry = SourceEntry(len(self._entries), path, "error", error=error, source_type=source_type)
+            self._entries.append(entry)
+        return entry
+
     def parse(self, source_id: int) -> SourceEntry:
         """Parses a deferred source in the background. Raises KeyError for unknown ids."""
         with self._lock:

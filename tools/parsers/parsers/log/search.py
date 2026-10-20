@@ -75,13 +75,13 @@ class Filter:
 
 
 def entries(lines: Iterable[str], include_config_echo: bool = False) -> Iterator[list[str]]:
-    """The entries of a log, each as its lines without line ends, empty lines left out, and lines before the first
-    entry too.
+    """The entries of a log, each as its lines without line ends, LF or CRLF, empty lines left out, and lines before
+    the first entry too.
     """
     entry: list[str] | None = None
     skipping = False
     for raw in lines:
-        line = raw.rstrip("\n")
+        line = raw.rstrip("\r\n")
         if not line:
             continue
         if m := preamble.match_header(line):

@@ -139,6 +139,12 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
 - Filters (F3) use the grammar in `viz/filters.py`: comparisons (`== != < <= > >=`, `is [not] null`)
   joined by `and`, `or`, `not` and parentheses. Operands are numbers, strings, hex values, bare words or
   other fields. Values are in the canonical units of `parsers`.
+- RNTI fields (`rnti`, `c_rnti`, any name ending in `rnti`) compare in the form of `parsers.ran.rnti.normalize()`
+  (`0x` and 4 lowercase digits): SQL normalizes their values, whether stored as `0x44`, `0x0044`, `0X4601` or 17921,
+  and the operand is read as `parse_any()` reads a user's RNTI, so `rnti == 0x44`, `0x0044`, `44` and `'0x44'` select
+  the same rows of a log, a schedtrace or a pcap. A bare number is hex unless too large for an RNTI, then decimal
+  (`17921` is `0x4601`). Log events and lanes store their RNTI normalized, so that joins and grouping by RNTI agree
+  with the other sources.
 - A filter applies to the series and the statistics of its plot.
 - Statistics (F4) per series over the visible window: count, min, max, mean from SQL; p50, p95, p99 in
   Python, from an evenly spaced sample when the window has more than 2M points.
@@ -218,6 +224,11 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
 - `GET /api/roots` and `GET /api/fs?path&hidden` list directories. `POST /api/runs {path}` opens a file or a
   directory as a run (D16): parsing runs in a background thread, and `/api/sources` reports each source's status
   (`deferred`, `parsing`, `ready`, `error`, `closed`) and progress, which the page polls while a source is parsing.
+  A file given on the command line that fails to parse, e.g. a pcap of another protocol, is added in status `error`
+  too, rather than stopping the server. `PcapSource.accepts()` takes any pcap, since its protocol is only known from
+  tshark, too slow for listing directories, and the error on the page tells why it is not shown.
+  Logs are files with a log entry in their first 200 lines or 64 KB, or in their last 64 KB, e.g. an excerpt that
+  starts within the configuration echo, and empty `.log` files, of a run that wrote nothing yet.
   Opening an open file selects its tab. `DELETE /api/runs/{id}` closes a run and releases the stores of its sources
   that no other run uses; `POST` and `DELETE /api/runs/{id}/sources` add and remove files of a run. Ids are not
   reused.
@@ -246,7 +257,9 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
   OFH "woke up late" lines in a 485 MB log): the ones of the same logger, level, UE and message but for its numbers,
   each within 1 s of the previous one, up to 10 s, with their `count` and `span`. Event counts are of lines. They are
   collapsed in the worker of each chunk, so runs end at chunk edges. On the 485 MB log, 3.2M events become 11k rows,
-  and the events phase takes 3.5 s instead of 8 s.
+  and the events phase takes 3.5 s instead of 8 s. A window holds a repeated event when it overlaps its span, so it
+  shows in windows within the span too; the query bounds the start by the longest span of the source, which keeps the
+  timestamp index in use.
 - The `+ trace` widget shows the events per UE on the time axis of the tab: one bar per UE context, from its random
   access or creation to its deletion or failed creation, with a glyph per event, and a last row, `common`, with the events of no UE. Each UE has its own
   row, labelled with its DU UE index and RNTI, in start order. The trace shows 25 UE rows at a time and scrolls over the
@@ -403,6 +416,8 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
 - Logs are searched as bytes in blocks of about 8 MB that start at the record offsets of the store, so that the line
   of a match is the first line of its block plus the newlines before it, without reading the file from its start. A
   search that finds nothing reads the whole file: about 2 s for 485 MB. Pcaps search the frame summaries they store.
+- A block with CRLF line ends is searched with them as LF, so that `$` matches at line ends. A regex valid as text but
+  not as bytes, e.g. with `\N{...}`, is an invalid query (400).
 - The pane highlights the matches in its lines with a JavaScript regular expression, which mostly agrees with Python's.
 
 ### D19a. Scrolling the record pane
@@ -448,6 +463,7 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
 - A line with several values and no split key gives one plotted point, the last one, since points are per record;
   splitting by a key of the line separates them.
 - Ad-hoc metrics and marks are lines of their log and take its time shift in relative time.
+- Filters match CRLF lines without their `\r`, so that `$` matches at their end (`adhoc.crlf_anchors()` for marks).
 
 ### D19c. Marked lines
 
@@ -492,6 +508,8 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
   it darkened, so that adjacent allocations of a channel stay apart.
 - Traces start with the header of their file format version (`parsers.schedtrace`): traces of another major version,
   or written before OCUDU versioned the format, fail to parse with that error, shown on the page.
+- An event whose fields do not decode ends the trace, with a warning, as in `parsers.schedtrace`: the events from it
+  are left out, the run identity of the trace is unknown, and its record detail is an error (400).
 - Parsing splits the trace at event boundaries, from the size prefixes, into about 4 chunks per worker of at least
   2000 events, parsed in the worker pool with the decoder generated from the schemas, decoding only the fields that
   placing allocations needs (`grid_only`). Workers return the grid occupancy of the bins within their chunk ready to

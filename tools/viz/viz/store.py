@@ -330,6 +330,8 @@ class Store:
         # Event count per category and per type, empty until the events are parsed.
         self.event_counts: dict[str, int] = {}
         self.event_type_counts: dict[str, int] = {}
+        # Longest span of the events, see EVENT_COLUMNS.
+        self._max_event_span = 0.0
         with self._connect() as conn:
             self.meta = {k: json.loads(v) for k, v in conn.execute("SELECT key, value FROM meta")}
             self.datasets = {
@@ -360,11 +362,14 @@ class Store:
         """Serves the events of the database at the SQLite URI, or no events for None."""
         counts: dict[str, int] = {}
         type_counts: dict[str, int] = {}
+        max_span = 0.0
         if uri is not None:
             with closing(sqlite3.connect(uri, uri=True, check_same_thread=False)) as conn:
                 # Events that stand for repeated ones count each.
                 counts = dict(conn.execute("SELECT category, SUM(COALESCE(count, 1)) FROM events GROUP BY category"))
                 type_counts = dict(conn.execute("SELECT type, SUM(COALESCE(count, 1)) FROM events GROUP BY type"))
+                max_span = conn.execute("SELECT COALESCE(MAX(span), 0) FROM events").fetchone()[0]
+        self._max_event_span = max_span
         self._events_uri, self._events_keepalive = uri, keepalive
         self.event_counts, self.event_type_counts = counts, type_counts
         self.events_ready = True
@@ -622,8 +627,9 @@ class Store:
             return {"total": 0, "truncated": False, "events": []}
         where, params = ["1"], []
         if t0 is not None:
-            where.append(f"{_TS} >= ?")
-            params.append(t0)
+            where_t0, params_t0 = self._events_from(t0)
+            where.append(where_t0)
+            params.extend(params_t0)
         if t1 is not None:
             where.append(f"{_TS} <= ?")
             params.append(t1)
@@ -680,8 +686,9 @@ class Store:
             ]
             ids = [lane["lane"] for lane in lanes]
             in_lanes = f"(lane IS NULL OR lane IN ({', '.join('?' * len(ids))}))"
-            params = [lo, hi, *ids]
-            event_where = f"{_TS} >= ? AND {_TS} <= ? AND {in_lanes}"
+            where_t0, params_t0 = self._events_from(lo)
+            params = [*params_t0, hi, *ids]
+            event_where = f"{where_t0} AND {_TS} <= ? AND {in_lanes}"
             total_events = conn.execute(f"SELECT COUNT(*) FROM events WHERE {event_where}", params).fetchone()[0]
             rows = conn.execute(
                 f"SELECT {_TS}, {_REC}, {', '.join(EVENT_COLUMNS)} FROM events WHERE {event_where} ORDER BY {_TS}, {_REC} LIMIT ?",
@@ -695,6 +702,11 @@ class Store:
             "total_events": total_events,
             "truncated": total_events > len(events),
         }
+
+    def _events_from(self, t0: float) -> tuple[str, list[float]]:
+        """WHERE clause and params of the events that end at t0 or later, repeated ones lasting their span."""
+        # The bound on the start keeps the timestamp index in use.
+        return f"{_TS} >= ? AND {_TS} + COALESCE(span, 0) >= ?", [t0 - self._max_event_span, t0]
 
     def grid_slots(self, t0: float | None, t1: float | None, limit: int) -> tuple[int, list[tuple[int, float, int, int, int]]]:
         """The number of resource grid slots in a time window and the first limit of them, as (record, time, file
@@ -824,17 +836,24 @@ class Store:
         """
         try:
             compiled = re.compile(pattern if regex else re.escape(pattern), re.IGNORECASE | re.MULTILINE)
+            # Logs are searched as bytes, where some valid expressions are not, e.g. with \u escapes.
+            compiled_bytes = re.compile(compiled.pattern.encode(), compiled.flags & ~re.UNICODE)
         except re.error as e:
             raise QueryError(f"Search: {e}") from None
-        first = self._search(compiled, after, backward)
+        first = self._search(compiled, compiled_bytes, after, backward)
         if first is not None:
             return {"record": first, "wrapped": False}
         # From the other end, up to where the search started, that record included.
-        again = self._search(compiled, 2**62 if backward else 0, backward, after - 1 if backward else after + 1)
+        again = self._search(compiled, compiled_bytes, 2**62 if backward else 0, backward,
+                             after - 1 if backward else after + 1)
         return {"record": again, "wrapped": again is not None}
 
-    def _search(self, compiled: re.Pattern, after: int, backward: bool, stop: int | None = None) -> int | None:
-        """The first record after after, or the last before it with backward, matching compiled, short of stop."""
+    def _search(
+        self, compiled: re.Pattern, compiled_bytes: re.Pattern, after: int, backward: bool, stop: int | None = None
+    ) -> int | None:
+        """The first record after after, or the last before it with backward, matching compiled, or compiled_bytes
+        in a log read from its file, short of stop.
+        """
         def wanted(record: int) -> bool:
             if backward:
                 return record < after and (stop is None or record > stop)
@@ -848,15 +867,17 @@ class Store:
             index = conn.execute("SELECT record, offset FROM record_offsets ORDER BY record").fetchall() or [(1, 0)]
         blocks = _search_blocks(index, self.path.stat().st_size)
         # Logs are searched as bytes, one block of lines at a time, the line of a match from the newlines before it.
-        pattern = re.compile(compiled.pattern.encode(), compiled.flags & ~re.UNICODE)
         with self.path.open("rb") as f:
             for first, last, start, end in reversed(blocks) if backward else blocks:
                 if (backward and first >= after) or (not backward and last <= after):
                     continue
                 f.seek(start)
                 data = f.read(end - start)
+                # So that $ matches at the end of CRLF lines too. Newlines, which give the line numbers, stay.
+                if b"\r" in data:
+                    data = data.replace(b"\r\n", b"\n")
                 found, line, pos = None, first, 0
-                for m in pattern.finditer(data):
+                for m in compiled_bytes.finditer(data):
                     line += data.count(b"\n", pos, m.start())
                     pos = m.start()
                     if wanted(line):

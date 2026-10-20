@@ -5,13 +5,32 @@ import json
 import shutil
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
+
+from parsers import schedtrace
 
 from viz.sources.schedtrace import SchedtraceSource, _slot_times
 from viz.store import StoreCache
 
 # Trace of a cell start, a slot and a cell stop, of the tests of parsers.schedtrace.
 TRACE = Path(__file__).resolve().parents[2] / "parsers" / "tests" / "schedtrace" / "data" / "schedtrace_cell0.bin"
+
+
+def garble_last_event(data):
+    """data with a byte of its last event garbled so that its size and root stay valid but its fields do not decode."""
+    offsets = schedtrace.offsets(data)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for pos in range(offsets[-1] + 4, len(data)):
+            garbled = data[:pos] + b"\xff" + data[pos + 1:]
+            if schedtrace.offsets(garbled) != offsets:
+                continue
+            try:
+                schedtrace.event_at(garbled, offsets[-1], grid_only=True)
+            except schedtrace.CorruptEventError:
+                return garbled
+    raise AssertionError("no garbling of the last event that only its fields show")
 
 
 class SchedtraceSourceTest(unittest.TestCase):
@@ -76,6 +95,19 @@ class SchedtraceSourceTest(unittest.TestCase):
         # The structure of the event too, which the record pane shows as tables.
         slot = self.source.record_data(self.path, 2)
         self.assertEqual((slot["type"], len(slot["inputs"]), len(slot["decision"]["ue_pdschs"])), ("CellSlotEvent", 4, 1))
+
+    def test_corrupt_last_event(self):
+        path = self.dir / "garbled" / "schedtrace_cell0.bin"
+        path.parent.mkdir()
+        path.write_bytes(garble_last_event(TRACE.read_bytes()))
+        self.assertIsNone(self.source.run_identity(path))
+        with self.assertWarnsRegex(UserWarning, "corrupt schedtrace event at offset .*, the events from it are left out"):
+            store = StoreCache(self.dir / "cache2").open(path, self.source)
+        # The cell start and the slot, before the corrupt stop event.
+        self.assertEqual(len(store.records(1, 10)), 2)
+        self.assertEqual(self.store.datasets.keys(), store.datasets.keys())
+        with self.assertRaisesRegex(ValueError, "Event 3 does not decode"):
+            self.source.record_data(path, 3)
 
 
 class SlotTimesTest(unittest.TestCase):

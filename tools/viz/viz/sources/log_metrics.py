@@ -18,6 +18,7 @@ from typing import Any
 import parsers
 from parsers.log import chunks, config, events, metrics, preamble
 from parsers.log.run import last_time, log_run
+from parsers.ran.rnti import normalize as normalize_rnti
 
 from .. import parallel
 from .base import DatasetWriter, EventWriter, ProgressFn, RunIdentity, column_type, column_value
@@ -203,23 +204,41 @@ def _parsers_version() -> str:
     return f"{version}-{h.hexdigest()[:12]}"
 
 
+# Bytes of the start and of the end of a file that accepts() looks for log entries in.
+_ACCEPT_BYTES = 64 << 10
+
+
 class LogMetricsSource:
     """One time series dataset per METRICS layer, and the events of the log. Records are log lines, identified by
     line number.
     """
 
     name = "log_metrics"
-    version = f"8+parsers-{_parsers_version()}"
+    version = f"9+parsers-{_parsers_version()}"
 
     def accepts(self, path: Path) -> bool:
+        """Files with a log entry in their first 200 lines or 64 KB or in their last 64 KB, and empty .log files."""
+        # The end tells excerpts that start within the configuration echo, and empty logs are of runs that wrote
+        # nothing yet.
+        size = _ACCEPT_BYTES
         try:
             with path.open("rb") as f:
-                head = f.read(64 << 10)
+                head = f.read(size)
+                if not head:
+                    return path.suffix == ".log"
+                tail = b""
+                if f.seek(0, 2) > size:
+                    f.seek(-size, 2)
+                    # Without its first line, which may be cut.
+                    tail = f.read(size).partition(b"\n")[2]
         except OSError:
             return False
         if b"\0" in head:
             return False
-        return any(preamble.match_preamble(line) for line in head.decode("utf-8", "replace").splitlines()[:200])
+        lines = head.decode("utf-8", "replace").splitlines()[:200]
+        return any(preamble.match_preamble(line) for line in lines) or any(
+            preamble.match_preamble(line) for line in tail.decode("utf-8", "replace").splitlines()
+        )
 
     def parse(self, path: Path, writer: DatasetWriter, progress: ProgressFn | None = None) -> None:
         writer.set_notes(_event_notes(path))
@@ -284,7 +303,8 @@ class LogMetricsSource:
                 t, _, type_, category, layer, _, ue, rnti, _, text, count, span = row
                 lane = tracker.assign_ids(t, type_, category, layer, ue, rnti)
                 if category != events.BINDING:
-                    out.append((*row[:10], lane, count, span))
+                    # Logs print small RNTIs short, e.g. 0x44, which other sources give as 0x0044.
+                    out.append((*row[:7], normalize_rnti(rnti), *row[8:10], lane, count, span))
             writer.add_event_rows(out)
         for lane in tracker.lanes:
-            writer.add_lane(lane.id, lane.du_ue, lane.rnti, cu_ue=lane.cu_ue)
+            writer.add_lane(lane.id, lane.du_ue, normalize_rnti(lane.rnti), cu_ue=lane.cu_ue)
