@@ -379,10 +379,40 @@ main { flex: 1 0 auto; padding: 8px 16px 16px; }
   flex-direction: column;
   border-top: none;
 }
+.records.maximized .record-view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .records.maximized .record-body { flex: 1 1 auto; min-height: 0; display: flex; }
 .records.maximized .record-lines { flex: 1 1 50%; min-width: 0; }
 .records.maximized .record-lines,
 .records.maximized .record-detail { height: auto; }
+
+/* Tabs of the log pane, a preview tab in italics until kept. */
+.pane-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 4px 8px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  font-size: 12px;
+  overflow-x: auto;
+}
+.pane-tabs .status { align-self: center; }
+.pane-tabs > button.icon { align-self: center; }
+.pane-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 2px 2px 8px;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  white-space: nowrap;
+  cursor: pointer;
+  color: var(--fg-muted);
+}
+.pane-tab.active { background: var(--bg); color: var(--fg); margin-bottom: -1px; padding-bottom: 3px; }
+.pane-tab.preview { font-style: italic; }
+.record-view .panel-bar { border-radius: 0; }
 
 .adhoc-bar { display: flex; gap: 8px; }
 .adhoc-bar .adhoc-split { width: 8em; }

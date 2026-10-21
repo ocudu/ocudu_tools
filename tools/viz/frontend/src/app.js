@@ -7,7 +7,7 @@ import "./style.css";
 import { getJSON, postJSON } from "./api.js";
 import FileBrowser from "./components/file-browser.js";
 import PlotPanel from "./components/plot-panel.js";
-import RecordView from "./components/record-view.js";
+import RecordPane from "./components/record-pane.js";
 import TablePanel from "./components/table-panel.js";
 import TracePanel from "./components/trace-panel.js";
 import GridPanel from "./components/grid-panel.js";
@@ -27,6 +27,8 @@ const PLOT_EVENTS = [
 const MAX_EVENTS = 5000;
 // Delay before fetching events after the view changes, to coalesce zoom and pan events.
 const EVENTS_FETCH_DELAY_MS = 150;
+// Tabs of the log pane kept at most, the least recently shown closed first.
+const MAX_PANE_TABS = 8;
 // Interval between refreshes of the sources while some are being parsed.
 const SOURCES_POLL_MS = 500;
 
@@ -41,6 +43,9 @@ const KEY_PAN_FRACTION = 0.2;
 const URL_UPDATE_DELAY_MS = 300;
 
 let nextPlotId = 1;
+// Ids of the tabs of the log pane, and the count of tab activations, which orders them by use.
+let nextPaneTabId = 1;
+let paneTabUses = 0;
 
 /**
  * Creates a widget: a plot, a table of a whole dataset with kind "table", the trace with kind "trace", or the resource
@@ -74,11 +79,15 @@ function newPlot(init) {
 function newTab() {
   // focused is the id of the panel maximized, alone with the log pane, or null.
   // marks are the lines marked as events on the plots: their ad-hoc source, regex, log and whether they are shown.
-  return { plots: [], userRange: null, defaultPlotAdded: false, eventCategories: [], marks: [], related: null, relatedAnswered: false, focused: null };
+  // pane holds the tabs of the log pane and the id of the shown one.
+  return {
+    plots: [], userRange: null, defaultPlotAdded: false, eventCategories: [], marks: [], related: null, relatedAnswered: false,
+    focused: null, pane: { tabs: [], active: null },
+  };
 }
 
 const App = {
-  components: { FileBrowser, GridPanel, PlotPanel, RecordView, TablePanel, TracePanel },
+  components: { FileBrowser, GridPanel, PlotPanel, RecordPane, TablePanel, TracePanel },
   data() {
     return {
       // Open runs, each with the ids of its sources.
@@ -91,7 +100,6 @@ const App = {
       maximizedHeight: 0,
       activeId: null,
       timeMode: "absolute",
-      selection: null,
       // Record highlighted in the log pane, as {source, record, t} in display time, which the panels mark.
       focus: null,
       error: "",
@@ -118,6 +126,10 @@ const App = {
     /** Sources of the active run. */
     runSources() {
       return (this.activeRun?.sources ?? []).map((id) => this.sources[id]).filter(Boolean);
+    },
+    /** Tabs of the log pane of the active tab. */
+    paneTabs() {
+      return this.activeTab?.pane.tabs ?? [];
     },
     readySources() {
       return this.runSources.filter((s) => s.status === "ready");
@@ -219,8 +231,8 @@ const App = {
     },
   },
   watch: {
-    // The log pane opens and closes with the selection, changing the height of a maximized panel.
-    async selection() {
+    // The log pane opens and closes with its tabs, changing the height of a maximized panel.
+    async "paneTabs.length"() {
       await this.$nextTick();
       this.observeHeights();
     },
@@ -235,7 +247,8 @@ const App = {
       for (const tab of Object.values(this.tabs)) tab.userRange = null;
     },
     activeId() {
-      this.selection = null;
+      // The panes of other tabs keep their tabs, whose records refocus when shown.
+      this.focus = null;
       this.runFiles = null;
     },
     async relatedQuestion(shown) {
@@ -324,6 +337,9 @@ const App = {
         // passed, so that the panels see them change.
         for (const p of this.tabs[t.run].plots.filter((p) => p.adhoc)) this.plotAdhoc({ source: p.source, ...p.adhoc }, p);
         for (const m of t.marks) this.markLines(m, m.shown, this.tabs[t.run]);
+        for (const r of t.pane) this.openRecord(r, r.kind, this.tabs[t.run]).preview = false;
+        const shown = t.pane.findIndex((r) => r.active);
+        if (shown >= 0) this.activatePaneTab(this.tabs[t.run].pane.tabs[shown].id, this.tabs[t.run]);
       }
       if (view.active != null) this.activeId = view.active;
       this.restoring = false;
@@ -571,6 +587,68 @@ const App = {
       }
     },
 
+    /**
+     * Opens a record in the log pane: in the tab that shows it, else in the preview tab, which the next record replaces
+     * until it is kept. A log has one tab per source, which shows any of its lines.
+     * @param {{source: number, record: number, item?: any, field?: string}} sel
+     */
+    openRecord(sel, kind = "record", tab = this.activeTab) {
+      if (!tab) return null;
+      const pane = tab.pane;
+      const sel1 = { source: sel.source, record: sel.record, item: sel.item ?? null, field: sel.field ?? null };
+      const log = !this.sources[sel.source]?.has_detail;
+      let t = pane.tabs.find((t) => t.kind === kind && t.sel.source === sel.source && (log || t.sel.record === sel.record));
+      if (t) {
+        t.sel = sel1;
+      } else {
+        t = { id: nextPaneTabId++, kind, sel: sel1, preview: true, title: null, used: 0 };
+        const preview = pane.tabs.findIndex((x) => x.preview);
+        if (preview >= 0) pane.tabs.splice(preview, 1, t);
+        else pane.tabs.push(t);
+        if (pane.tabs.length > MAX_PANE_TABS) {
+          // By id, since the tabs of the pane are reactive proxies of the objects pushed.
+          const lru = pane.tabs.filter((x) => x.id !== t.id).reduce((a, b) => (b.used < a.used ? b : a));
+          pane.tabs.splice(pane.tabs.indexOf(lru), 1);
+        }
+        t = pane.tabs.find((x) => x.id === t.id);
+      }
+      this.activatePaneTab(t.id, tab);
+      return t;
+    },
+
+    activatePaneTab(id, tab = this.activeTab) {
+      tab.pane.active = id;
+      const t = tab.pane.tabs.find((x) => x.id === id);
+      if (t) t.used = ++paneTabUses;
+    },
+
+    /** Closes a tab of the log pane, showing the one shown last before it. */
+    closePaneTab(id) {
+      const pane = this.activeTab.pane;
+      pane.tabs = pane.tabs.filter((t) => t.id !== id);
+      if (pane.active !== id) return;
+      pane.active = null;
+      this.focus = null;
+      const last = pane.tabs.reduce((a, b) => (!a || b.used > a.used ? b : a), null);
+      if (last) this.activatePaneTab(last.id);
+    },
+
+    closePane() {
+      this.activeTab.pane = { tabs: [], active: null };
+      this.focus = null;
+    },
+
+    /** Keeps a preview tab of the log pane. */
+    pinPaneTab(id) {
+      const t = this.paneTabs.find((x) => x.id === id);
+      if (t) t.preview = false;
+    },
+
+    setPaneTitle({ id, title }) {
+      const t = this.paneTabs.find((x) => x.id === id);
+      if (t) t.title = title;
+    },
+
     zoom(range) {
       if (this.activeTab) this.activeTab.userRange = range && range.max > range.min ? range : null;
     },
@@ -692,7 +770,7 @@ const App = {
         this.warnings = [...this.warnings, e.message];
       }
       this.activeTab.plots = this.activeTab.plots.filter((p) => p.source !== sourceId);
-      if (this.selection?.source === sourceId) this.selection = null;
+      for (const t of this.paneTabs.filter((t) => t.sel.source === sourceId)) this.closePaneTab(t.id);
       await this.pollSources();
     },
 
@@ -804,19 +882,19 @@ const App = {
             <trace-panel v-if="p.kind === 'trace'" :focus="focus" v-show="activeTab.focused == null || activeTab.focused === p.id" :maximized="activeTab.focused === p.id"
                          :maximized-height="maximizedHeight" @maximize="toggleFocus(p.id)" :panel="p" :sources="sources" :choices="runSources" :run-id="activeId" :view="view" :shifts="shifts"
                          :time-mode="timeMode" :theme-version="themeVersion" @zoom="zoom" @remove="removePlot(p.id)"
-                         @select-record="selection = $event" />
+                         @select-record="openRecord($event)" />
             <grid-panel v-else-if="p.kind === 'grid'" :focus="focus" v-show="activeTab.focused == null || activeTab.focused === p.id" :maximized="activeTab.focused === p.id"
                          :maximized-height="maximizedHeight" @maximize="toggleFocus(p.id)" :panel="p" :sources="sources" :choices="runSources" :view="view" :shifts="shifts"
                         :time-mode="timeMode" :theme-version="themeVersion" @zoom="zoom" @remove="removePlot(p.id)"
-                        @select-record="selection = $event" @parse-source="parseSource" />
+                        @select-record="openRecord($event)" @parse-source="parseSource" />
             <table-panel v-else-if="p.kind === 'table'" v-show="activeTab.focused == null || activeTab.focused === p.id" :maximized="activeTab.focused === p.id"
                          :maximized-height="maximizedHeight" @maximize="toggleFocus(p.id)" :panel="p" :sources="sources" :choices="panelSources" :view="view" :shifts="shifts"
-                         :show-source="panelSources.length > 1" @remove="removePlot(p.id)" @select-record="selection = $event"
+                         :show-source="panelSources.length > 1" @remove="removePlot(p.id)" @select-record="openRecord($event)"
                          @parse-source="parseSource" />
             <plot-panel v-else :focus="focus" v-show="activeTab.focused == null || activeTab.focused === p.id" :maximized="activeTab.focused === p.id"
                          :maximized-height="maximizedHeight" @maximize="toggleFocus(p.id)" :plot="p" :sources="sources" :choices="panelSources" :view="view" :shifts="shifts" :time-mode="timeMode"
                         :theme-version="themeVersion" :show-source="panelSources.length > 1" :events="events"
-                        @zoom="zoom" @remove="removePlot(p.id)" @select-record="selection = $event" @parse-source="parseSource" @adhoc="plotAdhoc($event, p)" />
+                        @zoom="zoom" @remove="removePlot(p.id)" @select-record="openRecord($event)" @parse-source="parseSource" @adhoc="plotAdhoc($event, p)" />
           </template>
           <div class="add-buttons">
             <button class="add-plot" title="Plot of a metric over time, or its histogram" @click="addPlot('plot')">+ plot</button>
@@ -829,8 +907,9 @@ const App = {
         </template>
       </template>
     </main>
-    <record-view v-if="selection" :selection="selection" :sources="sources" @close="selection = null; focus = null" @focus="focusRecord"
-                 @select-record="selection = $event" @plot-key="plotAdhoc($event)" @mark-lines="markLines($event)" />
+    <record-pane v-if="paneTabs.length" :tabs="paneTabs" :active="activeTab.pane.active" :sources="sources"
+                 @close="closePane" @activate="activatePaneTab($event)" @close-tab="closePaneTab" @pin="pinPaneTab" @title="setPaneTitle"
+                 @focus="focusRecord" @select-record="openRecord($event)" @plot-key="plotAdhoc($event)" @mark-lines="markLines($event)" />
     <file-browser v-if="browserOpen" :roots="roots" @open="openPath" @close="browserOpen = false" />
     <div v-if="relatedQuestion" class="modal-backdrop">
       <section class="modal run-question" role="alertdialog" aria-labelledby="run-question-title" @keydown.esc="activeTab.relatedAnswered = true">

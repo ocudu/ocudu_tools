@@ -124,6 +124,10 @@ In the page:
   search box finds text in the whole file, case-insensitive, from the highlighted line: Enter or `↓` goes to the next
   match, Shift+Enter or `↑` to the previous one, wrapping around the file, and the matches in view are highlighted.
   With `regex`, the text is a regular expression (Python syntax).
+- Each record opens in a tab of the log pane: a log in one tab per file, a frame or slot event in a tab of its own.
+  The tab in italics is a preview, which the next record opened replaces; double-click its label, or scroll, click or
+  search in it, to keep it. Up to 8 tabs are kept, the least recently shown closed first; `×` (or a middle click)
+  closes one, `✕` all. The plots mark the line of the shown tab, and the URL keeps the tabs kept.
 - Right-click a `key=value` field of a line of the log pane, e.g. `tbs=5889`, and `Plot tbs=` plots its values in all
   the lines of the log over time (Shift+right-click for the browser's menu). The plot's header has a `filter` box, a
   line regex (e.g. `slot decisions`), and a `split by` box, a key of the same lines (e.g. `ue`, one series per UE);

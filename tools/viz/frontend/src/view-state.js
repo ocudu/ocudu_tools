@@ -38,6 +38,7 @@ export function encodeView(app) {
         range: app.tabs[r.id].userRange,
         events: app.tabs[r.id].eventCategories,
         alone: app.tabs[r.id].relatedAnswered || undefined,
+        pane: paneState(app.tabs[r.id].pane, app.sources),
         // Marks are saved by the file of their log and their regex, and marked again when restored.
         marks: (app.tabs[r.id].marks ?? []).map((m) => ({ log: app.sources[m.log]?.file ?? null, pattern: m.pattern, shown: m.shown })),
         plots: app.tabs[r.id].plots.map((p) => ({
@@ -49,6 +50,20 @@ export function encodeView(app) {
       })),
   };
   return PREFIX + toBase64Url(JSON.stringify(state));
+}
+
+/**
+ * The kept tabs of a log pane, by the file of their source, and the index of the shown one among them. A record of an
+ * ad-hoc metric is saved as the line of its log, which has the same number.
+ */
+function paneState(pane, sources) {
+  const kept = (pane?.tabs ?? []).filter((t) => !t.preview);
+  if (!kept.length) return undefined;
+  const fileOf = (id) => sources[sources[id]?.parent ?? id]?.file ?? null;
+  return {
+    tabs: kept.map((t) => ({ kind: t.kind, source: fileOf(t.sel.source), record: t.sel.record, item: t.sel.item ?? undefined })),
+    active: kept.findIndex((t) => t.id === pane.active),
+  };
 }
 
 /**
@@ -106,7 +121,13 @@ export function decodeView(hash, runs, sources) {
       if (log) marks.push({ source: log.id, pattern: m.pattern, shown: m.shown !== false });
       else warnings.push(`${m.log} is not in ${t.run}, its mark /${m.pattern}/ was skipped.`);
     }
-    tabs.push({ run: run.id, range: t.range ?? null, plots, marks, eventCategories: t.events ?? null, relatedAnswered: Boolean(t.alone) });
+    const pane = [];
+    for (const [i, r] of (t.pane?.tabs ?? []).entries()) {
+      const source = byFile.get(r.source);
+      if (source) pane.push({ kind: r.kind ?? "record", source: source.id, record: r.record, item: r.item ?? null, active: i === t.pane.active });
+      else warnings.push(`${r.source} is not in ${t.run}, its tab of the log pane was skipped.`);
+    }
+    tabs.push({ run: run.id, range: t.range ?? null, plots, marks, pane, eventCategories: t.events ?? null, relatedAnswered: Boolean(t.alone) });
   }
   const active = byName.get(state.active)?.id ?? null;
   return { view: { timeMode: state.timeMode, active, tabs }, warnings };

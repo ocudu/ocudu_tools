@@ -16,45 +16,27 @@ const RECORD_TIME_RE = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d+)?/;
 const MAX_MARK_TEXT = 200;
 // Distance from the first or last line, in pixels, at which the next records are loaded.
 const LOAD_MARGIN = 300;
-// Browser storage key of the height of the log lines, in pixels.
-const HEIGHT_KEY = "ocudu-viz-log-height";
-const MIN_HEIGHT = 80;
-// Maximum height, as a fraction of the window height.
-const MAX_HEIGHT_FRACTION = 0.85;
-
-/** @returns {number | null} */
-function loadHeight() {
-  try {
-    const h = Number(localStorage.getItem(HEIGHT_KEY));
-    return h > 0 ? h : null;
-  } catch {
-    // Storage can be unavailable, e.g. in private windows.
-    return null;
-  }
-}
-
-/** @param {number | null} height */
-function saveHeight(height) {
-  try {
-    if (height == null) localStorage.removeItem(HEIGHT_KEY);
-    else localStorage.setItem(HEIGHT_KEY, String(Math.round(height)));
-  } catch {
-    // Storage can be unavailable, e.g. in private windows.
-  }
-}
-
+// Slot of the summary line of a scheduler trace event, e.g. slot=1023.7.
+const SLOT_RE = /\bslot=(\d+\.\d+)/;
+/** Records of a source around a selected one, in a tab of the log pane, with their decoding for sources that have one. */
 export default {
   name: "RecordView",
   props: {
     selection: { type: Object, required: true },
     sources: { type: Array, required: true },
+    // Whether its tab is the shown one.
+    active: { type: Boolean, default: true },
+    // Height of the lines, in pixels, or null for the default.
+    height: { type: Number, default: null },
+    // Whether the pane fills the window.
+    maximized: { type: Boolean, default: false },
   },
   components: { EventTables },
-  emits: ["close", "select-record", "plot-key", "mark-lines", "focus"],
+  emits: ["select-record", "plot-key", "mark-lines", "focus", "interact", "title"],
   data() {
     // current is the highlighted record, the selected one until another record is clicked, and detail its decoding.
     return {
-      records: [], center: 0, error: "", height: loadHeight(), current: null, detail: "", detailError: "",
+      records: [], center: 0, error: "", current: null, detail: "", detailError: "",
       // Whether the first and the last record of the file are loaded, and whether more records are being loaded.
       atStart: false, atEnd: false, paging: false,
       // Count of the loads of the pane, which tells pages of an earlier load apart.
@@ -63,8 +45,6 @@ export default {
       detailData: null, detailTab: "decisions",
       // Search of the records: its text, whether it is a regular expression, and its outcome, e.g. "no match".
       query: "", regex: false, searchNote: "", searching: false,
-      // Whether the pane fills the window.
-      maximized: false,
       // Context menu of a line, at its position in the window, with the key it plots and the text it marks, if any.
       menu: null,
     };
@@ -95,8 +75,39 @@ export default {
     hasDetail() {
       return Boolean(this.source?.has_detail);
     },
+    /** Short name of the highlighted record, for the label of its tab: the slot of a trace event, else its number. */
+    title() {
+      const r = this.records.find((r) => r.record === this.current);
+      const slot = r && SLOT_RE.exec(r.text);
+      return slot ? slot[1] : this.current == null ? null : `#${this.current}`;
+    },
+    linesStyle() {
+      return this.height && !this.maximized ? { height: this.height + "px" } : null;
+    },
   },
   watch: {
+    /** The focus of the tab is that of the pane when the tab is shown. */
+    async active(active) {
+      const lines = this.$refs.lines;
+      // A hidden tab has no layout, which loses the scroll position of its lines.
+      if (!active) {
+        this.scrolled = lines ? [lines.scrollTop, lines.scrollLeft] : null;
+        return;
+      }
+      this.emitFocus();
+      await this.$nextTick();
+      if (lines && this.scrolled) [lines.scrollTop, lines.scrollLeft] = this.scrolled;
+    },
+    async maximized() {
+      await this.$nextTick();
+      this.centerCurrent();
+    },
+    title: {
+      handler(title) {
+        this.$emit("title", title);
+      },
+      immediate: true,
+    },
     selection: {
       handler() {
         this.current = this.selection.record;
@@ -108,6 +119,10 @@ export default {
       immediate: true,
       deep: true,
     },
+  },
+  created() {
+    // Not reactive: scroll position of the lines while the tab is hidden.
+    this.scrolled = null;
   },
   mounted() {
     // In the capture phase, so that it runs before the app's own Esc handling.
@@ -162,26 +177,6 @@ export default {
       }
     },
 
-    /** Resizes the log lines by dragging the top edge of the pane. */
-    startResize(e) {
-      e.preventDefault();
-      const handle = e.currentTarget;
-      handle.setPointerCapture(e.pointerId);
-      const startY = e.clientY;
-      const startHeight = this.$refs.lines.offsetHeight;
-      const onMove = (ev) => {
-        const max = window.innerHeight * MAX_HEIGHT_FRACTION;
-        this.height = Math.min(max, Math.max(MIN_HEIGHT, startHeight + startY - ev.clientY));
-      };
-      const onUp = () => {
-        handle.removeEventListener("pointermove", onMove);
-        handle.removeEventListener("pointerup", onUp);
-        saveHeight(this.height);
-      };
-      handle.addEventListener("pointermove", onMove);
-      handle.addEventListener("pointerup", onUp);
-    },
-
     /**
      * Splits the text of a record at its marks, which are [start, end) spans.
      * @returns {{text: string, mark: boolean}[]}
@@ -219,6 +214,7 @@ export default {
     /** Goes to the next record matching the search after the highlighted one, or the previous one with backward. */
     async search(backward = false) {
       if (!this.query || this.searching) return;
+      this.$emit("interact");
       this.searching = true;
       try {
         const res = await getJSON("/api/records/search", {
@@ -248,6 +244,7 @@ export default {
       const key = (text && this.keyOf(text)) ?? this.keyAt(e.clientX, e.clientY);
       if (!key && !text) return;
       e.preventDefault();
+      this.$emit("interact");
       this.menu = { x: e.clientX, y: e.clientY, key, text };
     },
 
@@ -361,23 +358,12 @@ export default {
       }
     },
 
-    /** Fills the window with the pane, or restores it, keeping the highlighted record in view. */
-    async toggleMaximized() {
-      this.maximized = !this.maximized;
-      await this.$nextTick();
-      this.centerCurrent();
-    },
-
-    /** Restores the maximized pane on Esc, before the app restores a maximized panel behind it. */
+    /** Closes the menu on Esc, before the pane restores itself and the app restores a maximized panel. */
     onKey(e) {
-      if (e.key === "Escape" && this.menu) {
-        e.stopPropagation();
-        this.menu = null;
-        return;
-      }
-      if (e.key !== "Escape" || !this.maximized) return;
+      if (e.key !== "Escape" || !this.menu) return;
+      e.preventDefault();
       e.stopPropagation();
-      this.toggleMaximized();
+      this.menu = null;
     },
 
     /** Scrolls the log lines to the highlighted record. */
@@ -385,11 +371,6 @@ export default {
       const lines = this.$refs.lines;
       const selected = lines?.querySelector(".record-line.selected");
       if (selected) lines.scrollTop = selected.offsetTop - (lines.clientHeight - selected.offsetHeight) / 2;
-    },
-
-    resetHeight() {
-      this.height = null;
-      saveHeight(null);
     },
 
     async load(center) {
@@ -425,8 +406,7 @@ export default {
     },
   },
   template: `
-    <aside :class="['records', { maximized }]">
-      <div v-if="!maximized" class="resize-handle" title="Drag to resize, double-click to reset" @pointerdown="startResize" @dblclick="resetHeight"></div>
+    <section class="record-view">
       <header class="panel-bar">
         <strong>{{ sourceName }}</strong>
         <span class="muted">{{ hasDetail ? "frame" : "line" }} {{ current }}</span>
@@ -444,25 +424,23 @@ export default {
         <span v-if="source?.adhoc" class="filtered-chip" :title="'Only the lines with values of ' + source.adhoc.key + '='">filtered</span>
         <button v-if="source?.adhoc" title="Show this line among all the lines of the log" @click="showAllLines">all lines</button>
         <span class="status"><span v-if="error" class="error">{{ error }}</span></span>
-        <button class="icon" :title="maximized ? 'Restore (Esc)' : 'Maximize'" @click="toggleMaximized">{{ maximized ? "🗗" : "⛶" }}</button>
-        <button class="icon" title="Close" @click="$emit('close')">✕</button>
       </header>
       <div :class="['record-body', { split: hasDetail }]">
-        <div ref="lines" class="record-lines" @scroll.passive="onScroll" @contextmenu="onContextMenu" :style="height && !maximized ? { height: height + 'px' } : null">
+        <div ref="lines" class="record-lines" @scroll.passive="onScroll" @wheel.passive="$emit('interact')" @pointerdown="$emit('interact')" @contextmenu="onContextMenu" :style="linesStyle">
           <div v-for="r in records" :key="r.record"
                :class="['record-line', 'clickable', { selected: r.record === current }]" @click="select(r.record)">
             <span class="lineno">{{ r.record }}</span><span class="text"><template v-for="(part, i) in segments(r)" :key="i"><mark v-if="part.mark">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
           </div>
         </div>
-        <div v-if="hasDetail && detailData" class="record-detail record-detail-tabs" :style="height && !maximized ? { height: height + 'px' } : null">
+        <div v-if="hasDetail && detailData" class="record-detail record-detail-tabs" :style="linesStyle">
           <div class="detail-tabs">
-            <button v-for="tab in ['decisions', 'events', 'raw']" :key="tab" :class="{ active: detailTab === tab }" @click="detailTab = tab">{{ tab }}</button>
+            <button v-for="tab in ['decisions', 'events', 'raw']" :key="tab" :class="{ active: detailTab === tab }" @click="detailTab = tab; $emit('interact')">{{ tab }}</button>
           </div>
           <pre v-if="detailTab === 'raw'">{{ detail }}</pre>
           <event-tables v-else :event="detailData" :view="detailTab" :slots-per-frame="source?.grid?.slots_per_frame ?? null"
                         :highlight="current === selection.record ? selection.item ?? null : null" />
         </div>
-        <pre v-else-if="hasDetail" class="record-detail" :style="height && !maximized ? { height: height + 'px' } : null"><span v-if="detailError" class="error">{{ detailError }}</span>{{ detail || (detailError ? "" : "decoding…") }}</pre>
+        <pre v-else-if="hasDetail" class="record-detail" :style="linesStyle"><span v-if="detailError" class="error">{{ detailError }}</span>{{ detail || (detailError ? "" : "decoding…") }}</pre>
       </div>
       <div v-if="menu" ref="menu" class="context-menu" role="menu" :style="{ left: menu.x + 'px', top: menu.y + 'px' }">
         <button v-if="menu.key" role="menuitem" title="Plot the values of this key=value field over time, from all the lines of the log"
@@ -470,6 +448,6 @@ export default {
         <button v-if="menu.text" role="menuitem" title="Mark the lines of the log with this text, ignoring case, as events on the plots"
                 @click="markMenuText">Mark lines with “{{ menu.text.length > 40 ? menu.text.slice(0, 40) + "…" : menu.text }}”</button>
       </div>
-    </aside>
+    </section>
   `,
 };

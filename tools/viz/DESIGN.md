@@ -174,7 +174,8 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
 - Saved: time mode, the selected tab, and per tab its run, zoom range, shown event categories, the answer to whether
   to open the rest of its run (D16) and its widgets, each with its kind, source and settings: dataset, instance,
   field, second field, split, selected split values, filter, view mode, column filter, and for traces the joined
-  sources and row identifier. The state carries a version number; a state of another version is ignored.
+  sources and row identifier, and the kept tabs of its log pane (D19d). The state carries a version number; a state
+  of another version is ignored.
 - Tabs are saved by run name and matched by name to the open runs, and widgets by the file name of their source.
   Tabs of runs that are not open, and widgets of missing sources or datasets, are skipped with a warning. No file
   paths are put in the URL.
@@ -439,11 +440,26 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
 
 ### D19a2. Focus on a record
 
-- The record highlighted in the log pane, clicked, found or opened from a point, is the focus of the tab: the time
-  plots, the trace and the grid draw a gray dashed line at its time (`--focus`), and plots of the same log, or of its
-  ad-hoc metrics, a ring around its points. Its time is the timestamp at the start of its text, or of the entry it
-  continues, so that it works for every source, whose records all start with one. When it is out of the view, the
-  view pans to center it, keeping the zoom. Closing the pane clears it.
+- The record highlighted in the shown tab of the log pane, clicked, found or opened from a point, is the focus of the
+  tab: the time plots, the trace and the grid draw a gray dashed line at its time (`--focus`), and plots of the same
+  log, or of its ad-hoc metrics, a ring around its points. Its time is the timestamp at the start of its text, or of
+  the entry it continues, so that it works for every source, whose records all start with one. When it is out of the
+  view, the view pans to center it, keeping the zoom. Showing another tab of the pane focuses its record; closing the
+  shown tab, or the pane, clears it.
+
+### D19d. Tabs of the log pane
+
+- Each record opened from a panel or an event gets a tab of the log pane, so that several can be compared: a log has
+  one tab per source, an ad-hoc metric being a source of its own, which shows any of its lines; a frame or a slot
+  event, whose detail is the point, a tab per record. Opening a record already in a tab shows that tab.
+- A record is opened in the preview tab, in italics, which the next record opened replaces, as in editors, so that
+  browsing points does not pile up tabs. A double-click on its label, or scrolling, clicking, searching or
+  right-clicking in it, keeps it.
+- At most 8 tabs, the least recently shown closed first, since each keeps up to 1000 records in the page. Hidden tabs
+  keep their records, scroll position, search and highlighted record.
+- Tabs belong to the tab of their run, and the URL view state saves those kept, by the file of their source; a tab of
+  an ad-hoc metric is saved as the same line of its log.
+- Labels are the file of the source, and for frames and slot events their record, the slot `SFN.slot` of a trace event.
 
 ### D19b. Ad-hoc metrics of logs
 
@@ -539,8 +555,8 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
 
 - A panel's `⛶` hides the other panels of its tab and fills the space the app bar and the log pane leave, its chart or
   rows taller; the log pane stays, since clicking the panel opens records in it.
-- The log pane's `⛶` fills the whole window, over the app bar, with its lines and the decoded record taking the height
-  below its bar; it keeps the highlighted line in view. Its drag-resized height is kept for when it is restored.
+- The log pane's `⛶` fills the whole window, over the app bar, with the lines and the decoded record of its shown tab
+  taking the height below its bars; it keeps the highlighted line in view. Its drag-resized height is kept for when it is restored.
 - `🗗` or Esc restores either. Esc restores the log pane first, when both are maximized.
 
 ## Open questions
