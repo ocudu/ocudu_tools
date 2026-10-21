@@ -1,29 +1,28 @@
 # Procedure: Abnormal exit
 
-A healthy OCUDU gNB run ends with the sequence:
+A healthy OCUDU gNB log ends with the file sink's closing line:
 
 ```
-[GNB     ] [I] Closing PCAP files...
-[ALL     ] [I] Saved PCAP (DLT=252) to "<path>" and closed
-[GNB     ] [I] PCAP files successfully closed.
-[IO-EPOLL] [I] Stopping IO timer ticking source...
-[IO-EPOLL] [I] IO timer source stopped.
-[IO-EPOLL] [I] Closed io_broker
-[ALL     ] [I] Stopping workers...
-[ALL     ] [I] Task worker "phy_worker" finished.
-...
-[ALL     ] [I] Workers stopped successfully.
+[GNB     ] [I] Stopping...
+[GNB     ] [I] Closing PCAP files...                (info only)
+[GNB     ] [I] PCAP files successfully closed.      (info only)
+[ALL     ] [I] Stopping workers...                  (ALL logger at info only)
+[ALL     ] [I] Workers stopped successfully.        (ALL logger at info only)
+[METRICS ] [I] Stopped the executor metrics backend worker
+(END)
 ```
 
-When the summary script reports `Clean shutdown: no`, one of the above is
-missing.
+`Stopping...` is always logged; the lines marked info only are absent at
+warning, so their absence is no symptom. When the summary script reports
+`Clean shutdown: no`, the log has no `(END)` (nor, for older builds without it,
+`Workers stopped successfully` or `PCAP files successfully closed`).
 
 ## Likely modes
 
 | Symptom | Mode |
 |---|---|
-| Last line ends mid-byte / no `Closing PCAP files...` | Crash (SIGSEGV / abort) — process didn't reach the shutdown handler |
-| `Closing PCAP files...` present but no `Workers stopped successfully` | Shutdown handler entered but a worker is stuck |
+| No `Stopping...`; last line mid-byte or `[APP] [E] Emergency flush of the logger` | Crash (SIGSEGV / abort) or kill during the run |
+| `Stopping...` present, no `(END)` | Crash or hang during shutdown; the last lines name the stage (DU, CU-UP, CU-CP stop, PCAP close, workers when logged at info) |
 | Process killed externally with SIGKILL | Same shape as a crash — no shutdown handler ran |
 | Out-of-memory kill | dmesg / journalctl will show OOM; `ps_info_gnb.txt` may show RSS approaching the host limit |
 | Watchdog / Retina timeout | `agent-log-*.log` in the parent dir shows `SIGTERM sent to gnb` followed by no exit — Retina then `SIGKILL`ed |
@@ -47,13 +46,12 @@ missing.
    ```bash
    head -n 5 ps_info_gnb.txt    # CPU / RSS at the time it was taken
    ```
-5. Look for hung worker hints right before the cut-off:
+5. Find the shutdown stage reached, from the lines after `Stopping...`:
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --pattern "Stopping workers" --max-lines 5
-   python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --pattern "Task worker .* finished" --max-lines 10
+   python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_log_search.py gnb.log --pattern "Stopping\.\.\.|stopped successfully|Stopping workers|Task worker .* finished" --max-lines 20
    ```
-   If `Stopping workers...` appears but no workers report `finished`, a
-   worker is wedged.
+   Only a stage whose start line is logged and whose end line is missing shows
+   a stuck stage; lines missing because their logger is below info show nothing.
 6. If a core dump path is configured on the host, suggest the user inspect
    it (e.g. via `coredumpctl list` on systemd hosts).
 

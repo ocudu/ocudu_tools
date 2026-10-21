@@ -54,6 +54,9 @@ _METRICS_ROW_RE = re.compile(r"\d \[METRICS\s*\] (?!\[[A-Z]\] )")
 _RRC_SETUP_COMPLETE_RE = re.compile(
     r"\[RRC\s*\] \[[ID]\] ue=(\d+) c-rnti=0x\w+: (?:Rx (?:SRB\d+ )?)?DCCH UL rrcSetupComplete\b")
 _ICS_DONE_RE = re.compile(r"\[CU-CP\s*\] \[[ID]\] ue=(\d+)\b.*\"Initial Context Setup Routine\" finished successfully")
+# Loggers listed by the warning and error anomalies, and characters kept of the messages of anomalies.
+TOP_LOGGERS = 5
+LINE_CHARS = 100
 # Characters of a line that hold its entry header.
 _HEADER_LEN = 64
 # Applications with a CU-CP, whose procedures are counted, by their banner.
@@ -87,7 +90,8 @@ def parse_cfg(cfg_path: Path, gnb_log: Path) -> dict:
         "node_type": NODE_TYPES.get(cfg.node_type, cfg.node_type),
         "planes": cfg.planes,
         "l2_traces_suppressed": suppressed,
-        # Unknown without a configuration file or echo.
+        "found": found,
+        # Unknown without a configuration file or echo, or without a band, TDD pattern or duplex option in it.
         "tdd": cfg.tdd if found else None,
         "amf_addrs": cfg.amf_addrs,
         "amf_port": cfg.amf_port,
@@ -169,6 +173,17 @@ def ics_attempts(log: dict) -> int:
     if "RRC" in log["silent_loggers"] or "CU-CP" in log["silent_loggers"]:
         return 0
     return log["rrc_setups"]
+
+
+def by_logger(title: str, total: int, counts: dict[str, int], firsts: dict[str, tuple[str, str]]) -> str:
+    """An anomaly of warning or error lines: their number, then the number and first message of the TOP_LOGGERS
+    loggers with most, one per line.
+    """
+    top = sorted(counts.items(), key=lambda kv: -kv[1])[:TOP_LOGGERS]
+    more = f" ({len(counts) - len(top)} more loggers)" if len(counts) > len(top) else ""
+    lines = [f"{title}: {total}{more}"]
+    lines += [f"    [{name}] {n}, first: {firsts[name][1][:LINE_CHARS]}" for name, n in top]
+    return "\n".join(lines)
 
 
 def parse_stdout(stdout_log: Path) -> dict:
@@ -269,7 +284,8 @@ def summarize(path_str: str) -> None:
     if cfg["tdd"] is not None:
         print(f"  Duplex        : {'TDD' if cfg['tdd'] else 'FDD'}")
     else:
-        print("  Duplex        : unknown (no configuration file or echo)")
+        why = "no band or TDD pattern configured" if cfg["found"] else "no configuration file or echo"
+        print(f"  Duplex        : unknown ({why})")
     if cfg["amf_addrs"]:
         port = cfg["amf_port"] or 38412
         print(f"  AMF           : {cfg['amf_addrs'][0]}:{port}"
@@ -399,7 +415,7 @@ def summarize(path_str: str) -> None:
     # ----- Anomalies -----
     anomalies = []
     if not log["clean_shutdown"]:
-        anomalies.append("No `Workers stopped successfully` line — abnormal exit")
+        anomalies.append("No closing `(END)` line nor completed shutdown — abnormal exit (crash, kill or hang)")
     if log["ng_setup"] == "failure":
         anomalies.append("NGAP NG setup failed")
     elif log["ng_setup"] is None and log["amf_connected_ts"]:
@@ -420,14 +436,15 @@ def summarize(path_str: str) -> None:
         total = met["msg3_ok"] + met["msg3_nok"]
         anomalies.append(f"Msg3 RACH failures: {met['msg3_nok']}/{total} "
                          f"(contention or coverage)")
-    if log["errors"]:
-        anomalies.append(f"Error-level log lines: {log['error_count']}"
-                         f" (first: [{log['errors'][0][1]}] {log['errors'][0][2][:80]})")
-    if log["warnings"]:
-        anomalies.append(
-            f"Warning-level log lines: {log['warning_count']}"
-            f" (first: [{log['warnings'][0][1]}] {log['warnings'][0][2][:80]})"
-        )
+    for kind, n in log["failures"].items():
+        _, layer, msg = log["first_failures"][kind]
+        anomalies.append(f"Failure event {kind}: {n} (first: [{layer}] {msg[:LINE_CHARS]})")
+    if log["error_count"]:
+        anomalies.append(by_logger("Error-level log lines", log["error_count"], log["errors_by_logger"],
+                                   log["first_error_by_logger"]))
+    if log["warning_count"]:
+        anomalies.append(by_logger("Warning-level log lines", log["warning_count"], log["warnings_by_logger"],
+                                   log["first_warning_by_logger"]))
     if met["late_dl_harqs"] or met["late_ul_harqs"]:
         anomalies.append(f"Late HARQs: dl={met['late_dl_harqs']} ul={met['late_ul_harqs']}")
     if met["failed_pdcch"]:

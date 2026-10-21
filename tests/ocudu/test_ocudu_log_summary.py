@@ -159,6 +159,26 @@ class OcuduLogSummaryTest(unittest.TestCase):
         cfg.write_text("log:\n  all_level: info\n")
         self.assertNotIn("NOTE", self.summary(QUIET_LOG + VERBOSE_LINES))
 
+    def test_clean_shutdown(self):
+        self.assertIn("Clean shutdown      : no", self.summary(QUIET_LOG))
+        self.assertIn("Clean shutdown      : yes", self.summary(QUIET_LOG + "(END)\n"))
+
+    def test_anomalies_of_failure_events_and_warnings_by_logger(self):
+        ofh = "".join(f"2026-07-06T17:14:11.{i:06d} [OFH     ] [W] Late message {i}\n" for i in range(50))
+        rrc = '2026-07-06T17:14:12.000000 [RRC     ] [W] ue=0 c-rnti=0x4601: "RRC Setup Procedure" timed out after 2000ms\n'
+        out = self.summary(QUIET_LOG + ofh + rrc)
+        self.assertIn('! Failure event rrc_setup_timeout: 1 (first: [RRC] ue=0 c-rnti=0x4601: "RRC Setup Procedure" '
+                      "timed out after 2000ms)", out)
+        self.assertIn("! Warning-level log lines: 52\n    [OFH] 51, first: Late message\n"
+                      '    [RRC] 1, first: ue=0 c-rnti=0x4601: "RRC Setup Procedure"', out)
+
+    def test_duplex_of_the_band(self):
+        cfg = Path(self.tmp.name) / "ocudu_gnb.yml"
+        cfg.write_text("cell_cfg:\n  band: 78\n")
+        self.assertIn("Duplex        : TDD", self.summary(QUIET_LOG))
+        cfg.write_text("cell_cfg:\n  dl_arfcn: 368500\n")
+        self.assertIn("Duplex        : unknown (no band or TDD pattern configured)", self.summary(QUIET_LOG))
+
     def test_metrics_rows_leave_out_the_worker_lines(self):
         out = self.summary(QUIET_LOG)
         self.assertIn("Metrics rows in gnb.log : 1", out)

@@ -46,7 +46,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR.parent / "_lib"))
 
 from parsers.log.run import primary_log_in, resolve_run_dir  # noqa: E402
-from parsers.log import metrics  # noqa: E402
+from parsers.log import metrics, preamble  # noqa: E402
 from parsers.log.search import iso_bound  # noqa: E402
 from parsers.ran.rnti import parse_any  # noqa: E402
 
@@ -64,6 +64,24 @@ def resolve_log(path_str: str) -> Path:
     if log is None:
         raise FileNotFoundError(f"No OCUDU app log under {p}")
     return log
+
+
+def unparsed_kinds(log: Path) -> dict[str, int]:
+    """Numbers of the METRICS rows of a log of no known layer, by their text before the first colon, e.g. "CU-CP NGAP
+    metrics".
+    """
+    kinds: dict[str, int] = {}
+    with open(log, "rb") as f:
+        lines = [raw.decode("utf-8", "replace") for raw in f if b"[METRICS" in raw]
+    for line in lines:
+        # Rows have no level, unlike the lines of the metrics workers.
+        if not (m := preamble.match_preamble(line)) or m.group("layer") != "METRICS" or m.group("level"):
+            continue
+        text = line[m.end():]
+        if not any(p.match(text) for p in metrics.LAYER_PATTERNS.values()):
+            kind = text.split(":", 1)[0].strip()
+            kinds[kind] = kinds.get(kind, 0) + 1
+    return kinds
 
 
 def parse_value(text: str):
@@ -193,6 +211,10 @@ def main(argv=None) -> int:
             print("  fields: " + ", ".join(f + (f" [{units[f]}]" if f in units else "") for f in fields))
         if not by_layer:
             print("No METRICS rows.")
+        # Rows of other layers are left out of the parse, e.g. the CU-CP NGAP and RRC metrics.
+        if kinds := unparsed_kinds(log):
+            listed = ", ".join(f"{k} ({n})" for k, n in sorted(kinds.items(), key=lambda kv: -kv[1]))
+            print(f"\n{sum(kinds.values())} METRICS lines not parsed: {listed}")
         return 0
 
     units = parser.units[args.layer]

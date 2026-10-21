@@ -106,6 +106,15 @@ if __name__ == "__main__":
         self.assertTrue(cfg.tdd)
         self.assertEqual((cfg.amf_addrs, cfg.amf_bind_addrs, cfg.amf_port), (["10.0.0.1"], ["10.0.0.2"], 38412))
 
+    def test_duplex(self):
+        # A TDD band without a TDD pattern gets OCUDU's default one.
+        self.assertTrue(config.parse_config("cell_cfg:\n  band: 78\n").tdd)
+        self.assertFalse(config.parse_config("cell_cfg:\n  band: 3\n").tdd)
+        self.assertTrue(config.parse_config("cell_cfg:\n  band: 3\n  tdd_ul_dl_cfg:\n    nof_dl_slots: 7\n").tdd)
+        self.assertFalse(config.parse_config("ru:\n  duplex: fdd\ncell_cfg:\n  band: 78\n").tdd)
+        # The band of a neighbour cell is not the cell's.
+        self.assertIsNone(config.parse_config("cell_cfg:\n  dl_arfcn: 368500\n  ncells:\n    - band: 78\n").tdd)
+
     def test_values_of_list_items(self):
         cfg = config.parse_config("cell_cfg:\n  pci: 7\ncells:\n  - pci: 1\n    band: 78\n  - pci: 2\n")
         self.assertEqual((cfg.values["pci"], cfg.values["band"]), ("2", "78"))

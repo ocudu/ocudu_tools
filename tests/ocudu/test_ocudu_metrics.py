@@ -52,6 +52,14 @@ class OcuduMetricsTest(unittest.TestCase):
         self.assertIn("sched_ue: 2 rows", out)
         self.assertIn("dl_brate [bps]", out)
 
+    def test_lists_unparsed_kinds(self):
+        self.assertNotIn("not parsed", self.run_script())
+        ngap = "2026-06-29T14:10:12.000000 [METRICS ] CU-CP NGAP metrics: [ amf_name=amf connected=true ]\n"
+        rrc = "2026-06-29T14:10:12.000001 [METRICS ] CU-CP RRC metrics: [ gnb_du_id=0 mean_nof_rrc_connections=0 ]\n"
+        worker = "2026-06-29T14:10:12.000002 [METRICS ] [I] Stopped the executor metrics backend worker\n"
+        self.log.write_text(SAMPLE_GNB_LOG + ngap + ngap + rrc + worker)
+        self.assertIn("3 METRICS lines not parsed: CU-CP NGAP metrics (2), CU-CP RRC metrics (1)", self.run_script())
+
     def test_stats_by_context_field(self):
         out = self.run_script("--layer", "sched_ue", "--fields", "dl_brate,cqi", "--by", "ue")
         self.assertIn("ue=81: 1 rows", out)

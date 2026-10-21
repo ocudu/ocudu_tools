@@ -63,6 +63,35 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual(len(s.rrc_msgs), 2)
         self.assertEqual((s.metrics_rows, s.clean_shutdown, s.shutdown_signal_ts), (1, True, "2026-07-27T15:45:05.000000"))
 
+    def test_clean_shutdown(self):
+        stop = "2026-10-18T21:03:50.540365 [GNB     ] [I] Stopping...\n"
+        end = "(END)\n"
+        later = "2026-10-18T21:04:00.000000 [GNB     ] [I] Built in Release mode using commit 52af368 on branch main\n"
+        # The closing line of the file sink, of builds that log no workers stopped at warning.
+        self.assertTrue(summary.summarize([stop, end]).clean_shutdown)
+        # A crash or a hang during shutdown, and a later run appended after the closing line.
+        self.assertFalse(summary.summarize([stop]).clean_shutdown)
+        self.assertFalse(summary.summarize([stop, end, later]).clean_shutdown)
+        # Older builds without the closing line.
+        pcaps = "2026-09-29T21:04:56.240740 [GNB     ] [I] PCAP files successfully closed.\n"
+        self.assertTrue(summary.summarize([pcaps]).clean_shutdown)
+
+    def test_failures_and_lines_by_logger(self):
+        log = [
+            "2026-10-18T21:03:20.000000 [OFH     ] [W] Sector#0: missed incoming User-Plane PRACH messages\n",
+            "2026-10-18T21:03:21.000000 [OFH     ] [W] Sector#0: late message\n",
+            '2026-10-18T21:03:22.000000 [RRC     ] [W] ue=0 c-rnti=0x4601: "RRC Setup Procedure" timed out after 2000ms\n',
+            '2026-10-18T21:03:23.000000 [DU-MNG  ] [I] ue=0 rnti=0x4601: RLF detected with cause "RLC max ReTxs reached"\n',
+            '2026-10-18T21:03:24.000000 [DU-MNG  ] [I] ue=1 rnti=0x4602: RLF detected with cause "RLC max ReTxs reached"\n',
+            "2026-10-18T21:03:25.000000 [RLC     ] [E] du=0 ue=0 DRB1 DL: Failed to enqueue buffer state update\n",
+        ]
+        s = summary.summarize(log)
+        self.assertEqual(s.failures, {"rrc_setup_timeout": 1, "rlf": 2})
+        self.assertEqual(s.first_failures["rlf"][:2], ("2026-10-18T21:03:23.000000", "DU-MNG"))
+        self.assertEqual(s.warnings_by_logger, {"OFH": 2, "RRC": 1})
+        self.assertEqual(s.first_warning_by_logger["OFH"][1], "Sector#0: missed incoming User-Plane PRACH messages")
+        self.assertEqual(s.errors_by_logger, {"RLC": 1})
+
     def test_debug_levels(self):
         log = [
             # Slot events at debug, of a newer build with the pci in the header, and of an older one in the event.

@@ -70,7 +70,11 @@ _CELL_PATHS = (("cell_cfg",), ("cells", "-"))
 PCAP_PROTOCOLS = ("ngap", "f1ap", "e1ap", "mac", "rlc", "n3", "f1u", "xnap", "e2ap_cu_cp", "e2ap_cu_up", "e2ap_du")
 _SCALAR_RE = re.compile(r"(?P<key>[\w-]+)\s*:\s*(?P<value>.*?)\s*(?:#.*)?$")
 _PCAP_RE = re.compile(r"^\s*(\w+)_enable\s*:\s*true\s*$", re.MULTILINE)
-_TDD_RE = re.compile(r"^\s*(?:-\s+)?duplex\s*:\s*tdd\b", re.MULTILINE)
+_DUPLEX_RE = re.compile(r"^\s*(?:-\s+)?duplex\s*:\s*(?P<mode>tdd|fdd)\b", re.MULTILINE)
+# NR bands of TDD duplex, as OCUDU's band_helper lists them from TS 38.101-1 Table 5.2-1 and TS 38.101-2 Table 5.2-1.
+# OCUDU sets a default TDD pattern for a band of these without one.
+TDD_BANDS = frozenset({34, 38, 39, 40, 41, 46, 48, 50, 51, 53, 77, 78, 79, 90, 96, 101, 102, 104,
+                       257, 258, 259, 260, 261, 262})
 _AMF_RE = re.compile(r"^(?P<indent>\s*)amf\s*:\s*(?:#.*)?$")
 _KEY_VALUE_RE = re.compile(r"^\s*(?P<key>\w+)\s*:\s*(?P<value>[^#]*?)\s*(?:#.*)?$")
 _LIST_ITEM_RE = re.compile(r"^\s*-\s*(?P<value>[^#]*?)\s*(?:#.*)?$")
@@ -95,8 +99,8 @@ class AppConfig:
     values: dict[str, str] = field(default_factory=dict)
     # Protocols of PCAP_PROTOCOLS with an enabled pcap, in the order first seen.
     pcaps: list[str] = field(default_factory=list)
-    # Whether the cell is TDD.
-    tdd: bool = False
+    # Whether the cell is TDD: by its TDD pattern or duplex option, else by its band, else None.
+    tdd: bool | None = None
     # IPv4 addresses of the AMF and of the local end of the connection to it, and the AMF port.
     amf_addrs: list[str] = field(default_factory=list)
     amf_bind_addrs: list[str] = field(default_factory=list)
@@ -151,7 +155,12 @@ def parse_config(text: str, complete: bool = True) -> AppConfig:
     for proto in _PCAP_RE.findall(text):
         if proto in PCAP_PROTOCOLS and proto not in cfg.pcaps:
             cfg.pcaps.append(proto)
-    cfg.tdd = "tdd_ul_dl_cfg" in text or _TDD_RE.search(text) is not None
+    if "tdd_ul_dl_cfg" in text:
+        cfg.tdd = True
+    elif m := _DUPLEX_RE.search(text):
+        cfg.tdd = m.group("mode") == "tdd"
+    elif cfg.values.get("band", "").isdigit():
+        cfg.tdd = int(cfg.values["band"]) in TDD_BANDS
     _parse_amf(text, cfg)
     return cfg
 

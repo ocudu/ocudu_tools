@@ -22,7 +22,8 @@ Emits, in one pass:
 
 - Build: commit and branch of the log, and the stdout banner commit when it differs.
 - Configuration, from the config file or else the log echo: node type and planes, gnb_id, cell (pci, band, BW, SCS,
-  ARFCN, antennas), duplex (unknown without either), AMF endpoint, log levels, enabled pcaps.
+  ARFCN, antennas), duplex (from the TDD pattern, else the band; unknown without either), AMF endpoint, log levels,
+  enabled pcaps.
 - Run lifecycle: first and last log time, duration, AMF SCTP connection, NG setup outcome, clean shutdown.
 - Cells and UEs: cells created, UE creations, Initial Context Setups completed, releases.
 - Procedure counts: RRC reconfigurations, handovers completed (target side, info: `"Intra CU Handover Target Routine"
@@ -36,9 +37,11 @@ Emits, in one pass:
 - Scheduler metrics: from `metrics.json` when present (peak DL/UL bitrate per UE, max latency, late HARQs, failed
   PDCCH/UCI allocations, error indications, Msg3 outcomes, events), else the count and last of the METRICS
   rows, without the leveled lines of the metrics workers.
-- Anomalies: abnormal exit, NG setup failure or no response, reestablishments, incomplete Initial Context Setups,
-  high CRC failures, Msg3 failures, error and warning line totals with the first of each, late HARQs, failed PDCCH
-  allocations, error indications, fewer releases than creations at a clean shutdown.
+- Anomalies: abnormal exit (no closing `(END)` line), NG setup failure or no response, reestablishments, incomplete
+  Initial Context Setups, high CRC failures, Msg3 failures, failure events (RLF, RRC setup timeout, ConRes timeout,
+  ...: count and first of each type), error and warning line totals with the count and first line of the 5 loggers
+  with most, late HARQs, failed PDCCH allocations, error indications, fewer releases than creations at a clean
+  shutdown.
 
 If the script is absent or fails, fall back to the grep recipes in
 `reference/log-format.md` § Key grep recipes to collect the same info manually.

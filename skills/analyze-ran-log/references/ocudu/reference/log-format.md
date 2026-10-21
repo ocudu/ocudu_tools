@@ -25,16 +25,23 @@ on, every event begins with an ISO-8601 timestamp.
 
 ### End of file
 
-A clean shutdown ends with:
+A clean shutdown ends with the file sink's closing line, with no timestamp:
 
 ```
-... [GNB     ] [I] Closing PCAP files...
-... [ALL     ] [I] Saved PCAP (DLT=252) to "<path>" and closed
-... [ALL     ] [I] Workers stopped successfully.
+... [GNB     ] [I] Stopping...
+... [METRICS ] [I] Stopped the executor metrics backend worker
+(END)
 ```
 
-An abnormal exit (crash, kill -9) leaves no `Workers stopped successfully.`
-line. A SIGTERM-style shutdown completes the sequence above.
+`Stopping...` is forced to info; the lines between it and `(END)`
+(`Closing PCAP files...`, `PCAP files successfully closed.`, `Stopping workers...`,
+`Workers stopped successfully.`) print only at the info level of their logger
+(GNB or the app logger, ALL for the workers). Older builds without `(END)` end
+with `Workers stopped successfully.`.
+
+An abnormal exit (crash, kill -9, hang killed by the harness) leaves no `(END)`.
+`Stopping...` alone is not clean: a crash or hang after it leaves no `(END)`, and
+a crash often ends with `[APP     ] [E] Emergency flush of the logger`.
 
 ### Log line format
 
@@ -110,8 +117,9 @@ state transitions:
 | Pattern | Meaning |
 |---|---|
 | `Built in .* mode using commit` | Binary build identity (top of file) |
-| `Closing PCAP files...` | Shutdown handler entered (often follows SIGTERM) |
-| `Workers stopped successfully` | Clean process termination |
+| `Stopping...` | Main loop left, shutdown started (forced to info) |
+| `Closing PCAP files...` | PCAPs closing, after the layers stopped (info only) |
+| `(END)` | Log closed: clean termination. Older builds: `Workers stopped successfully` |
 | `[SCTP-GW ] N2: SCTP connection to AMF established` | NGAP transport (SCTP) up |
 | `[CU-CP ] N2: Connection to AMF on <ip>:<port> was established` | AMF connection up (the marker the summary keys on) |
 | `Tx PDU: NGSetupRequest` / `Rx PDU: NGSetupResponse` | gNB ↔ AMF NG setup |
@@ -241,7 +249,9 @@ RLC PCAP stored in /var/log/retina/<run>/rlc.pcap
 | `phr` | Power headroom |
 
 **Shutdown block** — `Stopping...` followed by paths of the produced logfile
-and PCAPs. Absence of these lines means an abnormal exit.
+and PCAPs. Absence of these lines means an abnormal exit. `Stopping...` and
+`Logfile stored in` print as shutdown starts, so a later hang or crash still
+leaves them; the log's closing `(END)` line is the clean-exit marker.
 
 In multi-cell runs the header reprints whenever a UE moves cells, and the
 `pci` column shows the UE's serving cell.
@@ -322,7 +332,7 @@ grep -nE "\[METRICS \] Scheduler cell" gnb.log
 grep -nE "\[(W|E)\] " gnb.log | head -50
 
 # Run boundaries
-grep -nE "Built in .* commit|Workers stopped successfully|Closing PCAP files" gnb.log
+grep -nE "Built in .* commit|\] Stopping\.\.\.|Closing PCAP files|Workers stopped successfully|^\(END\)" gnb.log
 
 # AMF NGAP connection lifecycle
 grep -nE "(N2:|NGSetupRequest|NGSetupResponse|NGSetupFailure|AMF reconnection)" gnb.log

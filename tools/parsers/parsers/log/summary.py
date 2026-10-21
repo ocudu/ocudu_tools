@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
 # SPDX-License-Identifier: BSD-3-Clause-Open-MPI
 
-"""Summary of an OCUDU log in one pass: build, time span, NG setup, cells, UE lifecycle, procedure counters, warnings,
-errors and shutdown.
+"""Summary of an OCUDU log in one pass: build, time span, NG setup, cells, UE lifecycle, procedure counters, failure
+events, warnings, errors and shutdown.
 
 Procedures are counted from the info lines of their loggers, so their counts are zero when those log at warning.
 """
@@ -13,7 +13,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from . import preamble
+from . import events, preamble
 
 _UE_RE = re.compile(r"\bue=(\d+)\b")
 _PCI_RE = re.compile(r"\bpci=(\d+)\b")
@@ -37,6 +37,16 @@ BENIGN_WARNINGS = (
     "UE creation (ue=",
     "MAC UE creation (ue=",
 )
+# File sink line closing a log, written when the logger shuts down, and lines of a completed shutdown of builds
+# without it: the workers stopped, which newer builds log only when the ALL logger is at info, and the pcaps closed,
+# at the level of the application logger.
+_END_MARK = "(END)"
+_STOPPED_MARKS = ("Workers stopped successfully", "PCAP files successfully closed")
+# Failure event patterns of parsers.log.events, by logger, in their order.
+_FAILURE_PATTERNS: dict[str, list[events.EventPattern]] = {}
+for _pattern in events.EVENT_PATTERNS:
+    if _pattern.category == "failure":
+        _FAILURE_PATTERNS.setdefault(_pattern.layer, []).append(_pattern)
 # Warning and error lines kept at most.
 MAX_KEPT_LINES = 50
 # RRC lines kept at most, and the messages they are kept for.
@@ -55,7 +65,7 @@ class LogSummary:
     app: str | None = None
     first_ts: str | None = None
     last_ts: str | None = None
-    # Whether the workers stopped successfully.
+    # Whether the log ends with the closing line of the file sink, or logs a completed shutdown.
     clean_shutdown: bool = False
     # "success", "failure" or None when no NG setup outcome is logged.
     ng_setup: str | None = None
@@ -91,6 +101,15 @@ class LogSummary:
     benign_warning_count: int = 0
     errors: list[tuple[str, str, str]] = field(default_factory=list)
     error_count: int = 0
+    # Numbers of the non-benign warnings and of the errors by logger, and (time, message) of the first of each logger.
+    warnings_by_logger: dict[str, int] = field(default_factory=dict)
+    first_warning_by_logger: dict[str, tuple[str, str]] = field(default_factory=dict)
+    errors_by_logger: dict[str, int] = field(default_factory=dict)
+    first_error_by_logger: dict[str, tuple[str, str]] = field(default_factory=dict)
+    # Numbers of the failure events of parsers.log.events by type, and (time, logger, message) of the first of each
+    # type, in the order first seen.
+    failures: dict[str, int] = field(default_factory=dict)
+    first_failures: dict[str, tuple[str, str, str]] = field(default_factory=dict)
     # UE indexes, RNTIs and PCIs seen, sorted.
     ues_seen: list[str] = field(default_factory=list)
     rntis_seen: list[str] = field(default_factory=list)
@@ -118,9 +137,13 @@ def summarize(lines: Iterable[str]) -> LogSummary:
     # Time and PCI, if any, of the entry of scheduler slot events at debug, whose continuation lines hold the events.
     slot_events_ts: str | None = None
     slot_events_pci: int | None = None
+    # Whether the last line is the closing line of the file sink, and whether a completed shutdown is logged.
+    end_mark = stopped = False
     for raw in lines:
         # The configuration echo and continuation lines do not start with a timestamp, so skip them before matching.
         if not raw or raw[0] not in "0123456789":
+            if raw.startswith(_END_MARK):
+                end_mark = True
             # The handover marker is the ASN.1 or JSON brace of the reconfigurationWithSync of an RRC body.
             if "reconfigurationWithSync" in raw and "{" in raw:
                 out.reconf_with_sync_count += 1
@@ -142,6 +165,8 @@ def summarize(lines: Iterable[str]) -> LogSummary:
         lvl = m.group("level") or ""
         msg = raw[m.end() :].rstrip("\r\n")
         loggers.add(layer)
+        # A log appended to after its closing line holds a later run.
+        end_mark = False
         slot_events_ts = None
         if layer == "SCHED" and msg.endswith(":") and (sm := _SLOT_EVENTS_RE.search(msg)):
             slot_events_ts, slot_events_pci = ts, int(sm.group(1)) if sm.group(1) else None
@@ -153,6 +178,8 @@ def summarize(lines: Iterable[str]) -> LogSummary:
             out.error_count += 1
             if len(out.errors) < MAX_KEPT_LINES:
                 out.errors.append((ts, layer, msg.strip()))
+            out.errors_by_logger[layer] = out.errors_by_logger.get(layer, 0) + 1
+            out.first_error_by_logger.setdefault(layer, (ts, msg.strip()))
         elif lvl == "W":
             if is_benign_warning(msg):
                 out.benign_warning_count += 1
@@ -160,6 +187,14 @@ def summarize(lines: Iterable[str]) -> LogSummary:
                 out.warning_count += 1
                 if len(out.warnings) < MAX_KEPT_LINES:
                     out.warnings.append((ts, layer, msg.strip()))
+                out.warnings_by_logger[layer] = out.warnings_by_logger.get(layer, 0) + 1
+                out.first_warning_by_logger.setdefault(layer, (ts, msg.strip()))
+
+        for pattern in _FAILURE_PATTERNS.get(layer, ()):
+            if pattern.pattern.search(msg):
+                out.failures[pattern.type] = out.failures.get(pattern.type, 0) + 1
+                out.first_failures.setdefault(pattern.type, (ts, layer, msg.strip()))
+                break
 
         if layer in _APP_LOGGERS:
             if "Built in" in msg and (bm := _BUILD_RE.search(msg)):
@@ -232,9 +267,10 @@ def summarize(lines: Iterable[str]) -> LogSummary:
 
         if "Closing PCAP files" in msg and out.shutdown_signal_ts is None:
             out.shutdown_signal_ts = ts
-        if "Workers stopped successfully" in msg:
-            out.clean_shutdown = True
+        if not stopped and any(m in msg for m in _STOPPED_MARKS):
+            stopped = True
 
+    out.clean_shutdown = end_mark or stopped
     out.ues_seen = sorted(ues, key=lambda s: int(s) if s.isdigit() else -1)
     out.rntis_seen = sorted(rntis)
     out.pcis_seen = sorted(pcis)

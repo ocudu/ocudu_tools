@@ -82,7 +82,7 @@ here — copy them verbatim, the pipe must **not** be backslash-escaped:
 
 ```bash
 --pattern "NGSetupResponse|NGSetupFailure"              # NGAP connect to AMF
---pattern "Built in|Workers stopped successfully"       # run duration
+--pattern "Built in|\] Stopping\.\.\."                 # run duration
 --level "E|W|C"                                         # errors and warnings
 ```
 
@@ -108,7 +108,9 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/ocudu_metrics.py <gnb.log> --layer sch
 ```
 
 Without `--rows` it prints count/min/mean/max per field, with `--rows` the matching
-rows with their log line numbers. When the log has no `[METRICS]` lines, parse
+rows with their log line numbers. The layer listing ends with the count and kinds
+of the METRICS lines of no known layer, e.g. `CU-CP NGAP metrics`; grep those.
+When the log has no `[METRICS]` lines, parse
 `metrics.json` with python instead; never `cat` it whole. The summary script
 already does the common rollups of it.
 
