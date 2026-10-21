@@ -40,8 +40,8 @@ VERSION_ENUMS = ("FileFormatVersionMajor", "FileFormatVersionMinor")
 _FORMAT_NAMES = {"?": "bool", "b": "i8", "B": "u8", "h": "i16", "H": "u16", "i": "i32", "I": "u32", "q": "i64", "Q": "u64",
                  "f": "f32", "d": "f64"}
 
-# Fields that root_grid() keeps, by table: those that grid.allocations() and ue_metrics read, the timestamp, slot and
-# latency of an event, and the type of each input. Tables not listed keep all their fields.
+# Fields that root_grid() keeps, by table: those that grid.allocations(), ue_metrics and harq read, the timestamp,
+# slot and latency of an event, and the type of each input. Tables not listed keep all their fields.
 GRID_FIELDS: dict[str, tuple[str, ...]] = {
     "CellSlotEvent": ("slot_tx", "latency_us", "inputs", "decision"),
     "SlotDecision": ("dl_pdcchs", "ul_pdcchs", "sib_pdschs", "rar_pdschs", "paging_pdschs", "ue_pdschs", "puschs",
@@ -54,7 +54,7 @@ GRID_FIELDS: dict[str, tuple[str, ...]] = {
     "RarPdsch": ("rnti", "rbs", "sym_start", "sym_length", "grants"),
     "PagingPdsch": ("rbs", "sym_start", "sym_length", "paging_ues"),
     "RachIndication": (),
-    "HarqAckEvent": ("ue_idx", "rnti", "harq_id", "status", "tbs"),
+    "HarqAckEvent": ("slot_rx", "ue_idx", "rnti", "harq_id", "status", "tbs"),
     "SrEvent": ("ue_idx", "rnti"),
     "CsiReportEvent": ("ue_idx", "rnti", "rsrp_dbm", "ri", "first_tb_wb_cqi"),
 }

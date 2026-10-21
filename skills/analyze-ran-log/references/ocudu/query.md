@@ -148,6 +148,23 @@ not single values. Traces have no UL
 CRC or buffer status, so UL throughput is of the scheduled new transmissions
 (`ul_sched_brate`), and a DTX report counts as not ok.
 
+**Scheduler HARQ transactions** — for "what happened to this PDSCH/PUSCH" or "which
+DL transport blocks were never ACKed", group the scheduler event traces per HARQ
+process of a UE: a transport block's new transmission and retransmissions, their
+PDCCHs, the UCI of their HARQ-ACK (PUCCH, or a PUSCH of the UE in that slot,
+inferred) and the HARQ-ACK reports, until an ACK or the next new transmission:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/schedtrace_harq.py <trace or run dir> \
+  --rnti 0x4601 --harq-id 3 [--slot 263.3] [--after 13:51:52] [--before ...] [--dir dl|ul]
+python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/schedtrace_harq.py <trace or run dir> --failed [--rnti 0x4601]
+```
+
+`--slot` matches a PDSCH or PUSCH at that SFN.slot of any SFN cycle; narrow with
+`--after`. Traces have no UL CRC, so UL transactions have no outcome, and no event of
+HARQ timeouts: a DL transaction without ACK ends at the next new transmission on
+its process, and `--failed` lists those with NACK/DTX reports or none.
+
 ## answer shape
 
 ```

@@ -154,8 +154,8 @@ def events(data: bytes | memoryview, grid_only: bool = False) -> Iterator[dict[s
     event, e.g. "slot_tx", "latency_us", "inputs" and "decision" for a slot. An incomplete last event, e.g. of a
     trace still being written, is left out, and so are the events from a corrupt one, with a warning: of a size prefix
     below MIN_EVENT_SIZE or over MAX_EVENT_SIZE, or whose FlatBuffer does not decode.
-    grid_only keeps only the fields of codegen.GRID_FIELDS, which is faster: those that grid.allocations() and
-    ue_metrics read, the timestamp, slot and latency of an event, and the type of each input.
+    grid_only keeps only the fields of codegen.GRID_FIELDS, which is faster: those that grid.allocations(), ue_metrics
+    and harq read, the timestamp, slot and latency of an event, and the type of each input.
     """
     root = _root(grid_only)
     view = memoryview(data)

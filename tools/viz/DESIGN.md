@@ -450,8 +450,9 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
 ### D19d. Tabs of the log pane
 
 - Each record opened from a panel or an event gets a tab of the log pane, so that several can be compared: a log has
-  one tab per source, an ad-hoc metric being a source of its own, which shows any of its lines; a frame or a slot
-  event, whose detail is the point, a tab per record. Opening a record already in a tab shows that tab.
+  one tab per source, an ad-hoc metric being a source of its own, which shows any of its lines; a frame, a slot event
+  or a HARQ transaction (D20a), whose detail is the point, a tab of its own. Opening a record already in a tab shows
+  that tab.
 - A record is opened in the preview tab, in italics, which the next record opened replaces, as in editors, so that
   browsing points does not pile up tabs. A double-click on its label, or scrolling, clicking, searching or
   right-clicking in it, keeps it.
@@ -460,6 +461,7 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
 - Tabs belong to the tab of their run, and the URL view state saves those kept, by the file of their source; a tab of
   an ad-hoc metric is saved as the same line of its log.
 - Labels are the file of the source, and for frames and slot events their record, the slot `SFN.slot` of a trace event.
+  A HARQ transaction is saved by its allocation, and found again when restored.
 
 ### D19b. Ad-hoc metrics of logs
 
@@ -550,6 +552,29 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
   since mapping a time back to a slot can land on the next slot, slot times jittering around their nominal spacing.
 - Duplex is not in the trace: a cell is FDD when at least 5% of its slots with PDSCH, PUSCH or PUCCH have DL and UL
   together, which TDD cells only have in special slots, without PDSCH and PUSCH together.
+
+### D20a. HARQ transactions
+
+- Right-clicking a PDSCH, a PUSCH or the PDCCH of a UE (not of SI-RNTI, RA-RNTI or P-RNTI) in the grid offers
+  `Inspect HARQ process`, which opens the HARQ transaction of the allocation in a tab of the log pane (D19d): the life of
+  its transport block on its process, grouped by `parsers.schedtrace.harq` by RNTI and HARQ id from a new transmission
+  (`nof_retxs` 0, since PDSCHs and PUSCHs have no NDI), with its PDCCHs, UCI and HARQ-ACK reports, until an Ack or the
+  next new transmission on the process. A menu, since a click opens the slot event.
+- `GET /api/harq?source&record&item` takes what the grid has, the slot event and `list:index` of the allocation, and
+  decodes on demand the slot events within 1024 slots (one SFN cycle) before and after it, stopping when the
+  transaction ends: a transaction lasts tens of slots, so nothing is stored at parse time. Rows are timed as the grid
+  places their slots.
+- The tab shows the outcome in its header, and a table of one row per PDU or report: time after the first row, SFN.slot,
+  kind, transmission, RNTI, and the fields of the kind as `key=value` text, rather than a wide table of every field,
+  mostly empty. A click on a row focuses its slot (D19a2), a double-click opens its slot event. Its label is
+  `HARQ <dir> <rnti> h<id> · <SFN.slot>` of its first row.
+- While the tab is shown, the grid outlines the allocations of the transaction in `--focus` gray, outside their own
+  outline. Inspecting an allocation of a transaction already in a tab shows that tab.
+- The trace does not say which PUSCH carries UCI, nor has it UL CRC or HARQ timeouts: a PUSCH of the UE in the UCI slot
+  of a PDSCH without a PUCCH with HARQ-ACK bits is shown as `UCI on PUSCH`, inferred; UL transactions have no outcome;
+  a DL transaction without Ack ends at the next new transmission on its process.
+- PUCCHs are not entry points, since one carries the HARQ-ACK of several PDSCHs. Log lines of the transaction are not
+  shown.
 
 ### D21. Maximized panels and log pane
 

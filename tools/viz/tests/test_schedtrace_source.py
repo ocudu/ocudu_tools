@@ -89,6 +89,14 @@ class SchedtraceSourceTest(unittest.TestCase):
         self.assertEqual(self.store.meta["grid"]["slots_per_frame"], 10)
         self.assertEqual(self.source.grid(self.path, self.store, 0, 1, 1000)["rects"], [])
 
+    def test_harq(self):
+        tr = self.source.harq(self.path, self.store, 2, ("puschs", 0))
+        self.assertEqual((tr["dir"], tr["rnti"], tr["tbs"], tr["ended_by"]), ("UL", "0x4602", 900, "end"))
+        self.assertEqual(tr["rows"][0]["t"], 1700000000.0005)
+        self.assertIsNone(self.source.harq(self.path, self.store, 3, ("puschs", 0)))
+        with self.assertRaisesRegex(ValueError, "No event 4"):
+            self.source.harq(self.path, self.store, 4, ("puschs", 0))
+
     def test_records(self):
         texts = [r["text"] for r in self.store.records(1, 10)]
         self.assertEqual(len(texts), 3)

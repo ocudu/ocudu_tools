@@ -110,6 +110,12 @@ In the page:
   CSI report, RACH), or as raw JSON, and click
   the occupancy to zoom to 40 slots around it. Traces are parsed on request, like MAC and RLC pcaps: a grid parses its
   trace when it opens.
+- Right-click a PDSCH, a PUSCH or the PDCCH of a UE in the grid and `Inspect HARQ process` opens its transport block in
+  a tab of the log pane: its PDCCHs, PDSCHs or PUSCHs, the UCI of its HARQ-ACK (PUCCH, or a PUSCH of the UE in that
+  slot, marked `inferred`) and the HARQ-ACK reports, one row per PDU or report with its slot, transmission and
+  parameters, from its new transmission to an ACK or the next new transmission on the process, and its outcome in the
+  header (UL has none: the trace has no UL CRC). The grid outlines its allocations while the tab is shown. Click a row
+  to mark its slot, double-click it to open its slot event.
 - A scheduler event trace also gives plots and tables per UE: `ue_metrics`, per UE and 10 ms (throughput as METRICS
   `dl_brate`, from the ACKed TBS, scheduled DL and UL throughput, MCS, PRBs, new and retransmissions, ACK/NACK/DTX
   and error rate, CQI, RI, RSRP, SRs); `cell_metrics`, the scheduler latency, PRBs and UEs per 10 ms; and the grants
@@ -124,7 +130,8 @@ In the page:
   search box finds text in the whole file, case-insensitive, from the highlighted line: Enter or `↓` goes to the next
   match, Shift+Enter or `↑` to the previous one, wrapping around the file, and the matches in view are highlighted.
   With `regex`, the text is a regular expression (Python syntax).
-- Each record opens in a tab of the log pane: a log in one tab per file, a frame or slot event in a tab of its own.
+- Each record opens in a tab of the log pane: a log in one tab per file, a frame, slot event or HARQ transaction in a
+  tab of its own.
   The tab in italics is a preview, which the next record opened replaces; double-click its label, or scroll, click or
   search in it, to keep it. Up to 8 tabs are kept, the least recently shown closed first; `×` (or a middle click)
   closes one, `✕` all. The plots mark the line of the shown tab, and the URL keeps the tabs kept.

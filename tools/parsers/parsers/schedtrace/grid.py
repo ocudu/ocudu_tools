@@ -176,7 +176,8 @@ def allocations(slot_event: dict[str, Any], cell: Cell) -> list[dict[str, Any]]:
             if nof_cces is None or ss is None:
                 continue
             info = {"item": [key, i], "rnti": p["rnti"], "dci_type": p["dci_type"], "coreset_id": p["coreset_id"],
-                    "ss_id": p["ss_id"], "cce": p["cce"], "nof_cces": nof_cces}
+                    "ss_id": p["ss_id"], "cce": p["cce"], "nof_cces": nof_cces, "harq_id": p.get("harq_id"),
+                    "ndi": p.get("ndi"), "rv": p.get("rv"), "mcs": p.get("mcs")}
             cce_key = (p["coreset_id"], p["cce"], nof_cces)
             crbs = pdcch_cache.get(cce_key)
             if crbs is None:

@@ -131,6 +131,11 @@ const App = {
     paneTabs() {
       return this.activeTab?.pane.tabs ?? [];
     },
+    /** Allocations of the HARQ transaction of the shown tab of the log pane, which the grid outlines. */
+    outline() {
+      const t = this.paneTabs.find((x) => x.id === this.activeTab?.pane.active);
+      return t?.kind === "harq" && t.members ? { source: t.sel.source, members: t.members } : null;
+    },
     readySources() {
       return this.runSources.filter((s) => s.status === "ready");
     },
@@ -588,8 +593,9 @@ const App = {
     },
 
     /**
-     * Opens a record in the log pane: in the tab that shows it, else in the preview tab, which the next record replaces
-     * until it is kept. A log has one tab per source, which shows any of its lines.
+     * Opens a record in the log pane, or with kind "harq" the HARQ transaction of an allocation: in the tab that shows
+     * it, else in the preview tab, which the next one opened replaces until it is kept. A log has one tab per source,
+     * which shows any of its lines.
      * @param {{source: number, record: number, item?: any, field?: string}} sel
      */
     openRecord(sel, kind = "record", tab = this.activeTab) {
@@ -597,7 +603,18 @@ const App = {
       const pane = tab.pane;
       const sel1 = { source: sel.source, record: sel.record, item: sel.item ?? null, field: sel.field ?? null };
       const log = !this.sources[sel.source]?.has_detail;
-      let t = pane.tabs.find((t) => t.kind === kind && t.sel.source === sel.source && (log || t.sel.record === sel.record));
+      const member = sel.item ? `${sel.record}:${sel.item[0]}:${sel.item[1]}` : null;
+      const shows = (t) => {
+        if (t.kind !== kind || t.sel.source !== sel.source) return false;
+        if (kind === "harq") return t.members?.includes(member) || (t.sel.record === sel.record && String(t.sel.item) === String(sel.item));
+        return log || t.sel.record === sel.record;
+      };
+      let t = pane.tabs.find(shows);
+      // A HARQ tab keeps its allocation, which the transaction of the one opened has too.
+      if (t && kind === "harq") {
+        this.activatePaneTab(t.id, tab);
+        return t;
+      }
       if (t) {
         t.sel = sel1;
       } else {
@@ -647,6 +664,18 @@ const App = {
     setPaneTitle({ id, title }) {
       const t = this.paneTabs.find((x) => x.id === id);
       if (t) t.title = title;
+    },
+
+    /** Keeps the allocations of a loaded HARQ tab, and closes it for the tab of the same transaction, if any. */
+    onHarqLoaded({ id, key, members }) {
+      const t = this.paneTabs.find((x) => x.id === id);
+      if (!t) return;
+      t.key = key;
+      t.members = members;
+      const same = this.paneTabs.find((x) => x.id !== id && x.kind === "harq" && x.sel.source === t.sel.source && x.key === key);
+      if (!same) return;
+      this.closePaneTab(id);
+      this.activatePaneTab(same.id);
     },
 
     zoom(range) {
@@ -886,7 +915,8 @@ const App = {
             <grid-panel v-else-if="p.kind === 'grid'" :focus="focus" v-show="activeTab.focused == null || activeTab.focused === p.id" :maximized="activeTab.focused === p.id"
                          :maximized-height="maximizedHeight" @maximize="toggleFocus(p.id)" :panel="p" :sources="sources" :choices="runSources" :view="view" :shifts="shifts"
                         :time-mode="timeMode" :theme-version="themeVersion" @zoom="zoom" @remove="removePlot(p.id)"
-                        @select-record="openRecord($event)" @parse-source="parseSource" />
+                        :outline="outline" @select-record="openRecord($event)" @parse-source="parseSource"
+                        @inspect-harq="openRecord($event, 'harq')" />
             <table-panel v-else-if="p.kind === 'table'" v-show="activeTab.focused == null || activeTab.focused === p.id" :maximized="activeTab.focused === p.id"
                          :maximized-height="maximizedHeight" @maximize="toggleFocus(p.id)" :panel="p" :sources="sources" :choices="panelSources" :view="view" :shifts="shifts"
                          :show-source="panelSources.length > 1" @remove="removePlot(p.id)" @select-record="openRecord($event)"
@@ -909,7 +939,7 @@ const App = {
     </main>
     <record-pane v-if="paneTabs.length" :tabs="paneTabs" :active="activeTab.pane.active" :sources="sources"
                  @close="closePane" @activate="activatePaneTab($event)" @close-tab="closePaneTab" @pin="pinPaneTab" @title="setPaneTitle"
-                 @focus="focusRecord" @select-record="openRecord($event)" @plot-key="plotAdhoc($event)" @mark-lines="markLines($event)" />
+                 @loaded="onHarqLoaded" @focus="focusRecord" @select-record="openRecord($event)" @plot-key="plotAdhoc($event)" @mark-lines="markLines($event)" />
     <file-browser v-if="browserOpen" :roots="roots" @open="openPath" @close="browserOpen = false" />
     <div v-if="relatedQuestion" class="modal-backdrop">
       <section class="modal run-question" role="alertdialog" aria-labelledby="run-question-title" @keydown.esc="activeTab.relatedAnswered = true">

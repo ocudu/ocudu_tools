@@ -261,6 +261,35 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(client.get("/api/series", params={"source": 0, "dataset": "mac", "field": "nof_slots"}).status_code, 409)
         self.assertEqual(client.delete("/api/runs/9").status_code, 404)
 
+    def test_harq(self):
+        import shutil
+
+        from fastapi.testclient import TestClient
+
+        from viz.registry import SourceRegistry
+        from viz.server import create_app
+        from viz.sources.schedtrace import SchedtraceSource
+        from viz.store import StoreCache
+
+        from .test_registry import wait_ready
+        from .test_schedtrace_source import TRACE
+
+        tmp = Path(self.tmp.name).resolve()
+        shutil.copy(TRACE, tmp / "schedtrace_cell0.bin")
+        registry = SourceRegistry(StoreCache(tmp / "cache2"), [SchedtraceSource()], [tmp])
+        client = TestClient(create_app(registry, tmp / "missing"))
+        client.post("/api/runs", json={"path": str(tmp / "schedtrace_cell0.bin")})
+        client.post("/api/sources/0/parse")
+        wait_ready(registry, 0)
+        res = client.get("/api/harq", params={"source": 0, "record": 2, "item": "ue_pdschs:0"})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual((res.json()["dir"], res.json()["harq_id"]), ("DL", 3))
+        self.assertEqual([(r["kind"], r["record"], r["slot"]) for r in res.json()["rows"]],
+                         [("PDCCH", 2, "1234.5"), ("PDSCH", 2, "1234.5")])
+        self.assertEqual(client.get("/api/harq", params={"source": 0, "record": 2, "item": "ssbs:0"}).status_code, 404)
+        self.assertEqual(client.get("/api/harq", params={"source": 0, "record": 9, "item": "puschs:0"}).status_code, 400)
+        self.assertEqual(client.get("/api/harq", params={"source": 0, "record": 2, "item": "puschs"}).status_code, 422)
+
     def test_runs_from_page(self):
         from fastapi.testclient import TestClient
 

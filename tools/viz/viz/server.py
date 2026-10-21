@@ -606,6 +606,28 @@ def create_app(
             raise HTTPException(400, f"Source {source} has no resource grid.")
         return grid_fn(store.path, store, t0, t1, width)
 
+    @app.get("/api/harq")
+    def harq_transaction(
+        source: int,
+        record: int = Query(..., ge=1),
+        item: str = Query(..., pattern=r"^\w+:\d+$"),
+    ) -> dict[str, Any]:
+        """Returns the HARQ transaction of an allocation of a scheduler event trace, a PDSCH, PUSCH or PDCCH given by
+        its slot event and its "list:index" in the slot decision, see SchedtraceSource.harq().
+        """
+        store = get_store(source)
+        harq_fn = getattr(registry.source_type(source), "harq", None)
+        if harq_fn is None or "grid" not in store.meta:
+            raise HTTPException(400, f"Source {source} has no HARQ processes.")
+        name, index = item.split(":")
+        try:
+            out = harq_fn(store.path, store, record, (name, int(index)))
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        if out is None:
+            raise HTTPException(404, f"Allocation {item} of event {record} is of no HARQ process.")
+        return out
+
     @app.get("/api/records/search")
     def search_records(
         source: int,

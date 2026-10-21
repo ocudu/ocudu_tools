@@ -50,11 +50,23 @@ function hexRnti(rnti) {
   return rnti == null ? "" : `0x${rnti.toString(16).padStart(4, "0")}`;
 }
 
+// DL PDCCH dci_type values of the common DCIs, of SI-RNTI, RA-RNTI and P-RNTI, which schedule no HARQ process.
+const COMMON_DL_DCI_TYPES = new Set([0, 1, 4]);
+
+/** Whether an allocation of the grid belongs to a HARQ process of a UE. */
+function isHarqAllocation(item) {
+  const list = item.item?.[0];
+  if (list === "ue_pdschs" || list === "puschs" || list === "ul_pdcchs") return true;
+  return list === "dl_pdcchs" && !COMMON_DL_DCI_TYPES.has(item.dci_type);
+}
+
 export default {
   name: "GridPanel",
   props: {
     // Record highlighted in the log pane, as {source, record, t} in display time.
     focus: { type: Object, default: null },
+    // Allocations of the HARQ transaction shown in the log pane, as {source, members}, members being "record:list:index".
+    outline: { type: Object, default: null },
     panel: { type: Object, required: true },
     sources: { type: Array, required: true },
     // Sources of the tab, among which those with a resource grid.
@@ -67,10 +79,11 @@ export default {
     maximized: { type: Boolean, default: false },
     maximizedHeight: { type: Number, default: 0 },
   },
-  emits: ["zoom", "remove", "select-record", "parse-source", "maximize"],
+  emits: ["zoom", "remove", "select-record", "parse-source", "maximize", "inspect-harq"],
   data() {
-    // maxChartHeight is the height of the chart that fills the panel when maximized.
-    return { loading: false, error: "", mode: "", level: 0, nofSlots: 0, cursorText: "", cursorItem: "", maxChartHeight: null };
+    // maxChartHeight is the height of the chart that fills the panel when maximized, and menu the context menu of an
+    // allocation, at its position in the window.
+    return { loading: false, error: "", mode: "", level: 0, nofSlots: 0, cursorText: "", cursorItem: "", maxChartHeight: null, menu: null };
   },
   computed: {
     source() {
@@ -103,6 +116,9 @@ export default {
   },
   watch: {
     focus() {
+      this.chart?.redraw(false, false);
+    },
+    outline() {
       this.chart?.redraw(false, false);
     },
     // A trace left to parse on request is parsed once a grid shows it.
@@ -158,8 +174,21 @@ export default {
     });
     this.resizeObserver.observe(this.$refs.chart);
     this.scheduleFetch();
+    // A press anywhere but on the menu, or Esc, closes it.
+    this.pointerListener = (e) => {
+      if (this.menu && !this.$refs.menu?.contains(e.target)) this.menu = null;
+    };
+    this.keyListener = (e) => {
+      if (e.key !== "Escape" || !this.menu) return;
+      e.stopPropagation();
+      this.menu = null;
+    };
+    window.addEventListener("pointerdown", this.pointerListener, true);
+    window.addEventListener("keydown", this.keyListener, true);
   },
   beforeUnmount() {
+    window.removeEventListener("pointerdown", this.pointerListener, true);
+    window.removeEventListener("keydown", this.keyListener, true);
     this.resizeObserver.disconnect();
     clearTimeout(this.fetchTimer);
     this.abort?.abort();
@@ -274,6 +303,7 @@ export default {
         this.cursorItem = "";
       });
       attachZoomPan(chart, (range) => this.$emit("zoom", range), () => this.onClick(chart));
+      chart.over.addEventListener("contextmenu", (e) => this.onContextMenu(e, chart));
       return chart;
     },
 
@@ -408,6 +438,19 @@ export default {
             ctx.strokeRect(...b);
           }
         }
+        const members = this.outline?.source === this.panel.source ? new Set(this.outline.members) : null;
+        if (members?.size) {
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = cssVar("--focus");
+          ctx.lineWidth = 2 * devicePixelRatio;
+          for (const r of res.rects) {
+            if (!r.item || !members.has(`${r.record}:${r.item[0]}:${r.item[1]}`)) continue;
+            const [t0, t1] = this.symbolSpan(r.t, r.sym_start, r.sym_length);
+            const b = this.box(u, t0, t1, r.dir, r.crb_start, r.crb_length);
+            // Outside the allocation, so that its own outline stays visible.
+            if (b) ctx.strokeRect(b[0] - devicePixelRatio, b[1] - devicePixelRatio, b[2] + 2 * devicePixelRatio, b[3] + 2 * devicePixelRatio);
+          }
+        }
       } else if (res.mode === "cells") {
         // One color per cell, of its dominant channel, shaded by the occupancy of all its channels, since in TDD the DL
         // and UL channels of a bin share its cells.
@@ -473,7 +516,7 @@ export default {
         `CRB ${item.crb_start}+${item.crb_length}`,
         `sym ${item.sym_start}+${item.sym_length}`,
       ];
-      for (const key of ["mcs", "tbs", "harq_id", "rv", "nof_retxs", "k1", "k2", "format", "harq_bits", "sr_bits", "csi_bits", "ssb_index", "row", "grants", "paging_ues",
+      for (const key of ["mcs", "tbs", "harq_id", "ndi", "rv", "nof_retxs", "k1", "k2", "format", "harq_bits", "sr_bits", "csi_bits", "ssb_index", "row", "grants", "paging_ues",
         "coreset_id", "ss_id", "cce", "nof_cces", "occasion", "fd_ra"]) {
         if (item[key] != null) parts.push(`${key}=${item[key]}`);
       }
@@ -509,6 +552,26 @@ export default {
         this.$emit("zoom", { min: t - half, max: t + half });
       }
     },
+
+    /**
+     * Opens the menu of a UE allocation of a HARQ process: a PDSCH, a PUSCH, or the PDCCH of a UE. Elsewhere, and with
+     * Shift, the browser's own menu opens.
+     */
+    onContextMenu(e, chart) {
+      this.menu = null;
+      if (e.shiftKey) return;
+      const rect = chart.over.getBoundingClientRect();
+      const item = this.itemAt(chart, e.clientX - rect.left, e.clientY - rect.top);
+      if (!item || item.cells || !isHarqAllocation(item)) return;
+      e.preventDefault();
+      this.menu = { x: e.clientX, y: e.clientY, item, rnti: hexRnti(item.rnti) };
+    },
+
+    inspectHarq() {
+      const { item } = this.menu;
+      this.$emit("inspect-harq", { source: this.panel.source, record: item.record, item: item.item });
+      this.menu = null;
+    },
   },
   template: `
     <section class="panel grid-panel">
@@ -537,6 +600,10 @@ export default {
           {{ cursorText }}
           <div v-if="cursorItem">{{ cursorItem }}</div>
         </div>
+      </div>
+      <div v-if="menu" ref="menu" class="context-menu" role="menu" :style="{ left: menu.x + 'px', top: menu.y + 'px' }">
+        <button role="menuitem" title="Show the PDCCHs, PDSCHs or PUSCHs, UCI and HARQ-ACK reports of this transport block, from its new transmission to its outcome"
+                @click="inspectHarq">Inspect HARQ process {{ menu.item.harq_id }} of {{ menu.rnti }}</button>
       </div>
     </section>
   `,

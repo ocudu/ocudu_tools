@@ -230,9 +230,9 @@ The decoder is standard-library only: `schedtrace.schema` reads the FlatBuffers 
 generator does not support the vectors of unions of the schemas (`CellSlotEvent.inputs`). Decoding uses
 `schedtrace/_generated.py`, which `schedtrace.codegen` compiles from the schemas into one function per table and struct,
 about 2.3 times faster than `schedtrace.flatbuf`. With `grid_only=True`, `read()`, `events()` and `event_at()` decode
-only the fields of `codegen.GRID_FIELDS`, those that `grid.allocations()` and `ue_metrics` read, the timestamp, slot and
-latency of an event and the type of each input, 1.6 times faster again. When OCUDU changes the schemas, copy them from
-an OCUDU tree, its working tree or a revision, and regenerate it:
+only the fields of `codegen.GRID_FIELDS`, those that `grid.allocations()`, `ue_metrics` and `harq` read, the timestamp,
+slot and latency of an event and the type of each input, 1.6 times faster again. When OCUDU changes the schemas, copy
+them from an OCUDU tree, its working tree or a revision, and regenerate it:
 
 ```bash
 python -m parsers.schedtrace.codegen --ocudu ~/srs/ocudu [--rev origin/dev]
@@ -279,6 +279,31 @@ for record, ev in enumerate(events, 2):
         agg.add(record, ev, ue_metrics.slot_items(ev, cell))
 for t, record, *values in agg.ue_rows():
     print(t, dict(zip(ue_metrics.UE_FIELDS, values)))
+```
+
+`schedtrace.harq` groups the life of each transport block on a HARQ process, `(direction, RNTI, HARQ id)`, as a
+`Transaction`: from its new transmission (`nof_retxs` 0) through its retransmissions, with their PDCCHs, the UCI of
+their HARQ-ACK and the HARQ-ACK reports, until a report of Ack or the next new transmission on the process. The trace
+has no link between these, so they are matched as OCUDU schedules them: a DL PDCCH with its PDSCH in the slot decision,
+by RNTI and HARQ id; a UL PDCCH `k2` slots before its PUSCH; the UCI `k1` slots after a PDSCH, a PUCCH of the RNTI with
+HARQ-ACK bits, which may carry those of other PDSCHs, else a PUSCH of the RNTI, marked `inferred`, since the trace does
+not say a PUSCH carries UCI; a report by RNTI, HARQ id and `slot_rx`, the UCI slot. Reports of a slot are applied before
+its decision, which can start a new transmission on their process. `transactions()` yields them as they end, given the
+slot events with a key, e.g. their record, that the rows name; `find()` the one of an allocation, by that key and its
+`[list, index]` in the decision, stopping when it ends. `Transaction.outcome()` says how it ended: an ACK at a
+transmission, failed after NACK or DTX reports, or no report. The trace has no UL CRC, so UL transactions have no
+outcome, and no event of HARQ processes that time out, so a DL transaction without Ack ends at the next new
+transmission on its process. Slots unwrap across SFN wraps. `skills/analyze-ran-log/scripts/ocudu/schedtrace_harq.py`
+prints them.
+
+```python
+from parsers import schedtrace
+from parsers.schedtrace import harq
+
+events = enumerate(schedtrace.read("schedtrace_cell0.bin", grid_only=True), 1)
+for tr in harq.transactions(events, slots_per_frame=20):
+    if tr.dir == "DL" and not tr.acked:
+        print(tr.rnti, tr.harq_id, tr.outcome(), [(r.kind, r.slot_tx, r.tx) for r in tr.rows])
 ```
 
 ### Ad-hoc metrics of logs

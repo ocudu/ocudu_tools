@@ -56,7 +56,7 @@ def _union_vector(buf, types_at, values_at, members):
         out.append(_union(buf, values_at + 4 * i, kind, members) if kind else None)
     return out
 
-SCHEMA_HASH = "7243c550ed959f35b24d1fa37ea5951b8821439139681b96a22a13f8e12bfd49"
+SCHEMA_HASH = "19d1467df20fb35b3427b7a56e124015878a0ea1f1b0ef9ae8d535d4d6134ea5"
 FORMAT_VERSION = (1, 0)
 
 _ENUM_CyclicPrefix = {0: 'Normal', 1: 'Extended'}
@@ -1358,23 +1358,26 @@ def _grid_member_HarqAckEvent(buf, pos):
     vt = pos - _i32(buf, pos)[0]
     n = (_u16(buf, vt)[0] - 4) >> 1
     vo = _VTABLES[6](buf, vt + 4) if n >= 6 else _VTABLES[n](buf, vt + 4) + (0,) * (6 - n)
+    o = vo[0]
+    v0 = _s_u32(buf, pos + o)[0] if o else 0
     o = vo[1]
-    v0 = _s_u16(buf, pos + o)[0] if o else 0
-    o = vo[2]
     v1 = _s_u16(buf, pos + o)[0] if o else 0
+    o = vo[2]
+    v2 = _s_u16(buf, pos + o)[0] if o else 0
     o = vo[3]
-    v2 = buf[pos + o] if o else 0
+    v3 = buf[pos + o] if o else 0
     o = vo[4]
-    v3 = _ENUM_HarqAckReportStatus.get(x := _s_u8(buf, pos + o)[0], x) if o else 'Nack'
+    v4 = _ENUM_HarqAckReportStatus.get(x := _s_u8(buf, pos + o)[0], x) if o else 'Nack'
     o = vo[5]
-    v4 = _s_u32(buf, pos + o)[0] if o else 0
+    v5 = _s_u32(buf, pos + o)[0] if o else 0
     return {
         "type": "HarqAckEvent",
-        "ue_idx": v0,
-        "rnti": v1,
-        "harq_id": v2,
-        "status": v3,
-        "tbs": v4,
+        "slot_rx": v0,
+        "ue_idx": v1,
+        "rnti": v2,
+        "harq_id": v3,
+        "status": v4,
+        "tbs": v5,
     }
 
 

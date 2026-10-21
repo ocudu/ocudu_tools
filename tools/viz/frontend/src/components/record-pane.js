@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
 // SPDX-License-Identifier: BSD-3-Clause-Open-MPI
 
+import HarqView from "./harq-view.js";
 import RecordView from "./record-view.js";
 
 // Browser storage key of the height of the pane's content, in pixels.
@@ -31,17 +32,17 @@ function saveHeight(height) {
   }
 }
 
-/** Log pane: the tabs of the records opened from the panels, one shown at a time. */
+/** Log pane: the tabs of the records and HARQ transactions opened from the panels, one shown at a time. */
 export default {
   name: "RecordPane",
   props: {
-    // Tabs as {id, kind, sel, preview, title}, sel being {source, record, item, field}.
+    // Tabs as {id, kind, sel, preview, title}, kind "record" or "harq", sel being {source, record, item, field}.
     tabs: { type: Array, required: true },
     active: { type: Number, default: null },
     sources: { type: Array, required: true },
   },
-  components: { RecordView },
-  emits: ["close", "activate", "close-tab", "pin", "title", "focus", "select-record", "plot-key", "mark-lines"],
+  components: { HarqView, RecordView },
+  emits: ["close", "activate", "close-tab", "pin", "title", "loaded", "focus", "select-record", "plot-key", "mark-lines"],
   data() {
     return {
       height: loadHeight(),
@@ -60,6 +61,7 @@ export default {
   methods: {
     /** Label of a tab: its source, and its record for sources whose records decode, e.g. a slot of a trace. */
     label(tab) {
+      if (tab.kind === "harq") return tab.title ?? "HARQ";
       const source = this.sources[tab.sel.source];
       const name = source?.parent != null ? `${this.sources[source.parent]?.file ?? ""} ${source.name}` : source?.file ?? "";
       if (!source?.has_detail) return name;
@@ -119,7 +121,12 @@ export default {
         <button class="icon" title="Close all the tabs" @click="$emit('close')">✕</button>
       </nav>
       <template v-for="t in tabs" :key="t.id">
-        <record-view v-show="t.id === active" :selection="t.sel" :sources="sources" :active="t.id === active"
+        <harq-view v-if="t.kind === 'harq'" v-show="t.id === active" :selection="t.sel" :active="t.id === active"
+                   :height="height" :maximized="maximized"
+                   @focus="t.id === active && $emit('focus', $event)" @interact="t.preview && $emit('pin', t.id)"
+                   @title="$emit('title', { id: t.id, title: $event })" @loaded="$emit('loaded', { id: t.id, ...$event })"
+                   @select-record="$emit('select-record', $event)" />
+        <record-view v-else v-show="t.id === active" :selection="t.sel" :sources="sources" :active="t.id === active"
                      :height="height" :maximized="maximized"
                      @focus="t.id === active && $emit('focus', $event)" @interact="t.preview && $emit('pin', t.id)"
                      @title="$emit('title', { id: t.id, title: $event })"

@@ -19,6 +19,7 @@ from typing import Any
 
 from parsers import schedtrace
 from parsers.schedtrace import grid as grid_util
+from parsers.schedtrace import harq as harq_util
 from parsers.schedtrace import ue_metrics
 
 from .. import parallel
@@ -34,6 +35,10 @@ LEVELS = (20, 100, 400, 2000)
 # both decoded from the trace; larger windows show the stored occupancy.
 RECTS_MAX = 400
 SLOT_HEAT_MAX = 4000
+# Slots before and after an allocation in which its HARQ transaction is looked for: one SFN cycle.
+HARQ_WINDOW = 1024
+# Time around a HARQ transaction whose slots are placed to time its rows, in seconds.
+HARQ_MARGIN_S = 0.05
 # Chunks per worker of a trace parsed in the pool, so that results arrive while the others are parsed, and the fewest
 # events per chunk.
 _CHUNKS_PER_WORKER = 4
@@ -217,6 +222,38 @@ class SchedtraceSource:
         out["anchors"] = [[t, a[2]] for t, a in zip(_slot_times([(a[0], a[2]) for a in anchors], duration, wrap), anchors)]
         level = next((lv for lv in LEVELS if count / lv <= max(1, width)), LEVELS[-1])
         return {**out, "mode": "cells", "level": level, "cells": [list(c) for c in store.grid_cells(level, t0, t1)]}
+
+
+    def harq(self, path: Path, store: Any, record: int, item: tuple[str, int]) -> dict[str, Any] | None:
+        """The HARQ transaction of an allocation, a PDSCH, PUSCH or PDCCH given by its event and its [list, index] in
+        the slot decision, see parsers.schedtrace.harq, or None. Its rows name their event as "record", and their slot
+        in SFN.slot. The events read are those within HARQ_WINDOW slots of the allocation's.
+        """
+        meta = store.meta["grid"]
+        spf = meta["slots_per_frame"]
+        offsets = _offsets(str(path), path.stat().st_mtime_ns)
+        if not 1 <= record <= len(offsets):
+            raise ValueError(f"No event {record}.")
+        # Slot events are one per slot, after the start event of the cell.
+        first, last = max(2, record - HARQ_WINDOW), min(len(offsets), record + HARQ_WINDOW)
+        with path.open("rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+            events = ((r, schedtrace.event_at(mm, offsets[r - 1], grid_only=True)) for r in range(first, last + 1))
+            try:
+                tr = harq_util.find(events, spf, record, item)
+            except schedtrace.CorruptEventError as e:
+                raise ValueError(str(e)) from None
+        if tr is None:
+            return None
+        # Times of the slots as the grid places them, see _slot_times(), so that a row focuses on its slot.
+        lo, hi = min(r.t for r in tr.rows), max(r.t for r in tr.rows)
+        _, slots = store.grid_slots(lo - HARQ_MARGIN_S, hi + HARQ_MARGIN_S, 4 * HARQ_WINDOW)
+        times = dict(zip((s[0] for s in slots), _slot_times([(s[1], s[4]) for s in slots], meta["slot_duration_s"],
+                                                            _NOF_SFNS * spf)))
+        return {"dir": tr.dir, "rnti": tr.rnti, "ue_index": tr.ue_index, "harq_id": tr.harq_id, "tbs": tr.tbs,
+                "nof_tx": tr.nof_tx, "ended_by": tr.ended_by, "started": tr.started, "outcome": tr.outcome(),
+                "rows": [{"kind": r.kind, "record": r.event, "slot": "{}.{}".format(*divmod(r.slot_tx, spf)),
+                          "t": times.get(r.event, r.t),
+                          "tx": r.tx, "item": list(r.item) if r.item else None, "params": r.params} for r in tr.rows]}
 
 
 def _slot_times(slots: list[tuple[float, int]], duration: float, wrap: int) -> list[float]:

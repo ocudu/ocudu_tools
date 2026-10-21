@@ -413,6 +413,13 @@ main { flex: 1 0 auto; padding: 8px 16px 16px; }
 .pane-tab.active { background: var(--bg); color: var(--fg); margin-bottom: -1px; padding-bottom: 3px; }
 .pane-tab.preview { font-style: italic; }
 .record-view .panel-bar { border-radius: 0; }
+.harq-table { height: 35vh; max-height: none; border: none; border-radius: 0; }
+.records.maximized .harq-table { flex: 1 1 auto; height: auto; }
+.harq-table.table-scroll table { width: auto; }
+.harq-table th:nth-child(n + 3), .harq-table td:nth-child(n + 3) { text-align: left; }
+.harq-table td.harq-params { font-family: ui-monospace, monospace; }
+.harq-table tr.selected td { background: var(--selected); }
+.harq-failed { color: var(--error); }
 
 .adhoc-bar { display: flex; gap: 8px; }
 .adhoc-bar .adhoc-split { width: 8em; }
