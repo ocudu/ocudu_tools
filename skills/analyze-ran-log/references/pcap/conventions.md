@@ -55,5 +55,5 @@ hand.
 - **AppArmor**: on Ubuntu the Canonical AppArmor profile on tshark restricts
   reads to `/tmp`. The helper scripts auto-stage pcaps into the cache dir's
   `pcap-stage/` subfolder — see `reference/pcap-format.md` § AppArmor.
-- Scope by the protocol's own UE identifier (`mac-nr.rnti`, `rlc-nr.ueid`, the
+- Scope by the protocol's own UE identifier (`mac-nr.rnti`, `rlc-nr.ueid` = DU UE index + 1, the
   F1AP/NGAP/E1AP UE IDs) — the cross-product of 5 pcaps × many UEs is large.

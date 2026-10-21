@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..ran.rnti import normalize as normalize_rnti
+from .frames import rlc_ue_index
 from .run import find_pcaps
 from .tshark import Tshark, TsharkError
 from .values import epoch_to_iso, first
@@ -37,7 +38,8 @@ EVENT_FIELDS: dict[str, list[str]] = {
 def events(tshark: Tshark, pcap: str | os.PathLike[str], proto: str) -> list[dict[str, Any]]:
     """The events of a pcap of a protocol in PROTOCOLS, in file order.
 
-    Each has "epoch", "iso", "file" (the protocol), "frame", "ue_ids" and "summary".
+    Each has "epoch", "iso", "file" (the protocol), "frame", "ue_ids" and "summary". The UE id of RLC events is the DU
+    UE index, see frames.rlc_ue_index().
     """
     out: list[dict[str, Any]] = []
     fields = EVENT_FIELDS[proto]
@@ -57,8 +59,10 @@ def events(tshark: Tshark, pcap: str | os.PathLike[str], proto: str) -> list[dic
             dir_label = {"0": "UL", "1": "DL"}.get(rest[1], rest[1] or "?")
             summary = f"rnti={rest[0] or '-'} dir={dir_label}"
         else:
-            ue_ids = [rest[0]] if rest[0] else []
-            summary = f"ueid={rest[0] or '-'} bearer={rest[1] or '?'}/{rest[2] or '?'}"
+            # The DU UE index, as DU logs give it, since OCUDU writes rlc-nr.ueid as the index + 1.
+            ue_index = rlc_ue_index(rest[0])
+            ue_ids = [ue_index] if ue_index else []
+            summary = f"ue_index={ue_index or '-'} bearer={rest[1] or '?'}/{rest[2] or '?'}"
         out.append({
             "epoch": ts,
             "iso": epoch_to_iso(ts),
@@ -131,4 +135,4 @@ def _has_ue(event: dict[str, Any], ue: str) -> bool:
     if event["file"] == "mac" and (rnti := normalize_rnti(ue)) is not None:
         return any(normalize_rnti(v) == rnti for v in event["ue_ids"])
     # MAC and RLC events without identifiers in ue_ids still name them in the summary.
-    return any(f"{tag}={ue} " in event["summary"] + " " for tag in ("rnti", "ueid"))
+    return any(f"{tag}={ue} " in event["summary"] + " " for tag in ("rnti", "ue_index"))

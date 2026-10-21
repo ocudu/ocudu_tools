@@ -12,6 +12,9 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
+import importlib.util
+import io
 import subprocess
 import sys
 import tempfile
@@ -23,6 +26,13 @@ ROOT = TEST_DIR.parents[1]
 SCRIPT = ROOT / "skills" / "analyze-ran-log" / "scripts" / "ocudu" / "schedtrace_ue_metrics.py"
 # Trace of a cell start, a slot with grants and reports of UEs 0x4601 and 0x4602, and a cell stop.
 TRACE = ROOT / "tools" / "parsers" / "tests" / "schedtrace" / "data" / "schedtrace_cell0.bin"
+
+
+def load_script():
+    spec = importlib.util.spec_from_file_location("schedtrace_ue_metrics", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def run(*args: str) -> subprocess.CompletedProcess:
@@ -79,6 +89,25 @@ class SchedtraceUeMetricsTest(unittest.TestCase):
         self.assertNotEqual(res.returncode, 0)
         self.assertIn("invalid RNTI", res.stderr)
 
+
+    def test_msg3_ue_index(self):
+        # A Msg3 PUSCH of 0x4603, whose UE has no DU UE index, and one of 0x4601, whose UE gets index 0.
+        script = load_script()
+        agg = script.ue_metrics.Aggregator()
+        msg3 = (0, 11, 3, 1, 0, 0, 0)
+        items = {"dl_grants": [], "ul_grants": [("0x4603", None, *msg3), ("0x4601", None, *msg3)], "harq_acks": [],
+                 "csi_reports": [], "srs": [("0x4601", 0)]}
+        agg.add(0, {"timestamp_us": 0}, items)
+        res = {"agg": agg, "t_min": 0.0, "t_max": 0.0, "slot_s": 0.001, "nof_slots": 1, "latency_sum": 0,
+               "latency_max": 0, "kept": [("2026-01-01T00:00:00.000000", *row) for row in items["ul_grants"]]}
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            script.print_summary(res)
+            script.print_grants(res, "ul", 10)
+        lines = out.getvalue().splitlines()
+        self.assertEqual([line.split()[:2] for line in lines if line.startswith("0x")], [["0x4601", "0"], ["0x4603", "-"]])
+        self.assertEqual([line.split()[1:3] for line in lines if line.startswith("00:00:00")],
+                         [["0x4601", "-"], ["0x4603", "-"]])
 
     def test_zero_tail(self):
         with tempfile.TemporaryDirectory() as d:

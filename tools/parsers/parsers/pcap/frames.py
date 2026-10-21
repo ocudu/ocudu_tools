@@ -12,11 +12,11 @@ from typing import Any
 from .tshark import Tshark
 
 SUMMARY_FIELDS = ["frame.number", "frame.time_epoch", "frame.len", "_ws.col.Protocol", "_ws.col.Info"]
-# Fields of the PDUs of MAC and RLC pcaps, by label.
+# Fields of the PDUs of MAC and RLC pcaps, by label. The ue_index of RLC is the DU UE index, see rlc_ue_index().
 PDU_FIELDS: dict[str, list[tuple[str, str]]] = {
     "mac": [("rnti", "mac-nr.rnti"), ("direction", "mac-nr.direction")],
     "rlc": [
-        ("ueid", "rlc-nr.ueid"),
+        ("ue_index", "rlc-nr.ueid"),
         ("bearer_type", "rlc-nr.bearer-type"),
         ("bearer_id", "rlc-nr.bearer-id"),
         ("direction", "rlc-nr.direction"),
@@ -118,8 +118,21 @@ def pdu(proto: str, row: dict[str, str]) -> dict[str, Any] | None:
     out: dict[str, Any] = {"frame": int(frame), "epoch": float(epoch), "len": int(row["frame.len"] or 0)}
     for label, f in PDU_FIELDS[proto]:
         value = row[f]
-        out[label] = (_DIRECTIONS.get(value, value) if label == "direction" else value) or None
+        if label == "direction":
+            value = _DIRECTIONS.get(value, value)
+        elif f == "rlc-nr.ueid":
+            value = rlc_ue_index(value)
+        out[label] = value or None
     return out
+
+
+def rlc_ue_index(ueid: str | None) -> str | None:
+    """The DU UE index of an rlc-nr.ueid value, which OCUDU writes as the index + 1, or None without one."""
+    try:
+        index = int(ueid or "") - 1
+    except ValueError:
+        return None
+    return str(index) if index >= 0 else None
 
 
 def decode(tshark: Tshark, pcap: str | os.PathLike[str], frame: int) -> str:

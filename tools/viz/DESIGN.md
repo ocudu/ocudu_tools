@@ -17,6 +17,8 @@ updated as they are agreed.
   file (D16).
 - **Dataset:** what a source type extracts from a source. Three kinds:
   - **Time series:** numeric fields over time, split by context (e.g. METRICS layers, trace latencies).
+    A field is typed by its values; one without any, e.g. RSRP without CSI reports, by the type its source declares,
+    else as a number when it has a unit, else as text, so that numeric fields stay in the plot field list even empty.
   - **Events:** timestamped points or intervals with a label (e.g. RRC procedures, errors, PRACH, handovers).
     Drawn as markers or spans over the plots.
   - **Records:** the raw entries behind the other datasets (e.g. log lines, packets), for drill-down.
@@ -383,13 +385,14 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
   with the 3GPP layers in full.
 - Datasets: `messages` for NGAP, F1AP and E1AP, one row per message with its procedure, outcome, UE identifiers,
   cause, tshark summary and size, plus the RRC and NAS messages and C-RNTI for F1AP; `pdus` for MAC and RLC, one row
-  per PDU with its size, direction and UE identifiers.
+  per PDU with its size, direction and UE identifiers. The RLC UE id is `ue_index`, the DU UE index of the DU logs,
+  since OCUDU writes `rlc-nr.ueid` as the index + 1.
 - Events: one per NGAP, F1AP or E1AP message, in category `rrc` for F1AP messages carrying RRC, `failure` for
   unsuccessful outcomes, else `ngap`, `f1ap` or `e1ap`. Each UE context is a trace lane, from the first message with
   its identifiers until the response that releases it (UEContextRelease for NGAP and F1AP, bearerContextRelease for
   E1AP), since later UEs reuse the identifiers. Lanes are labelled with their identifiers, and F1AP lanes with their
-  C-RNTI in hex, as logs print it. MAC and RLC pcaps have no events, so the trace does not offer them. Their UE id (`ueid`, the DU UE index + 1 in
-  RLC, with the RNTI in MAC) could give them UE lanes, joined to the UE contexts of the run by time.
+  C-RNTI in hex, as logs print it. MAC and RLC pcaps have no events, so the trace does not offer them. Their UE id (`ue_index` in RLC, the RNTI
+  in MAC) could give them UE lanes, joined to the UE contexts of the run by time.
 - MAC and RLC pcaps (`PcapSource.on_request()`, by name) are opened "deferred" with the other files of a run, from the
   command line or the page, since tshark decodes some 40k MAC frames/s and they can be GBs, while they give only a
   `pdus` dataset: no events, no part in the trace or the UE join. `POST /api/sources/{id}/parse` parses one. A file
@@ -493,6 +496,8 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
   CRC or buffer status, so UL rates are of scheduled new transmissions (`ul_sched_brate`). Workers sum the bins of their
   chunk and the server process merges the sums, as for the grid occupancy, and every row links to its slot event. New
   plots of a trace show `ue_metrics.dl_brate` split by RNTI.
+- Msg3 PUSCHs carry the invalid DU UE index of OCUDU (8192), so their `ue_index` is null, and they count under their
+  TC-RNTI: a split by `ue_index` has no fake UE, and a bin of the RNTI takes the index of its later grants and reports.
 - `parsers.schedtrace.grid` places the allocations of a slot as rectangles of symbols and CRBs. The trace has no
   VRB-to-PRB interleaving, RBG configuration or SRS frequency resources, so VRBs map to PRBs one to one, RBGs have the
   configuration 1 size of the BWP, and SRS is left out. PDSCHs of DCI format 1_0 in a common search space are placed

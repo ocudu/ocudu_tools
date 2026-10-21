@@ -31,7 +31,8 @@ tshark -r rlc.pcap --enable-heuristic rlc_nr_udp -Y 'rlc-nr.am.p == 1'
 ## Identifier mapping
 
 - `rlc-nr.direction` — UL / DL.
-- `rlc-nr.ueid` — UE index (DU-local, not C-RNTI).
+- `rlc-nr.ueid` — DU UE index + 1 (OCUDU writes `ue_index + 1`), not the C-RNTI: ueid 3 is DU `ue=2`.
+  `correlate_run.py` and `pcap_overview.py` print the DU UE index (`ue_index=`), so `--ue 2` selects ueid 3.
 - `rlc-nr.bearer-type` — SRB / DRB / CCCH.
 - `rlc-nr.bearer-id` — bearer index within the type.
 - `rlc-nr.mode` — AM / UM / TM.

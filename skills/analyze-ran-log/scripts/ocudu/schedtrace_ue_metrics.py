@@ -200,7 +200,8 @@ def print_periods(res: dict, max_rows: int) -> None:
 
 def print_grants(res: dict, kind: str, max_rows: int) -> None:
     header = ("time", *ue_metrics.ITEM_FIELDS[GRANT_KINDS[kind]])
-    rows = sorted(res["kept"])
+    # By time and RNTI only, since UE indexes can be None.
+    rows = sorted(res["kept"], key=lambda r: r[:2])
     print_table(header, [(ts[11:], *(num(v) for v in row)) for ts, *row in rows[:max_rows]])
     if len(rows) > max_rows:
         print(f"... {len(rows) - max_rows} more, see --max-rows")

@@ -49,6 +49,8 @@ _NOF_SFNS = 1024
 _UE_DATASET, _CELL_DATASET = "ue_metrics", "cell_metrics"
 _DATASET_LABELS = {_UE_DATASET: "UE metrics per 10 ms", _CELL_DATASET: "cell metrics per 10 ms", "dl_grants": "DL grants",
                    "ul_grants": "UL grants", "harq_acks": "HARQ-ACK reports", "csi_reports": "CSI reports"}
+# Fields of the datasets that are not numbers.
+_NON_NUMBER_FIELDS = {"rnti", "status"}
 
 
 class SchedtraceSource:
@@ -149,10 +151,12 @@ class SchedtraceSource:
         ):
             if rows:
                 writer.add_rows(name, fields, _column_types(fields, rows), rows)
-                writer.set_dataset_info(name, units, context, label=_DATASET_LABELS[name])
+                writer.set_dataset_info(name, units, context, label=_DATASET_LABELS[name], types=_number_types(fields))
         for kind in seen:
-            units = {f: u for f, u in ue_metrics.ITEM_UNITS.items() if f in ue_metrics.ITEM_FIELDS[kind]}
-            writer.set_dataset_info(kind, units, ["rnti", "ue_index"], label=_DATASET_LABELS[kind])
+            fields = ue_metrics.ITEM_FIELDS[kind]
+            units = {f: u for f, u in ue_metrics.ITEM_UNITS.items() if f in fields}
+            writer.set_dataset_info(kind, units, ["rnti", "ue_index"], label=_DATASET_LABELS[kind],
+                                    types=_number_types(fields))
         active = mixed["dl"] + mixed["ul"] + mixed["both"]
         duplex = "FDD" if active and mixed["both"] / active >= _FDD_MIN_SHARE else "TDD"
         writer.set_meta("grid", {**_cell_dict(cell), "nof_crbs": cell.nof_crbs, "slot_duration_s": cell.slot_duration_s,
@@ -339,6 +343,11 @@ def _parse_chunk(path: str, start: int, end: int, first_record: int, cell_dict: 
 def _column_types(fields: tuple[str, ...], rows: list[tuple]) -> dict[str, set[str]]:
     """The column types of the values of each field of rows of time, record and the field values."""
     return {f: {t for row in rows if (t := column_type(row[i + 2])) is not None} for i, f in enumerate(fields)}
+
+
+def _number_types(fields: tuple[str, ...]) -> dict[str, str]:
+    """The column types of the fields of slot items and aggregates, all numbers but those of _NON_NUMBER_FIELDS."""
+    return {f: "number" for f in fields if f not in _NON_NUMBER_FIELDS}
 
 
 def _cells_row(key: tuple[int, int], b: dict[str, Any]) -> tuple:

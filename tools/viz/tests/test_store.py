@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
 # SPDX-License-Identifier: BSD-3-Clause-Open-MPI
 
+import json
 import re
+import sqlite3
 import tempfile
 import unittest
 from unittest import mock
@@ -39,6 +41,16 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(ue["t_min"] - self.store.meta["t_min"], 2)
         # The log spans 2 s before the first and 2 s after the last metrics line.
         self.assertEqual(self.store.meta["t_max"] - self.store.meta["t_min"], 13)
+
+    def test_types_of_fields_without_values(self):
+        conn = sqlite3.connect(":memory:")
+        writer = store_module.StoreWriter(conn)
+        writer.add_row("d", 1, 1.0, {"rsrp": None, "mcs": None, "name": None, "v": 1})
+        writer.set_dataset_info("d", {"rsrp": "dBm"}, [], types={"mcs": "number"})
+        writer.finish(self.log, "test")
+        fields = json.loads(conn.execute("SELECT fields FROM datasets").fetchone()[0])
+        # By unit, by declared type, else text.
+        self.assertEqual(fields, {"rsrp": "number", "mcs": "number", "name": "text", "v": "number"})
 
     def test_full_resolution_series(self):
         res = self.store.series("sched_ue", "dl_brate", split_by="ue")

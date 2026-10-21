@@ -11,6 +11,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from .frames import rlc_ue_index
 from .run import pcap_proto
 from .tshark import Tshark, TsharkError
 from .values import epoch_to_iso, first
@@ -38,7 +39,8 @@ PROTO_FIELDS: dict[str, dict[str, Any]] = {
     # Only C-RNTIs are of UEs, not the SI-, P- and RA-RNTIs of common channels.
     "mac": {"proc": [], "ue": [("rnti", "mac-nr.rnti")], "failure_filter": None,
             "ue_type": ("mac-nr.rnti-type", {"3"})},
-    "rlc": {"proc": [], "ue": [("ueid", "rlc-nr.ueid")], "failure_filter": None},
+    # The DU UE index, see frames.rlc_ue_index().
+    "rlc": {"proc": [], "ue": [("ue_index", "rlc-nr.ueid")], "failure_filter": None},
 }
 
 
@@ -84,8 +86,11 @@ def summarise(tshark: Tshark, pcap: Path, *, top: int = 5) -> dict[str, Any]:
         for r in rows:
             if ue_types is not None and r[-1] not in ue_types:
                 continue
-            for (label, _), val in zip(spec["ue"], r[ue_start:ue_start + len(spec["ue"])]):
-                if val := first(val):
+            for (label, f), val in zip(spec["ue"], r[ue_start:ue_start + len(spec["ue"])]):
+                val = first(val)
+                if f == "rlc-nr.ueid":
+                    val = rlc_ue_index(val)
+                if val:
                     per_label[label].add(val)
         out["distinct_ues_by_label"] = {k: sorted(v) for k, v in per_label.items()}
         if spec["failure_filter"]:

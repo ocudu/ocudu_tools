@@ -260,6 +260,31 @@ class TimelineTest(unittest.TestCase):
         self.assertEqual([e["frame"] for e in ev if timeline._has_ue(e, "267")], [])
 
 
+class RlcUeIndexTest(unittest.TestCase):
+    """rlc-nr.ueid is the DU UE index + 1."""
+
+    def test_ue_index(self):
+        self.assertEqual([frames.rlc_ue_index(v) for v in ("1", "10", "0", "", None, "x")],
+                         ["0", "9", None, None, None, None])
+
+    def test_timeline_events(self):
+        rows = [["1", "1.0", "3", "2", "1"], ["2", "1.1", "", "1", ""]]
+        ev = timeline.events(FakeTshark(rows), "rlc.pcap", "rlc")
+        self.assertEqual([e["ue_ids"] for e in ev], [["2"], []])
+        self.assertEqual(ev[0]["summary"], "ue_index=2 bearer=2/1")
+        self.assertEqual([timeline._has_ue(ev[0], ue) for ue in ("2", "3")], [True, False])
+
+    def test_pdus(self):
+        row = {"frame.number": "4", "frame.time_epoch": "1.0", "frame.len": "40", "rlc-nr.ueid": "1",
+               "rlc-nr.bearer-type": "2", "rlc-nr.bearer-id": "1", "rlc-nr.direction": "1"}
+        pdu = frames.pdu("rlc", row)
+        self.assertEqual((pdu["ue_index"], pdu["direction"]), ("0", "DL"))
+
+    def test_overview(self):
+        summary = overview.summarise(FakeTshark([["1.0", "1"], ["1.1", "3"], ["1.2", "1"]]), Path("rlc.pcap"))
+        self.assertEqual(summary["distinct_ues_by_label"], {"ue_index": ["0", "2"]})
+
+
 class RunDirTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

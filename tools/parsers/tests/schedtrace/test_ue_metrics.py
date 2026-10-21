@@ -149,6 +149,25 @@ class UeMetricsTest(unittest.TestCase):
         values = dict(zip(ue_metrics.UE_FIELDS, agg.ue_rows()[0][2:]))
         self.assertEqual((values["dl_nof_ok"], values["dl_nof_nok"], values["dl_nof_dtx"]), (0, 1, 1))
 
+    def test_msg3_has_no_ue_index(self):
+        msg3 = dict(pusch(0x4601, 11), ue_index=ue_metrics.MAX_NOF_DU_UES)
+        e = slot(0, puschs=[msg3])
+        items = ue_metrics.slot_items(e, self.cell)
+        self.assertEqual(items["ul_grants"][0][:2], ("0x4601", None))
+        agg = ue_metrics.Aggregator()
+        agg.add(1, e, items)
+        self.assertIsNone(dict(zip(ue_metrics.UE_FIELDS, agg.ue_rows()[0][2:]))["ue_index"])
+        # Later grants of the UE, in its bin and in later bins, give its index.
+        later = [slot(1000, puschs=[pusch(0x4601, 900)]), slot(20000, puschs=[msg3])]
+        for record, e in enumerate(later, 2):
+            agg.add(record, e, ue_metrics.slot_items(e, self.cell))
+        self.assertEqual([r[3] for r in agg.ue_rows()], [1, None])
+        self.assertEqual(agg.ue_totals(0.03)[0][3], 1)
+        other = ue_metrics.Aggregator()
+        other.add(9, slot(1500, puschs=[msg3]), ue_metrics.slot_items(slot(1500, puschs=[msg3]), self.cell))
+        agg.merge(other)
+        self.assertEqual(agg.ue_rows()[0][3], 1)
+
     def test_merge_equals_one_pass(self):
         events = [slot(t, [ack(0x4601, "Ack")], ue_pdschs=[pdsch(0x4601, 20, 1000)]) for t in range(0, 30000, 500)]
         whole, first, second = ue_metrics.Aggregator(), ue_metrics.Aggregator(), ue_metrics.Aggregator()

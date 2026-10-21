@@ -72,10 +72,13 @@ class DatasetWriter(Protocol):
         context: list[str],
         label: str | None = None,
         instance: str | None = None,
+        types: dict[str, str] | None = None,
     ) -> None:
-        """Sets the field units, context fields, display label and instance field of a time series dataset.
+        """Sets the field units, context fields, display label and instance field of a time series dataset, and the
+        column types (column_type()) of fields whose values can all be missing.
 
-        The instance field identifies the entity each row belongs to (e.g. the executor name).
+        The instance field identifies the entity each row belongs to (e.g. the executor name). A field without values
+        has its declared type, else "number" with a unit, else "text".
         """
 
     def set_time_range(self, t_min: float, t_max: float) -> None:

@@ -10,7 +10,8 @@ HARQ-ACK reports of NACK and of DTX, as METRICS does, dl_nof_dtx the latter alon
 without a report, and those without feedback, e.g. of NTN, have no trace event, so they count in neither dl_nof_ok nor
 dl_nof_nok, unlike in METRICS. cqi and dl_ri are means over the reports of a bin, and dl_mcs the mean over the codewords
 of the PDSCHs of a bin, all unrounded, so that means over bins are not biased; METRICS prints cqi and dl_mcs rounded half
-away from zero, as round_half_up() rounds them.
+away from zero, as round_half_up() rounds them. Msg3 PUSCHs, of UEs without a DU UE index yet, count under their
+TC-RNTI with a ue_index of None, which a later grant or report of the RNTI fills in.
 """
 
 from __future__ import annotations
@@ -38,12 +39,19 @@ UE_UNITS = {"dl_brate": "bps", "dl_sched_brate": "bps", "ul_sched_brate": "bps",
 CELL_FIELDS = ("latency_avg", "latency_max", "nof_slots", "dl_nof_prbs", "ul_nof_prbs", "dl_nof_ues", "ul_nof_ues",
                "failed_attempts")
 CELL_UNITS = {"latency_avg": "us", "latency_max": "us"}
+# OCUDU MAX_NOF_DU_UES, from which DU UE indexes are invalid, e.g. INVALID_DU_UE_INDEX of Msg3 PUSCHs.
+MAX_NOF_DU_UES = 8192
 _STATUS = ("Nack", "Ack", "Dtx")
 
 
 def round_half_up(value: float | None) -> int | None:
     """A non-negative value rounded as std::round, unlike round(), which rounds halves to even; None as is."""
     return None if value is None else int(value + 0.5)
+
+
+def ue_index(value: int | None) -> int | None:
+    """A DU UE index of the trace, or None if it is invalid."""
+    return value if value is not None and 0 <= value < MAX_NOF_DU_UES else None
 
 
 def nof_prbs(rbs: dict[str, Any] | None, bwp: dict[str, Any]) -> int:
@@ -59,8 +67,9 @@ def nof_prbs(rbs: dict[str, Any] | None, bwp: dict[str, Any]) -> int:
 
 def slot_items(event: dict[str, Any], cell: Cell) -> dict[str, list[tuple]]:
     """The grants and reports of the UEs of a CellSlotEvent of schedtrace.read(), as rows of the fields of
-    ITEM_FIELDS by kind, RNTIs as OCUDU logs print them. A DL grant has the MCS and new data flag of its first
-    codeword, the MCS of its second codeword as mcs2, None without one, and the TBS of all its codewords.
+    ITEM_FIELDS by kind, RNTIs as OCUDU logs print them and invalid UE indexes as None, see ue_index(). A DL grant has
+    the MCS and new data flag of its first codeword, the MCS of its second codeword as mcs2, None without one, and the
+    TBS of all its codewords.
     """
     decision = event.get("decision") or {}
     dl = []
@@ -69,11 +78,12 @@ def slot_items(event: dict[str, Any], cell: Cell) -> dict[str, list[tuple]]:
         cw = cws[0]
         sizes = [c["tb_size_bytes"] for c in cws if c.get("tb_size_bytes") is not None]
         mcs2 = cws[1].get("mcs_index") if len(cws) > 1 else None
-        dl.append((normalize(p["rnti"]), p["ue_index"], p["harq_id"], cw.get("mcs_index"),
+        dl.append((normalize(p["rnti"]), ue_index(p["ue_index"]), p["harq_id"], cw.get("mcs_index"),
                    sum(sizes) if sizes else None, nof_prbs(p.get("rbs"), cell.dl_bwp), cw.get("new_data"),
                    p["nof_retxs"], p["k1"], mcs2))
-    ul = [(normalize(p["rnti"]), p["ue_index"], p["harq_id"], p["tb_size_bytes"], nof_prbs(p.get("rbs"), cell.ul_bwp),
-           p.get("nof_layers"), p["rv_index"], p["nof_retxs"], p["k2"]) for p in decision.get("puschs") or []]
+    ul = [(normalize(p["rnti"]), ue_index(p["ue_index"]), p["harq_id"], p["tb_size_bytes"],
+           nof_prbs(p.get("rbs"), cell.ul_bwp), p.get("nof_layers"), p["rv_index"], p["nof_retxs"], p["k2"])
+          for p in decision.get("puschs") or []]
     acks, csis, srs = [], [], []
     for i in event.get("inputs") or []:
         kind = i and i.get("type")
@@ -82,13 +92,13 @@ def slot_items(event: dict[str, Any], cell: Cell) -> dict[str, list[tuple]]:
             if not isinstance(status, str):
                 # A status of a newer schema than the decoder's, given as its value.
                 status = _STATUS[status] if 0 <= status < len(_STATUS) else f"Status{status}"
-            acks.append((normalize(i["rnti"]), i["ue_idx"], i["harq_id"], status, i["tbs"]))
+            acks.append((normalize(i["rnti"]), ue_index(i["ue_idx"]), i["harq_id"], status, i["tbs"]))
         elif kind == "CsiReportEvent":
             rsrp = i.get("rsrp_dbm") or []
-            csis.append((normalize(i["rnti"]), i["ue_idx"], i.get("first_tb_wb_cqi"), i.get("ri"),
+            csis.append((normalize(i["rnti"]), ue_index(i["ue_idx"]), i.get("first_tb_wb_cqi"), i.get("ri"),
                          rsrp[0] if rsrp else None))
         elif kind == "SrEvent":
-            srs.append((normalize(i["rnti"]), i["ue_idx"]))
+            srs.append((normalize(i["rnti"]), ue_index(i["ue_idx"])))
     return {"dl_grants": dl, "ul_grants": ul, "harq_acks": acks, "csi_reports": csis, "srs": srs}
 
 
@@ -182,7 +192,7 @@ class Aggregator:
                 if k == "record":
                     u[k] = min(u[k], v)
                 elif k == "ue_index":
-                    u[k] = v
+                    u[k] = v if v is not None else u[k]
                 else:
                     u[k] += v
         for b, o in other.cells.items():
@@ -215,7 +225,7 @@ class Aggregator:
             spans[rnti][1] = b
             for k, v in u.items():
                 if k == "ue_index":
-                    t[k] = v
+                    t[k] = v if v is not None else t[k]
                 elif k != "record":
                     t[k] += v
         return [(spans[rnti][0] * self.bin_s, spans[rnti][1] * self.bin_s, *_ue_values(rnti, t, duration_s))
@@ -227,11 +237,14 @@ class Aggregator:
                  c["ul_nof_prbs"], len(c["dl_ues"]), len(c["ul_ues"]), c["failed_attempts"])
                 for b, c in sorted(self.cells.items())]
 
-    def _ue(self, b: int, rnti: str, ue_index: int, record: int) -> dict[str, Any]:
+    def _ue(self, b: int, rnti: str, ue_index: int | None, record: int) -> dict[str, Any]:
         u = self.ues.get((b, rnti))
         if u is None:
             u = self.ues[(b, rnti)] = dict.fromkeys(_UE_SUMS, 0)
             u.update(record=record, ue_index=ue_index)
+        # A Msg3 PUSCH has no index, which the later grants and reports of its UE in the bin give.
+        if u["ue_index"] is None:
+            u["ue_index"] = ue_index
         u["record"] = min(u["record"], record)
         return u
 

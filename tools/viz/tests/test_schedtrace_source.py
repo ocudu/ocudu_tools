@@ -74,6 +74,10 @@ class SchedtraceSourceTest(unittest.TestCase):
         # The slot is record 2, after the cell start event.
         self.assertEqual([(s["split"], s["v"], s["record"]) for s in series["series"]], [("0x4601", [12345], [2])])
         self.assertEqual(datasets["dl_grants"]["fields"]["new_data"], "number")
+        # Fields without values, e.g. the MCS of the second codewords of PDSCHs of one codeword, are numbers.
+        self.assertEqual(datasets["dl_grants"]["fields"]["mcs2"], "number")
+        self.assertEqual(self.store.series("dl_grants", "mcs2")["series"], [])
+        self.assertEqual(datasets["harq_acks"]["fields"]["status"], "text")
 
     def test_grid_window(self):
         res = self.source.grid(self.path, self.store, None, None, 1000)

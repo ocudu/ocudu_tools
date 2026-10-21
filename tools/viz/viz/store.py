@@ -23,7 +23,7 @@ from .filters import FilterError, compile_filter
 from .sources.base import ProgressFn, SourceType, column_type, column_value
 
 # Bumped when the database layout changes, part of the cache key.
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 # Time series windows up to this many points are returned at full resolution.
 MAX_FULL_RES_POINTS = 50_000
 # Split values returned when none are selected.
@@ -82,7 +82,7 @@ class StoreWriter:
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
         self._datasets: dict[str, _DatasetBuffer] = {}
-        self._info: dict[str, tuple[dict[str, str], list[str], str | None, str | None]] = {}
+        self._info: dict[str, tuple[dict[str, str], list[str], str | None, str | None, dict[str, str]]] = {}
         self._time_range: tuple[float, float] | None = None
         self._notes: list[str] = []
         # Source-specific metadata, e.g. the cell of a resource grid.
@@ -131,8 +131,9 @@ class StoreWriter:
         context: list[str],
         label: str | None = None,
         instance: str | None = None,
+        types: dict[str, str] | None = None,
     ) -> None:
-        self._info[dataset] = (units, context, label, instance)
+        self._info[dataset] = (units, context, label, instance, types or {})
 
     def set_time_range(self, t_min: float, t_max: float) -> None:
         self._time_range = (t_min, t_max)
@@ -190,8 +191,11 @@ class StoreWriter:
                 t_min = lo if t_min is None else min(t_min, lo)
                 t_max = hi if t_max is None else max(t_max, hi)
 
-            units, context, label, instance = self._info.get(ds.name, ({}, [], None, None))
-            fields = {col: (ds.types[col] or "text") for col in ds.columns}
+            units, context, label, instance, types = self._info.get(ds.name, ({}, [], None, None, {}))
+            # Fields without values, e.g. RSRP without reports, keep their type, so that they stay plottable.
+            fields = {
+                col: ds.types[col] or types.get(col) or ("number" if col in units else "text") for col in ds.columns
+            }
             self._conn.execute(
                 "INSERT INTO datasets VALUES (?, 'timeseries', ?, ?, ?, ?, ?)",
                 (
