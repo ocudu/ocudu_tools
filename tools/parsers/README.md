@@ -168,27 +168,29 @@ events = timeline.run_events(tshark, "run_dir", ["ngap", "f1ap"], ue="0")
 
 `tshark` reads pcaps through a link or copy in the work directory, since the AppArmor profile of `tshark` on Ubuntu only
 lets it read under `/tmp`, and dissects the MAC and RLC PDUs of `mac.pcap` and `rlc.pcap` through the `mac_nr_udp` and
-`rlc_nr_udp` heuristics. A pcap whose last record is cut short, e.g. by a crash, gives its complete records, with a
-warning. Field extractions are cached in the work directory by pcap path, size and mtime, tshark version, and a tag, by
-default the fields and filter. The default work directory, `ocudu-parsers-<uid>` under the temp dir, is created private
-(0700); one owned by another user is replaced by a new temporary directory, with a warning. A missing `tshark` raises
-`TsharkError` before any pcap is staged. `timeline.run_events()` warns about each pcap it cannot read and raises
-`TsharkError` when it reads none. `run.find_pcaps()` finds the pcaps of each protocol by file name, `<proto>.pcap` or
-with a prefix, e.g. `gnb_f1ap.pcap`, and those missing from a Retina run directory (`YYYY-MM-DD_HH-MM-SS`) in its parent
-when that is the directory of an OCUDU component (`ocudu-gnb-*`, `ocudu-du-*`, `ocudu-cu-*`, ...), e.g. the `f1ap.pcap`
-of a split DU. The paths are relative when the run directory is, unless it is a symbolic link. `run.check_pcap()` checks
-that one of the known dissectors binds the first frame of a pcap. `messages.messages()` lists the NGAP, F1AP or E1AP
-messages of a pcap with their procedure, outcome, UE identifiers and cause, as `<group>:<value>` named by the value
-tables of tshark, e.g. `protocol:unspecified`, `frames.summaries()` the one-line tshark summary of each frame and
-`frames.decode()` decodes one frame. The `rrc` of an F1AP message is the RRC message of its RRC container, None without
-one, e.g. for the `UEContextSetupRequest` of a handover target, whose `HandoverPreparationInformation` holds the
-source's `rrcReconfiguration`, which is not counted beside a container. RRC, NAS and cause fields that a `tshark` build
-does not know are left out of extractions, so those values are None. `frames.time_span()` reads the time span of a
-classic pcap from its complete packets' headers, without `tshark`, and gives None for pcapng. `capture.read()` gives the
-protocol, the frame summaries and the messages or PDUs of a pcap in one pass over its frames, after reading its first
-frame for the protocol, or its file name for a pcap without frames, unless given one, e.g. for a capture whose first
-frame is TCP. `contexts.ContextTracker` assigns the NGAP, F1AP or E1AP messages to UE contexts, by their UE identifiers
-until the release of the context, with the C-RNTI of the F1AP ones and the links between contexts, given the messages of
+`rlc_nr_udp` heuristics. The UE id of RLC PDUs, events and overviews is `ue_index`, the DU UE index of the DU logs,
+`rlc-nr.ueid` - 1, since OCUDU writes the index + 1 (`frames.rlc_ue_index()`). A pcap whose last record is cut short,
+e.g. by a crash, gives its complete records, with a warning. Field extractions are cached in the work directory by pcap
+path, size and mtime, tshark version, and a tag, by default the fields and filter. The default work directory,
+`ocudu-parsers-<uid>` under the temp dir, is created private (0700); one owned by another user is replaced by a new
+temporary directory, with a warning. A missing `tshark` raises `TsharkError` before any pcap is staged.
+`timeline.run_events()` warns about each pcap it cannot read and raises `TsharkError` when it reads none.
+`run.find_pcaps()` finds the pcaps of each protocol by file name, `<proto>.pcap` or with a prefix, e.g. `gnb_f1ap.pcap`,
+and those missing from a Retina run directory (`YYYY-MM-DD_HH-MM-SS`) in its parent when that is the directory of an
+OCUDU component (`ocudu-gnb-*`, `ocudu-du-*`, `ocudu-cu-*`, ...), e.g. the `f1ap.pcap` of a split DU. The paths are
+relative when the run directory is, unless it is a symbolic link. `run.check_pcap()` checks that one of the known
+dissectors binds the first frame of a pcap. `messages.messages()` lists the NGAP, F1AP or E1AP messages of a pcap with
+their procedure, outcome, UE identifiers and cause, as `<group>:<value>` named by the value tables of tshark, e.g.
+`protocol:unspecified`, `frames.summaries()` the one-line tshark summary of each frame and `frames.decode()` decodes one
+frame. The `rrc` of an F1AP message is the RRC message of its RRC container, None without one, e.g. for the
+`UEContextSetupRequest` of a handover target, whose `HandoverPreparationInformation` holds the source's
+`rrcReconfiguration`, which is not counted beside a container. RRC, NAS and cause fields that a `tshark` build does not
+know are left out of extractions, so those values are None. `frames.time_span()` reads the time span of a classic pcap
+from its complete packets' headers, without `tshark`, and gives None for pcapng. `capture.read()` gives the protocol,
+the frame summaries and the messages or PDUs of a pcap in one pass over its frames, after reading its first frame for
+the protocol, or its file name for a pcap without frames, unless given one, e.g. for a capture whose first frame is TCP.
+`contexts.ContextTracker` assigns the NGAP, F1AP or E1AP messages to UE contexts, by their UE identifiers until the
+release of the context, with the C-RNTI of the F1AP ones and the links between contexts, given the messages of
 `capture.read()`, which carry them; the messages of `messages.messages()` give contexts without either.
 `contexts.ue_trace()` gives the F1AP contexts of a C-RNTI and those that continue them: the targets of their handovers
 and the contexts that reestablish them, and so on.
@@ -261,7 +263,9 @@ overlaps two METRICS periods. Bins are whole microseconds, at least one: `Aggreg
 them. `skills/analyze-ran-log/scripts/ocudu/schedtrace_ue_metrics.py` prints them. The trace has no UL CRC or buffer
 status: UL rates are of scheduled new transmissions (`ul_sched_brate`), and `ul_layers` is of the PUSCHs, not the RI of
 SRS. HARQ processes that time out without a report, or have no feedback, have no trace event, so they count in neither
-`dl_nof_ok` nor `dl_nof_nok`, unlike in METRICS.
+`dl_nof_ok` nor `dl_nof_nok`, unlike in METRICS. Msg3 PUSCHs carry OCUDU's invalid DU UE index (8192, `MAX_NOF_DU_UES`),
+so `slot_items()` gives them a `ue_index` of None and they count under their TC-RNTI. A UE's later grants and reports
+fill in its index in the bin and in `ue_totals()`.
 
 ```python
 from parsers import schedtrace
@@ -325,15 +329,22 @@ with "T" or a space, or times of day, compared to the same precision; `search.is
 An RNTI filter matches `rnti=`, `c-rnti=`, `tc-rnti=` and `crnti=` tokens, not `ra-rnti=` or `temp_crnti=`. Procedures
 are the `proc="..."` traces of the DU (`PROCEDURES`): stages that a build does not log are skipped.
 `console.summarize()` reads the console output of an application, `metrics_json.rollup()` its `metrics.json`, and
-`config.parse_config()` also gives the cell, AMF, duplex and pcap options. The `ocudu_log_search.py`,
-`ocudu_log_summary.py` and `ocudu_ue_proc_latency.py` scripts of the analyze-ran-log skill print them.
-`summary.summarize()` counts the handovers completed (`ho_count`) on the target side, from info lines: intra-CU ones by
-`"Intra CU Handover Target Routine" finished successfully`, whose source side finishes at debug, conditional intra-CU
-ones by `CHO inter-DU completion finalized`, and NGAP ones by their `HandoverNotify`. Xn and conditional inter-CU
-handovers log no completion at info. `reconf_with_sync_count` counts the `reconfigurationWithSync` of RRC bodies, which
-RRC logs at debug, and `ngap_handover_count` the NGAP `HandoverRequired` and `HandoverRequest` PDUs. `app` is the
-application of the `==== <app> started ===` banner: `gNB`, `DU`, `CU`, `CU-CP`, `CU-UP` or `DU low`, which log it and
-the build line under GNB (gNB and DU), CU, CU-CP, CU-UP or APP (DU low). `loggers` are the loggers of the log's entries.
+`config.parse_config()` also gives the cell, AMF, duplex and pcap options; `tdd` is from the TDD pattern or `duplex`
+option, else from the band (`config.TDD_BANDS`, those of OCUDU's band_helper, which sets a default pattern for them),
+else None. The `ocudu_log_search.py`, `ocudu_log_summary.py` and `ocudu_ue_proc_latency.py` scripts of the
+analyze-ran-log skill print them. `summary.summarize()` counts the handovers completed (`ho_count`) on the target side,
+from info lines: intra-CU ones by `"Intra CU Handover Target Routine" finished successfully`, whose source side finishes
+at debug, conditional intra-CU ones by `CHO inter-DU completion finalized`, and NGAP ones by their `HandoverNotify`. Xn
+and conditional inter-CU handovers log no completion at info. `reconf_with_sync_count` counts the
+`reconfigurationWithSync` of RRC bodies, which RRC logs at debug, and `ngap_handover_count` the NGAP `HandoverRequired`
+and `HandoverRequest` PDUs. `app` is the application of the `==== <app> started ===` banner: `gNB`, `DU`, `CU`, `CU-CP`,
+`CU-UP` or `DU low`, which log it and the build line under GNB (gNB and DU), CU, CU-CP, CU-UP or APP (DU low). `loggers`
+are the loggers of the log's entries. `clean_shutdown` is whether the log ends with the `(END)` line that the file sink
+writes when it closes, or, for older builds, logs `Workers stopped successfully` or `PCAP files successfully closed`;
+`Stopping...` starts the shutdown and does not rule out a later crash or hang. `failures` counts the failure events of
+`parsers.log.events` (e.g. `rlf`, `rrc_setup_timeout`) by type, with the first of each in `first_failures`, and
+`warnings_by_logger` and `errors_by_logger` count the non-benign warnings and the errors per logger, with the first of
+each in `first_warning_by_logger` and `first_error_by_logger`.
 
 ### UEs of a run
 
