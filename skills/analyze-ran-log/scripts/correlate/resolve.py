@@ -61,6 +61,8 @@ def find_viavi_logs(root: Path) -> list[Path]:
 
 # Primary OCUDU app-log filenames, in preference order.
 OCUDU_LOG_NAMES = ("gnb.log", "du.log", "cu.log", "cu_cp.log", "cu_up.log")
+# Amarisoft/Open5GS 5GC log filenames, in preference order.
+CORE_LOG_NAMES = ("mme.log", "amf.log", "open5gs.log")
 # OCUDU pcap names, <proto>.pcap or with a prefix, e.g. gnb_f1ap.pcap.
 PCAP_GLOBS = ("*ngap.pcap", "*f1ap.pcap", "*e1ap.pcap", "*mac.pcap", "*rlc.pcap")
 
@@ -72,13 +74,23 @@ def classify(component_dir_name: str):
     return None, None
 
 
+def run_subdirs(d: Path) -> list[Path]:
+    return [c for c in d.iterdir() if c.is_dir() and RUN_SUBDIR_RE.match(c.name)]
+
+
 def latest_run_subdir(component_dir: Path) -> Path:
-    """Return the latest YYYY-MM-DD_HH-MM-SS subdir, or the component dir itself if flat."""
-    subs = sorted(
-        (d for d in component_dir.iterdir() if d.is_dir() and RUN_SUBDIR_RE.match(d.name)),
-        key=lambda d: d.name,
-    )
-    return subs[-1] if subs else component_dir
+    """Return the latest YYYY-MM-DD_HH-MM-SS subdir, also one level down (e.g. mme/), or the
+    component dir itself if flat."""
+    subs = run_subdirs(component_dir)
+    if not subs:
+        # The Amarisoft 5GC writes per-application run subdirs: mme/<ts>/, ims/<ts>/.
+        for child in sorted(component_dir.iterdir()):
+            if child.is_dir():
+                subs += run_subdirs(child)
+        # A later ims/ run subdir holds no core network log.
+        logged = [d for d in subs if any((d / n).is_file() for n in CORE_LOG_NAMES)]
+        subs = logged or subs
+    return max(subs, key=lambda d: d.name) if subs else component_dir
 
 
 def resolve_test_dir(path: Path) -> tuple[Path, list[Path]]:
@@ -100,9 +112,11 @@ def resolve_test_dir(path: Path) -> tuple[Path, list[Path]]:
         # the user pointed at one specifically).
         if classify(path.name)[0] is not None and path.parent.is_dir():
             return path.parent, [path]
-        # A run subdir inside a component dir?
-        if RUN_SUBDIR_RE.match(path.name) and classify(path.parent.name)[0] is not None:
-            return path.parent.parent, [path.parent]
+        # A run subdir inside a component dir, or inside its mme/ subdir?
+        if RUN_SUBDIR_RE.match(path.name):
+            for comp in (path.parent, path.parent.parent):
+                if classify(comp.name)[0] is not None:
+                    return comp.parent, [comp]
         # No component dirs, but a VIAVI command log below → still a valid run to
         # correlate (tester + whatever else is here).
         if find_viavi_logs(path):
@@ -153,7 +167,7 @@ def inventory_component(comp_dir: Path, run_dir: Path | None = None) -> dict:
         if (run_dir / "amarisoft_ue.cfg").is_file():
             info["configs"].append("amarisoft_ue.cfg")
     elif role == "5gc":
-        for name in ("mme.log", "amf.log", "open5gs.log"):
+        for name in CORE_LOG_NAMES:
             if (run_dir / name).is_file():
                 info["logs"].append(name)
         if info["logs"]:
@@ -189,7 +203,8 @@ def build_inventory(path_str: str) -> dict:
     test_dir, comp_dirs = resolve_test_dir(Path(path_str))
     path = Path(path_str).resolve()
     # A run subdir given directly is inventoried, not the latest run of its component.
-    given_run = path if RUN_SUBDIR_RE.match(path.name) and comp_dirs == [path.parent] else None
+    given_run = (path if RUN_SUBDIR_RE.match(path.name) and len(comp_dirs) == 1
+                 and comp_dirs[0] in path.parents else None)
     comps = [inventory_component(c, given_run) for c in comp_dirs]
     comps += [viavi_pseudo_component(v, test_dir) for v in find_viavi_logs(test_dir)]
     testbed = {}
@@ -204,8 +219,9 @@ def render_text(inv: dict) -> str:
     lines.append("Components:")
     for c in inv["components"]:
         lines.append(f"  [{c['role']}] {c['component']}  (analyze-ran-log type: {c['type']})")
-        rd = Path(c["run_dir"]).name
-        lines.append(f"        run subdir : {rd}")
+        rd = Path(c["run_dir"])
+        comp = Path(inv["test_dir"]) / c["component"]
+        lines.append(f"        run subdir : {rd.relative_to(comp) if comp in rd.parents else rd.name}")
         if c["logs"]:
             lines.append(f"        logs       : {', '.join(c['logs'])}")
         if c["configs"]:

@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
 # SPDX-License-Identifier: BSD-3-Clause-Open-MPI
 
-"""Tests of the input resolution of ue_log_summary.py and resolve.py, and of the error count of ue_log_summary.py.
+"""Tests of the input resolution of ue_log_summary.py and resolve.py, and of the counts and anomalies of ue_log_summary.py.
 
 The fixture lines are real amari-ue log lines.
 
@@ -32,6 +32,50 @@ UE_LOG = """\
 21:04:18.002 [PHY] DL 0001 00 4601    16.1 PDSCH: harq=0 prb=1:11 symb=2:12 CW0: tb_len=111 mod=2 rv_idx=0 cr=0.37 crc=FAIL snr=5.5 epre=-47.1
 # Ended on 2026-09-29 21:04:51
 """
+
+# A Retina run: log_options all.level=warn, time.us=1.
+US_UE_LOG = """\
+# lteue version 2026-06-12, gcc 15.2.0, glibc 2.17, avx2, Linux x86_64 6.11.9-100.fc39.x86_64
+# Started on 2026-10-18 21:05:48 [1c10c4e3800a53da][05afc694]
+21:05:48.244032 [S72] -  0 type=SLOT dir=UL n_f=80 n_sf=5 slot=0
+21:05:50.310527 [RRC] -  0001  - Random access failure
+21:05:50.310529 [MAC] -  0001 00 Contention resolution failed or timer expired
+21:05:51.100000 [RRC] -  0001  - T300 expired
+# Ended on 2026-10-18 21:06:12
+"""
+
+US_UE_CFG = """\
+{
+  log_options: "all.level=warn,s72.level=info,time.us=1,all.max_size=0,ip.level=error",
+  ue_list: [
+    {
+      ue_count: 2,
+      imsi: "001010123456789",
+      sim_events: [
+        { start_time: 0.0, event: "power_on" },
+        { start_time: 0.1, end_time: 20, dst_addr: "192.168.3.1", payload_len: 1400,
+          bit_rate:  100000000.0, event: "cbr_send" },
+      ]
+    },
+  ],
+}
+"""
+
+US_STDOUT = """\
+[[::]:2001] CBR_SEND: sent 0, recv 0
+"""
+
+
+def stats(time: float, prach: int, setups: int, accepts: int, dl_err: int) -> dict:
+    return {
+        "message": "stats", "time": time,
+        "cells": {"0": {"dl_bitrate": 10205005, "ul_bitrate": 0, "dl_rx_count": 100,
+                        "dl_err_count": dl_err, "ul_tx_count": 50, "ul_retx_count": 1}},
+        "counters": {"messages": {"prach": prach, "nr_rrc_setup_request": setups, "nr_rrc_setup": setups,
+                                  "5gs_nas_registration_request": setups,
+                                  "5gs_nas_registration_accept": accepts},
+                     "errors": {}},
+    }
 
 
 def run(script: str, *args: str) -> subprocess.CompletedProcess:
@@ -82,6 +126,39 @@ class UeLogSummaryTest(unittest.TestCase):
         self.assertIn("Error log lines    : 2", res.stdout)
         self.assertIn("PHY CRC failures   : 1", res.stdout)
         self.assertIn("Handovers (sync)   : 0", res.stdout)
+
+    def test_microsecond_records_metrics_and_quiet_log(self):
+        d = self.root / "run"
+        d.mkdir()
+        (d / "ue.log").write_text(US_UE_LOG)
+        (d / "amarisoft_ue.cfg").write_text(US_UE_CFG)
+        (d / "stdout.log").write_text(US_STDOUT)
+        (d / "metrics.json").write_text(json.dumps([stats(0.6, 3, 1, 0, 2), stats(5.7, 12, 1, 1, 3)]))
+        res = run("ue_log_summary.py", str(d))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("Error log lines    : 3", res.stdout)
+        self.assertIn("NOTE: amarisoft_ue.cfg log_options all.level=warn (info/debug: s72)", res.stdout)
+        self.assertIn("=== metrics.json (2 stats records, up to t=5.7 s) ===", res.stdout)
+        self.assertRegex(res.stdout, r"prach +12\n")
+        self.assertIn("Cell 0: DL 10.2, UL 0.0 Mbit/s (last interval); DL err 5/200 rx", res.stdout)
+        self.assertIn("metrics.json: 12 PRACH for 1 RRC setups/reestablishments", res.stdout)
+        self.assertIn("metrics.json: 1 registration accepts for 2 simulated UEs (1 requests)", res.stdout)
+        self.assertIn("CBR_SEND [[::]:2001] sent 0 (cbr_send bit_rate 1e+08): suspected no UL traffic",
+                      res.stdout)
+        res = run("resolve.py", str(d / "ue.log"), "--json")
+        self.assertTrue(json.loads(res.stdout)["ok"])
+
+    def test_token_cbr_send_and_empty_metrics(self):
+        d = self.root / "run"
+        d.mkdir()
+        (d / "ue.log").write_text(UE_LOG)
+        (d / "amarisoft_ue.cfg").write_text(US_UE_CFG.replace("100000000.0", "1"))
+        (d / "stdout.log").write_text(US_STDOUT)
+        (d / "metrics.json").write_text("")
+        res = run("ue_log_summary.py", str(d))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertNotIn("CBR_SEND [[::]:2001] sent 0", res.stdout)
+        self.assertNotIn("=== metrics.json", res.stdout)
 
     def test_components_are_distinct_paths(self):
         # Same component name under two test dirs, and amarisoft-ue-1 beside amarisoft-ue-10.

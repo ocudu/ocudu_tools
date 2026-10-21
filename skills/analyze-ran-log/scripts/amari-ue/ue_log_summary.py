@@ -20,6 +20,7 @@ Usage:
 """
 
 import itertools
+import json
 import re
 import sys
 from collections import Counter
@@ -31,9 +32,11 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 PRIMARY = "ue.log"
+# Record time: milliseconds, or microseconds with log_options time.us=1.
+TIME_PAT = r"\d{2}:\d{2}:\d{2}\.\d{3,6}"
 # First lines of a ue.log: its "#" header or a timestamped record.
 HEAD_RE = re.compile(
-    r"^(# (lteue\b|Started on |Log file format)|\d{2}:\d{2}:\d{2}\.\d{3} \[\w+\] )", re.M
+    rf"^(# (lteue\b|Started on |Log file format)|{TIME_PAT} \[\w+\] )", re.M
 )
 
 
@@ -90,6 +93,8 @@ def parse_cfg(cfg_path: Path) -> dict:
         "imsi": None,
         "n_imsi": 0,
         "sim_events": [],
+        "log_levels": {},
+        "cbr_send_bitrate": None,
     }
     if not cfg_path.exists():
         return result
@@ -121,6 +126,21 @@ def parse_cfg(cfg_path: Path) -> dict:
     if imsis:
         result["imsi"] = imsis[0]
 
+    m = re.search(r'log_options\s*:\s*"([^"]*)"', text)
+    if m:
+        for opt in m.group(1).split(","):
+            key, _, value = opt.strip().partition("=")
+            if key.endswith(".level"):
+                result["log_levels"][key[:-len(".level")]] = value
+
+    # Sim event objects hold no nested braces.
+    for m in re.finditer(r"\{[^{}]*\}", text):
+        block = m.group(0)
+        if re.search(r'event\s*:\s*"cbr_send"', block):
+            rate = re.search(r"\bbit_rate\s*:\s*([\d.eE+]+)", block)
+            if rate:
+                result["cbr_send_bitrate"] = max(result["cbr_send_bitrate"] or 0.0, float(rate.group(1)))
+
     seen = set()
     for m in re.finditer(r'event\s*:\s*"([^"]+)"', text):
         ev = m.group(1)
@@ -135,7 +155,7 @@ def parse_cfg(cfg_path: Path) -> dict:
 # ue.log parser
 # ---------------------------------------------------------------------------
 
-LINE_RE = re.compile(r"^(\d{2}:\d{2}:\d{2}\.\d{3}) \[(\w+)\] (\S+)\s+(.*)")
+LINE_RE = re.compile(rf"^({TIME_PAT}) \[(\w+)\] (\S+)\s+(.*)")
 NAS_STATE_RE = re.compile(r"(\S+)\s+New state\s*:\s*(\S+)\s+(\S+)")
 PROD_EVENT_RE = re.compile(r"SIM-Event:\s*(\S+)")
 # RRC rest = "<ue_or_sfn> <cell_id> <channel>: <msg>" (direction already consumed by LINE_RE)
@@ -302,11 +322,63 @@ def parse_stdout(stdout_log: Path) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# metrics.json parser
+# ---------------------------------------------------------------------------
+
+def parse_metrics(metrics_path: Path) -> dict | None:
+    """Message counters of the last stats record, and per-cell totals over all records.
+
+    None when the file is absent, empty, or holds no stats record.
+    """
+    try:
+        text = metrics_path.read_text(errors="replace").strip()
+    except OSError:
+        return None
+    if not text:
+        return None
+    try:
+        records = json.loads(text)
+    except ValueError:
+        # One JSON object per line.
+        records = []
+        for line in text.splitlines():
+            try:
+                records.append(json.loads(line))
+            except ValueError:
+                continue
+    if isinstance(records, dict):
+        records = [records]
+    stats = [r for r in records if isinstance(r, dict) and r.get("message") == "stats"]
+    if not stats:
+        return None
+
+    last = stats[-1]
+    counters = last.get("counters") or {}
+    cells: dict[str, dict] = {}
+    # Cell counts cover the interval since the previous record, so they are summed.
+    for rec in stats:
+        for cid, c in (rec.get("cells") or {}).items():
+            tot = cells.setdefault(cid, {"dl_rx_count": 0, "dl_err_count": 0,
+                                         "ul_tx_count": 0, "ul_retx_count": 0})
+            for k in ("dl_rx_count", "dl_err_count", "ul_tx_count", "ul_retx_count"):
+                tot[k] += c.get(k) or 0
+            tot["dl_bitrate"] = c.get("dl_bitrate")
+            tot["ul_bitrate"] = c.get("ul_bitrate")
+    return {
+        "n_records": len(stats),
+        "time": last.get("time"),
+        "messages": counters.get("messages") or {},
+        "errors": counters.get("errors") or {},
+        "cells": cells,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Duration helper
 # ---------------------------------------------------------------------------
 
 def ts_delta_seconds(t1: str, t2: str) -> float | None:
-    """Seconds from t1 to the next occurrence of t2, both HH:MM:SS.mmm."""
+    """Seconds from t1 to the next occurrence of t2, both HH:MM:SS.mmm or HH:MM:SS.uuuuuu."""
     try:
         def to_sec(t):
             h, m, s = t.split(":")
@@ -321,11 +393,53 @@ def ts_delta_seconds(t1: str, t2: str) -> float | None:
 # Main summary output
 # ---------------------------------------------------------------------------
 
+# log_options levels under which info records (PHY PRACH, NAS states, RRC messages) are not logged.
+QUIET_LEVELS = ("warn", "error", "none")
+
+# cbr_send bit rate (bit/s) from which the run is taken as a UL traffic test.
+UL_TEST_BITRATE = 1000.0
+
+# metrics.json message counters printed one per line, in procedure order.
+KEY_METRICS = (
+    "prach",
+    "nr_rrc_setup_request", "nr_rrc_setup", "nr_rrc_reject", "nr_rrc_setup_complete",
+    "nr_rrc_reestablishment_request", "nr_rrc_reestablishment",
+    "nr_rrc_reconfiguration", "nr_rrc_release",
+    "5gs_nas_registration_request", "5gs_nas_registration_accept", "5gs_nas_registration_reject",
+    "5gs_nas_pdu_session_establishment_request", "5gs_nas_pdu_session_establishment_accept",
+    "5gs_nas_pdu_session_establishment_reject",
+)
+
+
+def mbps(bitrate) -> str:
+    return f"{bitrate / 1e6:.1f}" if isinstance(bitrate, (int, float)) else "-"
+
+
+def metrics_anomalies(msgs: dict, ue_count: int) -> list[str]:
+    """Anomalies of the cumulative metrics.json message counters."""
+    found = []
+    prach = msgs.get("prach", 0)
+    rrc = msgs.get("nr_rrc_setup", 0) + msgs.get("nr_rrc_reestablishment", 0)
+    # Each RRC setup or reestablishment needs one RA; a HO or beam recovery RA adds a few more.
+    if prach >= 3 and prach > 2 * rrc:
+        found.append(f"metrics.json: {prach} PRACH for {rrc} RRC setups/reestablishments"
+                     " (suspected RA failures: check MAC 'Contention resolution failed', RRC 'Random access failure')")
+    if "5gs_nas_registration_request" in msgs:
+        accepts = msgs.get("5gs_nas_registration_accept", 0)
+        if accepts < ue_count:
+            found.append(f"metrics.json: {accepts} registration accepts for {ue_count} simulated UEs"
+                         f" ({msgs['5gs_nas_registration_request']} requests)")
+    rejects = {k: v for k, v in msgs.items() if k.endswith("_reject") and v}
+    if rejects:
+        found.append(f"metrics.json: {', '.join(f'{k}={v}' for k, v in rejects.items())}")
+    return found
+
 def summarize(path_str: str):
     ue_log = resolve_ue_log(path_str)
     run_dir = ue_log.parent
     stdout_log = run_dir / "stdout.log"
     cfg_path = run_dir / "amarisoft_ue.cfg"
+    metrics_path = run_dir / "metrics.json"
 
     print(f"Run directory : {run_dir}")
     if ue_log.name != PRIMARY:
@@ -335,6 +449,7 @@ def summarize(path_str: str):
     cfg = parse_cfg(cfg_path)
     log = parse_ue_log(ue_log)
     out = parse_stdout(stdout_log)
+    metrics = parse_metrics(metrics_path)
 
     # ----- Configuration -----
     print("=== UE Configuration ===")
@@ -446,6 +561,13 @@ def summarize(path_str: str):
 
     # ----- Procedure summary -----
     print("=== Procedure Summary ===")
+    all_level = cfg["log_levels"].get("all")
+    if all_level in QUIET_LEVELS:
+        verbose = [k for k, v in cfg["log_levels"].items() if v not in QUIET_LEVELS]
+        except_note = f" (info/debug: {', '.join(verbose)})" if verbose else ""
+        source = "the metrics.json counters" if metrics else "stdout.log and the gNB side"
+        print(f"  NOTE: amarisoft_ue.cfg log_options all.level={all_level}{except_note}; the PRACH, NAS,"
+              f" RRC and CRC counts below undercount, use {source}.")
     print(f"  PRACH attempts     : {log['prach_count']}")
     print(f"  Handovers (sync)   : {log['ho_count']}")
     print(f"  Reestablishments   : {log['reest_count']}")
@@ -455,6 +577,27 @@ def summarize(path_str: str):
         _, _, gmm, cm = log["nas_states"][-1]
         print(f"  Final NAS state    : {gmm} {cm}")
     print()
+
+    # ----- metrics.json counters -----
+    if metrics:
+        t = f", up to t={metrics['time']:.1f} s" if isinstance(metrics["time"], (int, float)) else ""
+        print(f"=== metrics.json ({metrics['n_records']} stats records{t}) ===")
+        msgs = metrics["messages"]
+        key_msgs = [k for k in KEY_METRICS if k in msgs]
+        if key_msgs:
+            print("  Key counters (cumulative):")
+            for k in key_msgs:
+                print(f"    {k:<42} {msgs[k]}")
+        others = [k for k in msgs if k not in KEY_METRICS]
+        if others:
+            print(f"  Other counters     : {', '.join(f'{k}={msgs[k]}' for k in others)}")
+        if metrics["errors"]:
+            print(f"  Error counters     : {', '.join(f'{k}={v}' for k, v in metrics['errors'].items())}")
+        for cid, c in sorted(metrics["cells"].items()):
+            print(f"  Cell {cid}: DL {mbps(c['dl_bitrate'])}, UL {mbps(c['ul_bitrate'])} Mbit/s (last interval);"
+                  f" DL err {c['dl_err_count']}/{c['dl_rx_count']} rx,"
+                  f" UL retx {c['ul_retx_count']}/{c['ul_tx_count']} tx (all intervals)")
+        print()
 
     # ----- Traffic stats -----
     if out["cbr_recv"] or out["cbr_send"]:
@@ -527,6 +670,17 @@ def summarize(path_str: str):
                 f"{never} of {len(seen_ues)} UEs never reached 5GMM-REGISTERED: "
                 f"{shown}{more}"
             )
+    # A DL test keeps a token cbr_send (bit_rate 1) that sends nothing.
+    ul_rate = cfg["cbr_send_bitrate"]
+    if ul_rate is None or ul_rate >= UL_TEST_BITRATE:
+        rate_note = f"cbr_send bit_rate {ul_rate:g}" if ul_rate else "cbr_send bit_rate unknown"
+        for addr, sent, _ in out["cbr_send"]:
+            if sent == 0:
+                anomalies.append(f"CBR_SEND [{addr}] sent 0 ({rate_note}): suspected no UL traffic")
+        if ul_rate and stdout_log.exists() and not out["cbr_send"]:
+            anomalies.append(f"no CBR_SEND result in stdout.log ({rate_note}): suspected no UL traffic")
+    if metrics:
+        anomalies += metrics_anomalies(metrics["messages"], cfg["ue_count"])
     if out["warnings"]:
         for w in out["warnings"]:
             anomalies.append(f"Stdout warning: {w[:100]}")

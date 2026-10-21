@@ -161,7 +161,7 @@ A Retina `test_gnb[...]` directory typically contains:
 | (the same dirs) | `*.pcap` (`ngap`/`f1ap`/`e1ap`/`mac`/`rlc`) | `pcap` |
 | `amarisoft-ue-*` | `ue.log`, `stdout.log`, `amarisoft_ue.cfg` | `amari-ue` |
 | VIAVI tester output | `*_Command_Log*.txt`/`.zip` | `viavi` |
-| `amarisoft-5gc-*` | `mme.log`, `amarisoft_mme.cfg` | light-touch (future `amari-5gc` type) |
+| `amarisoft-mme-*` / `amarisoft-5gc-*` | `mme/<ts>/`: `mme.log`, `amarisoft_mme.cfg` | light-touch (future `amari-5gc` type) |
 | (whole run, ≥2 components) | cross-artifact correlation | `correlate` |
 | (top level) | `testbed.json`, `test.html`, `agent-log-*.log` | the mode playbook |
 

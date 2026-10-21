@@ -82,7 +82,7 @@ def build_report(given: Path) -> dict:
     if not ue_log_summary.is_ue_log_head(primary):
         return {**report, "ok": False,
                 "bail": f"{primary.name} does not look like an Amarisoft UE log "
-                        "(no '#' header or HH:MM:SS.mmm [LAYER] record in its first lines)"}
+                        "(no '#' header or HH:MM:SS.fff [LAYER] record in its first lines)"}
 
     present = [primary.name] + [a for a in ARTIFACTS[1:] if (run_dir / a).is_file()]
     report["present"] = present

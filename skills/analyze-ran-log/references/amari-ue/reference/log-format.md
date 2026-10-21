@@ -24,7 +24,8 @@ HH:MM:SS.mmm [LAYER] DIR FIELDS... MESSAGE
 ```
 
 Fields vary by layer (see per-layer table below). The timestamp has millisecond
-precision. Lines with no leading timestamp are **continuation lines** (multi-line
+precision (`.mmm`), or microsecond (`.uuuuuu`) when `log_options` sets `time.us=1`
+(Retina runs). Lines with no leading timestamp are **continuation lines** (multi-line
 PDU message bodies, indented with spaces).
 
 ### Per-layer format

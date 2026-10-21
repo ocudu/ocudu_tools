@@ -28,8 +28,8 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/amari-ue/ue_log_search.py <ue.log> \
   [--layer <NAS|RRC|PHY|MAC|PROD>] \
   [--ue <ue_id>] \
   [--cell <cell_id>] \
-  [--after <HH:MM:SS.mmm>] \
-  [--before <HH:MM:SS.mmm>] \
+  [--after <HH:MM:SS[.fff]>] \
+  [--before <HH:MM:SS[.fff]>] \
   [--pattern <regex>] \
   [--count] \
   [--max-lines 200]
@@ -43,6 +43,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/amari-ue/ue_log_search.py <ue.log> \
 | "What cells did the UE see?" | `--layer PHY --pattern "PSS:"` |
 | "What was the final NAS state?" | `--layer NAS` then tail |
 | "Did the UE reestablish?" | `--layer RRC --pattern "RRC reestablishment request"` |
+| "How many PRACH / RRC setups / registrations?" | `metrics.json` last `stats` record, `counters.messages` (the summary prints them); `ue.log` counts need `all.level` info |
 | "What band/BW was used?" | read `amarisoft_ue.cfg` (fields: `reference/config-format.md`) or `grep "^RF" stdout.log` |
 
 `--pattern` is a case-insensitive regex. `--after` is on the day of the first

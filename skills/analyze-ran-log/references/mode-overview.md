@@ -42,14 +42,15 @@ Map component → kind with the table in `SKILL.md` § Resolve & classify
 (`ocudu-*` → `ocudu`, `amarisoft-ue-*` → `amari-ue`, `*.pcap` → `pcap`,
 `*_Command_Log*` → `viavi`).
 
-`amarisoft-5gc-*` has no type yet — light-touch only: grep `mme.log` for
+`amarisoft-mme-*` / `amarisoft-5gc-*` has no type yet — light-touch only: grep
+`mme.log` (Retina: `amarisoft-mme-N/mme/<ts>/mme.log`) for
 registration / PDU-session / NGAP / `[E]` lines, capped at 200 lines.
 
 Capture one headline per component.
 
 **A missing or unusable artifact is itself an anomaly.** Before summarizing, check
 what resolve reported as absent: a component whose primary log is missing, empty,
-or lacks its end-of-run marker (`Workers stopped successfully` for OCUDU,
+or lacks its end-of-run marker (closing `(END)` line for OCUDU,
 `# Ended on` for the UE sim) is a finding in its own right. Report it, and say
 which conclusions it makes unavailable — a truncated log means "not observed", not
 "did not happen", and that distinction decides whether a later absence is

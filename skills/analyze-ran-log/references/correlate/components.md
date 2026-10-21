@@ -16,8 +16,9 @@ test_gnb[<params>]/
 │       └── rlc.pcap  ngap.pcap  f1ap.pcap  e1ap.pcap  mac.pcap   # whichever enabled
 ├── amarisoft-ue-1/ … amarisoft-ue-N/
 │   └── YYYY-MM-DD_HH-MM-SS/ {ue.log, stdout.log, amarisoft_ue.cfg, metrics.json}
-└── amarisoft-5gc-1[-1]/
-    └── YYYY-MM-DD_HH-MM-SS/ {mme.log, amarisoft_mme.cfg, ps_info_ltemme.txt}
+└── amarisoft-mme-1/          # (older runs: amarisoft-5gc-1[-1]/YYYY-MM-DD_HH-MM-SS/)
+    ├── mme/YYYY-MM-DD_HH-MM-SS/ {mme.log or stdout_mme.log, amarisoft_mme.cfg, metrics.json}
+    └── ims/
 ```
 
 `scripts/correlate/resolve.py` resolves all of this (latest run subdir per

@@ -10,10 +10,14 @@ A single run directory typically contains:
 |---|---|
 | `ue.log` | Detailed per-layer protocol trace (NAS/RRC/PHY/MAC/RLC/PDCP) |
 | `stdout.log` | Console output: UE stats table, CBR traffic results, warnings |
-| `amarisoft_ue.cfg` | JSON5 configuration: cell groups, UE list, sim events |
+| `amarisoft_ue.cfg` | JSON5 configuration: cell groups, UE list, sim events, `log_options` |
+| `metrics.json` | JSON list of `stats` records, one per ~5 s: cumulative message counters, per-cell interval counts |
 | `ps_info_lteue-avx2.txt` | Process CPU/memory snapshot (rarely needed) |
 
-`metrics.json` in a UE dir is normally empty; check its size before skipping it.
+`metrics.json` may be empty in older runs. When `log_options` sets `all.level=warn`
+(Retina runs), `ue.log` holds no PHY/NAS/RRC info records: its PRACH, NAS state and
+RRC counts are 0 or undercounted, and the `metrics.json` counters (`prach`,
+`nr_rrc_setup`, `5gs_nas_registration_accept`, ...) are the source of truth.
 
 ## Subtree layout
 
@@ -41,7 +45,7 @@ resolves to the `ue.log` of the latest run directory under it. It prints the
 resolved run dir, the analysis artifacts present (the UE log, `stdout.log`,
 `amarisoft_ue.cfg`), the **simulated UE count**, and a `verdict:` line; it exits
 non-zero (`BAIL`) if no UE log is found, it is empty, or its first lines are not
-a UE log (`#` header or `HH:MM:SS.mmm [LAYER]` records). **Bail if the verdict
+a UE log (`#` header or `HH:MM:SS.mmm[uuu] [LAYER]` records). **Bail if the verdict
 is not OK.** A directory with only `ue0.log`-style names bails; pass the file.
 
 **UE count**: sum `ue_count` across every group in `amarisoft_ue.cfg` (one cfg

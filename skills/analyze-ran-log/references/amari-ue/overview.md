@@ -14,8 +14,8 @@ Resolve already reported the run dir and which of `ue.log`, `stdout.log`,
 python3 ${CLAUDE_SKILL_DIR}/scripts/amari-ue/ue_log_summary.py <run-dir | UE log file>
 ```
 
-A file is parsed as given (e.g. `ue0.log`), with its directory's `stdout.log` and
-`amarisoft_ue.cfg`; a directory needs a `ue.log` at or under it.
+A file is parsed as given (e.g. `ue0.log`), with its directory's `stdout.log`,
+`amarisoft_ue.cfg` and `metrics.json`; a directory needs a `ue.log` at or under it.
 
 Emits, in one pass:
 
@@ -27,9 +27,16 @@ Emits, in one pass:
 - Procedure counts: PRACH attempts, handovers, reestablishments, PHY CRC failures,
   error log lines (non-PHY records with fail/failed/failure/error/expired/reject,
   e.g. `Contention resolution failed or timer expired`; ue.log has no severity field)
+- NOTE when `log_options` sets `all.level` to warn/error: the log counts undercount
+- `metrics.json`: cumulative message counters of the last `stats` record (PRACH, RRC
+  setup, registration, PDU session), per-cell DL/UL bitrate (last interval) and DL
+  error / UL retx counts summed over all records
 - Traffic stats: CBR sent/received with loss percentage
 - Sim events timeline (power_on, cbr_recv/cbr_send, power_off, quit)
-- Anomalies (packet loss > 1%, PHY errors, unexpected final NAS state)
+- Anomalies (packet loss > 1%, PHY errors, unexpected final NAS state; from
+  `metrics.json`: PRACH > 2× RRC setups + reestablishments (RA failures),
+  registration accepts below the UE count, `*_reject` counters; a UL test, cbr_send
+  `bit_rate` ≥ 1 kbit/s, with `CBR_SEND: sent 0` or no CBR_SEND result)
 
 If the script is absent or fails, fall back to the grep recipes in
 `reference/log-format.md`.
@@ -65,6 +72,7 @@ If the script is absent or fails, fall back to the grep recipes in
 - <time>  Ended (duration: Xs)
 
 ### Procedures
+(from `metrics.json` counters when the log level is warn)
 - PRACH: N attempts
 - Handovers: N
 - Reestablishments: N

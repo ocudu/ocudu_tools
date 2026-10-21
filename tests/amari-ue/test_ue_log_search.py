@@ -149,6 +149,27 @@ class UeLogSearchTest(unittest.TestCase):
             self.assertEqual(count("--after", "23:59:59.500", "--before", "00:00:00.500"), 2)
             self.assertEqual(count("--before", "00:00:00.100"), 3)
 
+    def test_microsecond_times(self):
+        # Records of log_options time.us=1.
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "ue.log"
+            log.write_text(
+                "# Started on 2026-10-18 21:05:48\n"
+                "21:05:48.244032 [S72] -  0 type=SLOT dir=UL n_f=80 n_sf=5 slot=0\n"
+                "21:05:48.565527 [MAC] -  0009 00 Contention resolution failed or timer expired\n"
+                "21:05:48.565529 [MAC] -  0008 00 Contention resolution failed or timer expired\n"
+            )
+
+            def count(*args: str) -> int:
+                proc = subprocess.run([sys.executable, str(SCRIPT), str(log), *args, "--count"],
+                                      capture_output=True, text=True, check=True)
+                return int(proc.stdout)
+
+            self.assertEqual(count("--layer", "MAC"), 2)
+            self.assertEqual(count("--ue", "0009"), 1)
+            self.assertEqual(count("--after", "21:05:48.565528"), 1)
+            self.assertEqual(count("--before", "21:05:48.565527"), 2)
+
     def test_bad_arguments_exit_2(self):
         for args in (("--pattern", "("), ("--after", "1:2"), ("--after", "25:00:00"),
                      ("--before", "12:60:00"), ("--before", "12:00:60.5")):

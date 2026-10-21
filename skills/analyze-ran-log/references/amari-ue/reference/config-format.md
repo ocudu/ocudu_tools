@@ -41,7 +41,9 @@ UE-side analog of OCUDU's `log.<layer>_level`. Common keys:
 | Token | Effect |
 |---|---|
 | `all.level=debug` | base verbosity for every layer (`debug` ⇒ full per-message trace) |
+| `all.level=warn` | warnings only (Retina): no PHY PRACH, NAS state or RRC message records; count from `metrics.json` |
 | `all.max_size=0` | hex-dump bytes per PDU; `0` = none |
+| `time.us=1` | microsecond record times (`HH:MM:SS.uuuuuu`) |
 | `<layer>.level=info` | per-layer override (e.g. `ip.level=info`) |
 | `phy.dci_size`/`phy.csi`/`phy.cch`/`phy.cell_meas=1` | extra PHY detail (DCI sizes, CSI, control channels, cell measurements) |
 | `rrc.max_size=N` / `nas.key=1` / `rrc.key=1` | RRC dump size; log NAS/RRC security keys |

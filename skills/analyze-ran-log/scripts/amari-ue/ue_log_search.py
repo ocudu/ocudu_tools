@@ -19,8 +19,8 @@ Options:
   --layer <LAYER>       Filter by log layer: NAS, RRC, PHY, MAC, RLC, PDCP, PROD, TRX
   --ue <ue_id>          Filter by UE ID (4-char hex, e.g. 0001, 000a, 0080)
   --cell <cell_id>      Filter by cell index (2-char decimal, e.g. 00, 01)
-  --after <ts>          Only include lines at or after HH:MM:SS.mmm
-  --before <ts>         Only include lines at or before HH:MM:SS.mmm
+  --after <ts>          Only include lines at or after HH:MM:SS[.fff]
+  --before <ts>         Only include lines at or before HH:MM:SS[.fff]
                         (a log crossing midnight: --after is on the next day
                         when over 12 h behind the first line, --before when
                         over 12 h behind --after or the first line)
@@ -54,7 +54,7 @@ import sys
 import ue_log_summary  # reuse resolve_ue_log()
 
 
-LINE_RE = re.compile(r"^(\d{2}:\d{2}:\d{2}\.\d{3}) \[(\w+)\]")
+LINE_RE = re.compile(rf"^({ue_log_summary.TIME_PAT}) \[(\w+)\]")
 HMS_RE = re.compile(r"^(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)$")
 DAY = 86400.0
 HALF_DAY = DAY / 2
@@ -70,7 +70,7 @@ def hms_seconds(s: str) -> float:
 def _hms_arg(s: str) -> float:
     m = HMS_RE.match(s)
     if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59 or float(m.group(3)) >= 60:
-        raise argparse.ArgumentTypeError(f"not HH:MM:SS[.mmm]: {s!r}")
+        raise argparse.ArgumentTypeError(f"not HH:MM:SS[.fff]: {s!r}")
     return hms_seconds(s)
 
 
@@ -91,9 +91,9 @@ def parse_args(argv=None):
     ap.add_argument("--ue", help="UE ID filter (4-char hex, e.g. 0001, 000a)")
     ap.add_argument("--cell", help="Cell ID filter (e.g. 00, 01)")
     ap.add_argument("--after", type=_hms_arg,
-                    help="Start timestamp HH:MM:SS.mmm (inclusive)")
+                    help="Start timestamp HH:MM:SS[.fff] (inclusive)")
     ap.add_argument("--before", type=_hms_arg,
-                    help="End timestamp HH:MM:SS.mmm (inclusive)")
+                    help="End timestamp HH:MM:SS[.fff] (inclusive)")
     ap.add_argument("--pattern", type=_regex_arg,
                     help="Regex pattern, case-insensitive (searched across full block)")
     ap.add_argument("--count", action="store_true", help="Print count only")
@@ -103,7 +103,7 @@ def parse_args(argv=None):
 
 
 class LogClock:
-    """Seconds since the first log day of the HH:MM:SS.mmm line times, read in file order."""
+    """Seconds since the first log day of the HH:MM:SS.fff line times, read in file order."""
 
     def __init__(self):
         self.first: float | None = None
