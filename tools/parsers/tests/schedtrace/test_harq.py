@@ -147,7 +147,7 @@ class HarqTest(unittest.TestCase):
                          [(harq.PUSCH, 104, 1), (harq.CRC, 108, 1), (harq.PUSCH, 114, 2), (harq.CRC, 118, 2)])
         self.assertEqual((first.ended_by, first.statuses, first.outcome()), ("ack", ["Ko", "Ok"], "CRC OK at tx 2"))
         self.assertEqual(first.rows[1].params, {"status": "Ko", "tbs": 500, "slot_rx": "5.4", "snr": 20.5,
-                                                "rsrp_dbfs": None, "ta": 16})
+                                                "rsrp_dbfs": None, "ta": 16 / (480e3 * 4096)})
         self.assertEqual((second.tbs, second.ended_by, second.outcome()), (700, "new_tx", "failed after 1 KO/DTX"))
         # Rows name the key of their slot event, also after the reports of the slot.
         self.assertEqual([r.event for r in second.rows], [118, 124])

@@ -28,7 +28,7 @@ from typing import Any, Hashable
 
 from ..ran.rnti import normalize
 from .grid import MAX_AGGR_LVL_INDEX, vrb_bitmap_crbs
-from .ue_metrics import finite, ue_index
+from .ue_metrics import TC_S, finite, ue_index
 
 # Frames after which the SFN wraps.
 NOF_SFNS = 1024
@@ -183,8 +183,9 @@ class _Tracker:
             tx = tr._rx_slots.get(rx, tr.nof_tx)
             params = {"status": status, "tbs": inp.get("tbs"), "slot_rx": self._sfn_slot(slot_rx)}
             if kind == "CrcEvent":
+                ta = inp.get("time_advance")
                 params.update(snr=finite(inp.get("ul_sinr_db")), rsrp_dbfs=finite(inp.get("ul_rsrp_dbfs")),
-                              ta=inp.get("time_advance"))
+                              ta=None if ta is None else ta * TC_S)
             tr.rows.append(row(row_kind, tx, None, params))
             tr.statuses.append(status)
             if status == _OUTCOME_WORDS[direction][0]:
