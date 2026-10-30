@@ -17,6 +17,7 @@ from pathlib import Path
 
 TEST_DIR = Path(__file__).resolve().parent
 SCRIPT = TEST_DIR.parents[1] / "skills" / "ocudu-code-review" / "scripts" / "resolve_diff.sh"
+NUMBERED_DIFF = SCRIPT.parent / "numbered_diff.sh"
 
 GIT_ENV = {
     **os.environ,
@@ -351,7 +352,20 @@ class ResolveDiffTest(unittest.TestCase):
         commit(self.root, "a.txt", "one\n")
         plan = self.resolve(base)["PLAN"]
         self.assertEqual(len(plan), 1)
-        self.assertIn("Read the whole diff: `git diff local-base...HEAD`", plan[0])
+        self.assertIn(f"Read the whole diff: `{NUMBERED_DIFF} local-base...HEAD`", plan[0])
+
+    def test_numbered_diff_gives_new_file_lines(self):
+        commit(self.root, "n.txt", "".join(f"line {i}\n" for i in range(1, 11)))
+        git(self.root, "branch", "local-base")
+        commit(self.root, "n.txt", "".join(f"line {i}\n" for i in range(1, 11) if i != 5).replace("line 8", "line 8b"))
+        out = subprocess.run(["bash", str(NUMBERED_DIFF), "local-base...HEAD"], cwd=self.root, env=GIT_ENV,
+                             check=True, capture_output=True, text=True).stdout
+        body = out.splitlines()
+        # Context and added lines carry their new-file line, removed ones none.
+        self.assertIn("    4  line 4", body)
+        self.assertIn("    - -line 5", body)
+        self.assertIn("    7 +line 8b", body)
+        self.assertIn("    - -line 8", body)
 
     def test_plan_for_a_big_diff_ranks_files_and_withholds_the_whole_read(self):
         base = self.make_local_base()
