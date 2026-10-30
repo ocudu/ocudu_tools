@@ -17,7 +17,8 @@
 # Prints on stdout, one KEY=value per line:
 #   BASE   ref the tip is compared against; empty for local-only targets
 #   TIP    resolved tip ref; empty for `working`/`staged` and explicit ranges
-#   CMD    the git command to run
+#   CMD    the git command to run; the PLAN reads it through
+#          numbered_diff.sh, which adds new-file line numbers
 #   DIRTY  1 if the working tree has uncommitted changes
 #   EMPTY  1 if CMD produces no changes
 #   FILES  files the diff touches
@@ -305,6 +306,9 @@ fi
 
 plan=()
 
+# The diff with new-file line numbers; findings cite these.
+numbered_cmd="${script_dir}/numbered_diff.sh ${diff_args[*]:1}"
+
 if [ "$empty" -eq 1 ]; then
     plan+=("Nothing to review: report \"No changes to review\" and stop.")
 else
@@ -320,7 +324,7 @@ else
         plan+=("${comments} ${local_threads} already on this MR (COMMENT= lines above, full text in ${comments_file}). Read them before reporting and drop any finding they already make; where you disagree with one or can extend it, say so naming the commenter.")
     fi
     if [ "$big" -eq 0 ]; then
-        plan+=("Read the whole diff: \`${diff_args[*]/#diff/git diff}\`")
+        plan+=("Read the whole diff: \`${numbered_cmd}\`")
     elif [ "$fanout" -eq 1 ]; then
         ranked_files | awk -v gf="$GROUP_FILES" -v gl="$GROUP_LINES" '
             { if (n >= gf || (n > 0 && l + $1 > gl)) { print ""; n = 0; l = 0 }
@@ -328,10 +332,10 @@ else
               printf "%s%s", (n > 1 ? " " : ""), path }
             END { print "" }' |
             awk 'NF { printf "GROUP=%d %s\n", ++g, $0 }'
-        plan+=("Large diff (${files} files, ${lines} lines, $((bytes / 1024)) KB). Give each GROUP above to its own subagent: pass it the group's paths, the command prefix \`${diff_args[*]/#diff/git diff}\`, and references/REFERENCE.md, references/realtime.md and references/security.md. Each returns only findings as \`file:line | category | verdict | summary | failure scenario\`, plus convention issues as \`file:line — issue\`; never diff text. Categories: correctness, memory-safety, untrusted-input, realtime-alloc, realtime-blocking, realtime-latency.")
+        plan+=("Large diff (${files} files, ${lines} lines, $((bytes / 1024)) KB). Give each GROUP above to its own subagent: pass it the group's paths, the command prefix \`${numbered_cmd}\`, and references/REFERENCE.md, references/realtime.md and references/security.md. Each returns only findings as \`file:line | category | verdict | summary | failure scenario\`, plus convention issues as \`file:line — issue\`; never diff text. Categories: correctness, memory-safety, untrusted-input, realtime-alloc, realtime-blocking, realtime-latency.")
     else
         ranked_files | awk '{ n = $1; $1 = ""; sub(/^ /, ""); printf "FILE=%d %s\n", n, $0 }'
-        plan+=("Large diff (${files} files, ${lines} lines, $((bytes / 1024)) KB): do not read it whole. Review the FILE= list above in order, heaviest first, with \`${diff_args[*]/#diff/git diff} -- <path>\`, slicing a single huge file hunk by hunk. Drop generated or test-vector churn on sight.")
+        plan+=("Large diff (${files} files, ${lines} lines, $((bytes / 1024)) KB): do not read it whole. Review the FILE= list above in order, heaviest first, with \`${numbered_cmd} -- <path>\`, slicing a single huge file hunk by hunk. Drop generated or test-vector churn on sight.")
         if [ "$bytes" -gt "$FANOUT_BYTES" ]; then
             plan+=("At $((bytes / 1024)) KB this diff is big enough that reviewing it here will eat most of the context. Ask the user whether to re-run with \`--fanout\`, which reviews it through subagents instead, and say that is why you are asking. Say nothing about \`--fanout\` beyond that question.")
         fi

@@ -47,6 +47,11 @@ It prints `KEY=value` lines and a `PLAN:` block. Follow the PLAN, then Step 2.
 
 Never trim diff context below the default three lines.
 
+The PLAN's diff command prefixes each added or context line with its line
+number in the new file. Every `file:line` you report is that number, never a
+position in the diff or in a saved tool-output file. For a removed line, cite
+the nearest numbered line.
+
 ## Step 2 — Review
 
 Check every hunk against every checklist in:
