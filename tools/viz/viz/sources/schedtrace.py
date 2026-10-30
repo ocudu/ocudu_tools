@@ -53,7 +53,8 @@ _NOF_SFNS = 1024
 # their label.
 _UE_DATASET, _CELL_DATASET = "ue_metrics", "cell_metrics"
 _DATASET_LABELS = {_UE_DATASET: "UE metrics per 10 ms", _CELL_DATASET: "cell metrics per 10 ms", "dl_grants": "DL grants",
-                   "ul_grants": "UL grants", "harq_acks": "HARQ-ACK reports", "csi_reports": "CSI reports"}
+                   "ul_grants": "UL grants", "harq_acks": "HARQ-ACK reports", "csi_reports": "CSI reports",
+                   "crcs": "UL CRCs"}
 # Fields of the datasets that are not numbers.
 _NON_NUMBER_FIELDS = {"rnti", "status"}
 

@@ -33,20 +33,41 @@ def slot(t_us, inputs=(), latency=10, **decision):
 
 class UeMetricsTest(unittest.TestCase):
     def setUp(self):
-        # DL BWP of 52 PRBs from CRB 2, RBGs of 4.
+        # DL BWP of 52 PRBs from CRB 2.
         self.cell = grid.cell_of(next(schedtrace.read(DATA / "schedtrace_cell0.bin")))
 
     def test_slot_items(self):
-        rbg = {"type": "RbgAlloc", "nof_rbgs": 14, "bitmap": 0b11 << 12}
+        vrbs = {"type": "VrbBitmapAlloc", "nof_vrbs": 52, "bitmap": [0b111111]}
         items = ue_metrics.slot_items(slot(0, [ack(0x4601, "Ack"), {"type": "SrEvent", "slot_rx": 0, "ue_idx": 1,
                                                                         "rnti": 0x4601}],
-                                           ue_pdschs=[pdsch(0x4601, 27, 5000, rbs=rbg)], puschs=[pusch(0x4601, 900)]),
+                                           ue_pdschs=[pdsch(0x4601, 27, 5000, rbs=vrbs)], puschs=[pusch(0x4601, 900)]),
                                       self.cell)
-        # RBGs 0 and 1: CRBs 2 and 3, then 4 to 7, 6 PRBs.
         self.assertEqual(items["dl_grants"], [("0x4601", 1, 0, 27, 5000, 6, True, 0, 4, None)])
         self.assertEqual(items["ul_grants"], [("0x4601", 1, 1, 900, 5, 1, 0, 0, 4)])
         self.assertEqual(items["harq_acks"], [("0x4601", 1, 0, "Ack", 1000)])
         self.assertEqual(items["srs"], [("0x4601", 1)])
+
+    def test_ul_crcs(self):
+        agg = ue_metrics.Aggregator()
+
+        def crc(status, tbs, snr=None, ta=None):
+            return {"type": "CrcEvent", "slot_rx": 0, "ue_idx": 1, "rnti": 0x4601, "harq_id": 1, "status": status,
+                    "tbs": tbs, "ul_sinr_db": snr, "ul_rsrp_dbfs": -30.0 if snr else None, "time_advance": ta}
+
+        infinite = {**crc("Dtx", 400), "ul_rsrp_dbfs": float("-inf")}
+        e = slot(1000, [crc("Ok", 900, 20.0, 4096), crc("Ko", 500, 10.0), infinite, crc(9, 100)])
+        items = ue_metrics.slot_items(e, self.cell)
+        self.assertEqual(items["crcs"][0], ("0x4601", 1, 1, "Ok", 900, 20.0, -30.0, 4096 * ue_metrics.TC_S))
+        self.assertEqual([c[3] for c in items["crcs"]], ["Ok", "Ko", "Dtx", "Status9"])
+        agg.add(1, e, items)
+        (row,) = [dict(zip(("t", "record", *ue_metrics.UE_FIELDS), r)) for r in agg.ue_rows()]
+        # Ok bytes over 10 ms; Ko and Dtx are not OK, an unknown status neither.
+        self.assertEqual((row["ul_brate"], row["ul_nof_ok"], row["ul_nof_nok"], row["ul_nof_dtx"]),
+                         (900 * 8 / 0.01, 1, 2, 1))
+        self.assertAlmostEqual(row["ul_error_rate"], 100 * 2 / 3)
+        # Means over the CRCs with finite values.
+        self.assertEqual((row["pusch_snr_db"], row["pusch_rsrp_db"]), (15.0, -30.0))
+        self.assertAlmostEqual(row["ta"], 4096 / (480e3 * 4096))
 
     def test_aggregates(self):
         agg = ue_metrics.Aggregator()

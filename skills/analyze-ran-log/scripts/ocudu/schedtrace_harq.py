@@ -8,10 +8,10 @@ schedtrace_harq.py — HARQ transactions of UEs, from OCUDU scheduler event trac
 
 Decodes schedtrace_cell<N>.bin with the `parsers` package of this repo and groups, per HARQ process of a UE, the life
 of each transport block: its new transmission and retransmissions (PDSCH or PUSCH), the PDCCHs that schedule them,
-the UCI of their HARQ-ACK (PUCCH, or a PUSCH of the UE in the UCI slot, inferred) and the HARQ-ACK reports, until an
-ACK or the next new transmission on the process. Prints the transactions of an allocation, or those of DL transport
-blocks never ACKed. The trace has no UL CRC, so UL transactions have no outcome, and no event of HARQ processes that
-time out: a DL transaction without ACK ends at the next new transmission on its process.
+the UCI of their HARQ-ACK (PUCCH, or a PUSCH of the UE in the UCI slot, inferred), the HARQ-ACK reports and the UL
+CRCs, until an ACK, a CRC OK or the next new transmission on the process. Prints the transactions of an allocation, or
+those of transport blocks never ACKed or CRC OK. The trace has no event of HARQ processes that time out: a transaction
+without ACK or CRC OK ends at the next new transmission on its process.
 
 Usage:
   python3 schedtrace_harq.py <path> --rnti 0x4601 --harq-id 3 --slot 263.3        # transactions with a PDSCH or
@@ -30,7 +30,7 @@ Options:
   --after <T>         Keep transactions with a PDSCH or PUSCH at or after T: an ISO time (2026-10-12T13:35:40 or
                       2026-10-12 13:35:40), a date, or a time of day (13:35:40.5), compared to the same precision, UTC.
   --before <T>        Keep transactions with a PDSCH or PUSCH at or before T, as --after.
-  --failed            List the DL transactions without ACK, one per row, instead of their PDUs and reports.
+  --failed            List the transactions without ACK or CRC OK, one per row, instead of their PDUs and reports.
   --max <N>           Transactions printed at most per trace (default: 5, or 200 with --failed).
 """
 
@@ -94,7 +94,7 @@ def matches(tr: harq.Transaction, opts: dict, spf: int) -> bool:
         return False
     if opts["dir"] and tr.dir != opts["dir"]:
         return False
-    if opts["failed"] and (tr.dir != "DL" or tr.acked):
+    if opts["failed"] and tr.acked:
         return False
     txs = [r for r in tr.rows if r.kind in TX_KINDS]
     if opts["slot"] and not any(slot_text(r.slot_tx, spf) == opts["slot"] for r in txs):
@@ -138,9 +138,9 @@ def print_failed(trs: list[harq.Transaction], spf: int) -> None:
     rows = []
     for tr in trs:
         first = next(r for r in tr.rows if r.kind in TX_KINDS)
-        rows.append((time_text(first.t)[11:], slot_text(first.slot_tx, spf), tr.rnti, tr.harq_id, tr.tbs, tr.nof_tx,
-                     ",".join(tr.statuses) or "-", tr.outcome()))
-    print_table(("time", "slot", "rnti", "harq_id", "tbs", "txs", "reports", "outcome"), rows)
+        rows.append((time_text(first.t)[11:], slot_text(first.slot_tx, spf), tr.dir, tr.rnti, tr.harq_id, tr.tbs,
+                     tr.nof_tx, ",".join(tr.statuses) or "-", tr.outcome()))
+    print_table(("time", "slot", "dir", "rnti", "harq_id", "tbs", "txs", "reports", "outcome"), rows)
 
 
 def print_table(header: tuple, rows: list[tuple]) -> None:
@@ -174,8 +174,6 @@ def main() -> int:
         ap.error(f"invalid RNTI in {args.rnti}, expected 4601, 0x4601 or 17921")
     if args.slot and not re.fullmatch(r"\d+\.\d+", args.slot):
         ap.error("--slot must be SFN.slot, e.g. 263.3")
-    if args.failed and args.dir == "ul":
-        ap.error("--failed lists DL transactions only: the trace has no UL CRC")
     if not args.failed and not (args.rnti and args.harq_id is not None):
         ap.error("give --rnti and --harq-id, or --failed")
     opts = {"rntis": {normalize(r) for r in rntis}, "harq_id": args.harq_id,

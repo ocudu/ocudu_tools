@@ -5,11 +5,11 @@ include "common.fbs";
 
 namespace ocudu.schedtrace.fbs;
 
-/// Type-0 (RBG bitmap) resource allocation.
-table RbgAlloc {
-  nof_rbgs: uint8;
-  /// Holds one bit per RBG (up to MAX_NOF_RBGS=18 bits).
-  bitmap: uint32;
+/// Type-0 resource allocation, as a bitmap of the BWP VRBs.
+table VrbBitmapAlloc {
+  nof_vrbs: uint16;
+  /// Holds one bit per VRB, with VRB i in bit (i % 64) of word (i / 64).
+  bitmap: [uint64];
 }
 
 /// Type-1 (contiguous VRB range) resource allocation.
@@ -20,7 +20,7 @@ table VrbAlloc {
 }
 
 union RbAlloc {
-  RbgAlloc,
+  VrbBitmapAlloc,
   VrbAlloc,
 }
 

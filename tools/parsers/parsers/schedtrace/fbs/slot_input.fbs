@@ -101,10 +101,30 @@ table CsiReportEvent {
   valid: bool;
 }
 
+enum CrcStatus : ubyte {
+  Ok = 0,
+  Ko = 1,
+  Dtx = 2,
+}
+
+table CrcEvent {
+  slot_rx: uint32;
+  ue_idx: uint16;
+  rnti: uint16;
+  harq_id: uint8;
+  status: CrcStatus;
+  tbs: uint32;
+  ul_sinr_db: float = null;
+  ul_rsrp_dbfs: float = null;
+  /// Timing advance offset, in units of Tc.
+  time_advance: int64 = null;
+}
+
 /// Input processed by the scheduler on a given slot.
 union SlotInput {
   RachIndication,
   HarqAckEvent,
   SrEvent,
   CsiReportEvent,
+  CrcEvent,
 }

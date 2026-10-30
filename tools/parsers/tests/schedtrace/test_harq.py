@@ -40,6 +40,11 @@ def ack(slot_rx, status="Ack", harq_id=0, rnti=RNTI):
             "status": status, "tbs": 1000}
 
 
+def crc(slot_rx, status="Ok", harq_id=1, rnti=RNTI):
+    return {"type": "CrcEvent", "slot_rx": slot_rx % WRAP, "ue_idx": 1, "rnti": rnti, "harq_id": harq_id,
+            "status": status, "tbs": 500, "ul_sinr_db": 20.5, "ul_rsrp_dbfs": None, "time_advance": 16}
+
+
 def slot(slot_tx, inputs=(), **decision):
     return {"type": "CellSlotEvent", "slot_tx": slot_tx % WRAP, "timestamp_us": slot_tx * 500, "latency_us": 10,
             "inputs": list(inputs), "decision": decision}
@@ -124,8 +129,29 @@ class HarqTest(unittest.TestCase):
         self.assertEqual([(r.kind, r.slot_tx, r.tx) for r in first.rows],
                          [(harq.PDCCH, 100, 1), (harq.PUSCH, 104, 1), (harq.PUSCH, 114, 2)])
         self.assertEqual(first.rows[0].params["dci"], "c-rnti 0_1")
-        self.assertEqual((first.ended_by, first.outcome()), ("new_tx", "outcome unknown, the trace has no UL CRC"))
+        self.assertEqual((first.ended_by, first.outcome()), ("new_tx", "no UL CRC"))
         self.assertEqual([(r.kind, r.slot_tx) for r in second.rows], [(harq.PDCCH, 120), (harq.PUSCH, 126)])
+
+    def test_ul_crcs(self):
+        trs = run([
+            slot(104, puschs=[pusch()]),
+            slot(108, inputs=[crc(104, "Ko")]),
+            slot(114, puschs=[pusch(nof_retxs=1)]),
+            # A CRC of another slot or process is not of the transaction.
+            slot(118, inputs=[crc(113), crc(114, harq_id=2), crc(114, "Ok")], puschs=[pusch(tbs=700)]),
+            slot(124, inputs=[crc(118, "Dtx")]),
+            slot(130, puschs=[pusch(tbs=800)]),
+        ])
+        first, second, third = trs
+        self.assertEqual([(r.kind, r.slot_tx, r.tx) for r in first.rows],
+                         [(harq.PUSCH, 104, 1), (harq.CRC, 108, 1), (harq.PUSCH, 114, 2), (harq.CRC, 118, 2)])
+        self.assertEqual((first.ended_by, first.statuses, first.outcome()), ("ack", ["Ko", "Ok"], "CRC OK at tx 2"))
+        self.assertEqual(first.rows[1].params, {"status": "Ko", "tbs": 500, "slot_rx": "5.4", "snr": 20.5,
+                                                "rsrp_dbfs": None, "ta": 16})
+        self.assertEqual((second.tbs, second.ended_by, second.outcome()), (700, "new_tx", "failed after 1 KO/DTX"))
+        # Rows name the key of their slot event, also after the reports of the slot.
+        self.assertEqual([r.event for r in second.rows], [118, 124])
+        self.assertEqual(third.outcome(), "no UL CRC by the end of the events")
 
     def test_sfn_wrap(self):
         trs = run([

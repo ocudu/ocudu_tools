@@ -15,14 +15,14 @@ namespace ocudu.schedtrace.fbs;
 /// Bump on schema changes that older readers cannot decode, such as removing, retyping or reordering fields, and
 /// reset FileFormatVersionMinor to 0.
 enum FileFormatVersionMajor : uint16 {
-  Value = 1,
+  Value = 2,
 }
 
 /// Minor version of the schedtrace file format.
 ///
 /// Bump on backward compatible changes, such as appending fields to a table or adding tables.
 enum FileFormatVersionMinor : uint16 {
-  Value = 0,
+  Value = 1,
 }
 
 union CellEventValue {

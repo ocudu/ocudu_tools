@@ -510,15 +510,16 @@ the bundled packages to `THIRD-PARTY-LICENSES.txt`, served with the frontend.
   `dl_error_rate`, `cqi`), so that a plot of either reads the same, though means unrounded, as statistics over bins
   need, where METRICS rounds `dl_mcs` and `cqi`; `cell_metrics`, the scheduler latency, PRBs and UEs of the cell per
   bin; and one row per grant or report, `dl_grants`, `ul_grants`, `harq_acks` and `csi_reports`, for exact values. 10 ms
-  bins, one radio frame, keep the scheduler dynamics that METRICS periods of a second average out. The trace has no UL
-  CRC or buffer status, so UL rates are of scheduled new transmissions (`ul_sched_brate`). Workers sum the bins of their
+  bins, one radio frame, keep the scheduler dynamics that METRICS periods of a second average out. `ul_brate` is of
+  the TBS of UL CRCs of Ok, `ul_sched_brate` of scheduled new transmissions, and UL CRCs are a dataset of their own,
+  `crcs`. The trace has no buffer status. Workers sum the bins of their
   chunk and the server process merges the sums, as for the grid occupancy, and every row links to its slot event. New
   plots of a trace show `ue_metrics.dl_brate` split by RNTI.
 - Msg3 PUSCHs carry the invalid DU UE index of OCUDU (8192), so their `ue_index` is null, and they count under their
   TC-RNTI: a split by `ue_index` has no fake UE, and a bin of the RNTI takes the index of its later grants and reports.
 - `parsers.schedtrace.grid` places the allocations of a slot as rectangles of symbols and CRBs. The trace has no
-  VRB-to-PRB interleaving, RBG configuration or SRS frequency resources, so VRBs map to PRBs one to one, RBGs have the
-  configuration 1 size of the BWP, and SRS is left out. PDSCHs of DCI format 1_0 in a common search space are placed
+  VRB-to-PRB interleaving or SRS frequency resources, so VRBs, of a range or of a type 0 bitmap, map to PRBs one to
+  one, and SRS is left out. PDSCHs of DCI format 1_0 in a common search space are placed
   from the CORESET of their PDCCH, matched to it in the slot, PDCCHs from the REG bundles of their CCEs, but those of
   an aggregation level or CCEs out of range of their CORESET, as of a corrupt event, which are left out, and PRACH
   occasions from msg1-FrequencyStart and their format; long PRACH formats last past their slot, counted in the

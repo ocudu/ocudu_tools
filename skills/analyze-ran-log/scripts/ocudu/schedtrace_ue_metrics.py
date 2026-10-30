@@ -7,12 +7,12 @@
 schedtrace_ue_metrics.py — What the scheduler did for each UE, from OCUDU scheduler event traces.
 
 Decodes schedtrace_cell<N>.bin with the `parsers` package of this repo and prints, per UE, the throughput, MCS,
-PRBs, retransmissions, HARQ-ACK outcomes, CQI, RI and SRs: a summary over the trace, then one row per period per UE,
+PRBs, retransmissions, HARQ-ACK and UL CRC outcomes, PUSCH SNR, CQI, RI and SRs: a summary over the trace, then one row per period per UE,
 or the grants and reports themselves. Field names follow the METRICS "Scheduler UE" lines where they mean the same:
-dl_brate is of the ACKed TBS, dl_nok counts NACK and DTX reports, of which dl_dtx the latter, cqi and dl_ri are means
-of the reports and dl_mcs of the codewords, cqi and dl_mcs rounded half up as METRICS prints them. The trace has no
-UL CRC or buffer status, so UL throughput is of the scheduled new transmissions (ul_sched_brate), and HARQ timeouts
-without a report are in neither dl_ok nor dl_nok.
+dl_brate is of the ACKed TBS and ul_brate of the CRC OK one, dl_nok counts NACK and DTX reports, of which dl_dtx the
+latter, ul_nok KO and DTX CRCs, cqi and dl_ri are means of the reports and dl_mcs of the codewords, cqi and dl_mcs
+rounded half up as METRICS prints them, pusch_snr the mean of the CRCs. ul_sched_brate is of the scheduled new
+transmissions. HARQ timeouts without a report are in neither dl_ok nor dl_nok.
 
 Usage:
   python3 schedtrace_ue_metrics.py <path>                              # summary, then 1 s periods per UE
@@ -32,7 +32,7 @@ Options:
   --period <S>        Seconds per row of the periods, finite and positive (default: 1), from whole multiples of it
                       since the epoch, UTC, unlike METRICS periods, which end at the times of their lines.
   --summary           Print only the summary per UE.
-  --grants <K>        Print the grants or reports of kind dl, ul, harq or csi instead of the periods.
+  --grants <K>        Print the grants or reports of kind dl, ul, harq, crc or csi instead of the periods.
   --max-rows <N>      Period, grant or report rows printed at most per trace (default: 200).
   -j <K>              Worker processes (default: one per CPU up to 8 for traces over 16 MB, else 1).
 """
@@ -64,7 +64,7 @@ PARALLEL_MIN_SIZE = 16 << 20
 MAX_DEFAULT_WORKERS = 8
 CHUNKS_PER_WORKER = 4
 # Kinds of slot items of --grants.
-GRANT_KINDS = {"dl": "dl_grants", "ul": "ul_grants", "harq": "harq_acks", "csi": "csi_reports"}
+GRANT_KINDS = {"dl": "dl_grants", "ul": "ul_grants", "harq": "harq_acks", "crc": "crcs", "csi": "csi_reports"}
 
 
 def traces_in(path_str: str) -> list[Path]:
@@ -170,29 +170,32 @@ def print_summary(res: dict) -> None:
     print(f"slots={res['nof_slots']} span={time_text(res['t_min'])} .. {time_text(res['t_max'])} ({duration:.3f} s) "
           f"latency_avg={res['latency_sum'] / res['nof_slots']:.1f}us latency_max={res['latency_max']}us")
     header = ("rnti", "ue", "dl_Mbps", "dl_sched_Mbps", "dl_mcs", "dl_err%", "dl_retx%", "dl_prbs/s",
-              "ul_sched_Mbps", "ul_retx%", "ul_prbs/s", "cqi", "dl_ri", "rsrp", "sr")
+              "ul_Mbps", "ul_sched_Mbps", "ul_err%", "ul_retx%", "ul_prbs/s", "pusch_snr", "cqi", "dl_ri", "rsrp", "sr")
     rows = []
     for _, _, *values in res["agg"].ue_totals(duration):
         v = dict(zip(ue_metrics.UE_FIELDS, values))
         rows.append((v["rnti"], num(v["ue_index"]), mbps(v["dl_brate"]),
                      mbps(v["dl_sched_brate"]), num(round_half_up(v["dl_mcs"])), num(v["dl_error_rate"]),
                      retx_pct(v["dl_nof_newtx"], v["dl_nof_retx"]), num(v["dl_nof_prbs"] / duration, 0),
-                     mbps(v["ul_sched_brate"]), retx_pct(v["ul_nof_newtx"], v["ul_nof_retx"]),
-                     num(v["ul_nof_prbs"] / duration, 0), num(round_half_up(v["cqi"])), num(v["dl_ri"]), num(v["rsrp"]),
+                     mbps(v["ul_brate"]), mbps(v["ul_sched_brate"]), num(v["ul_error_rate"]),
+                     retx_pct(v["ul_nof_newtx"], v["ul_nof_retx"]), num(v["ul_nof_prbs"] / duration, 0),
+                     num(v["pusch_snr_db"]), num(round_half_up(v["cqi"])), num(v["dl_ri"]), num(v["rsrp"]),
                      num(v["sr_count"])))
     print_table(header, rows)
 
 
 def print_periods(res: dict, max_rows: int) -> None:
     header = ("time", "rnti", "dl_Mbps", "dl_sched_Mbps", "dl_mcs", "dl_ok", "dl_nok", "dl_dtx", "dl_retx", "dl_prbs",
-              "ul_sched_Mbps", "ul_retx", "ul_prbs", "cqi", "dl_ri", "sr")
+              "ul_Mbps", "ul_sched_Mbps", "ul_ok", "ul_nok", "ul_dtx", "ul_retx", "ul_prbs", "pusch_snr", "cqi", "dl_ri",
+              "sr")
     rows = []
     for t, _, *values in res["agg"].ue_rows():
         v = dict(zip(ue_metrics.UE_FIELDS, values))
         rows.append((time_text(t)[11:23], v["rnti"], mbps(v["dl_brate"]), mbps(v["dl_sched_brate"]),
                      num(round_half_up(v["dl_mcs"])), num(v["dl_nof_ok"]), num(v["dl_nof_nok"]), num(v["dl_nof_dtx"]),
-                     num(v["dl_nof_retx"]), num(v["dl_nof_prbs"]), mbps(v["ul_sched_brate"]), num(v["ul_nof_retx"]),
-                     num(v["ul_nof_prbs"]), num(round_half_up(v["cqi"])), num(v["dl_ri"]), num(v["sr_count"])))
+                     num(v["dl_nof_retx"]), num(v["dl_nof_prbs"]), mbps(v["ul_brate"]), mbps(v["ul_sched_brate"]),
+                     num(v["ul_nof_ok"]), num(v["ul_nof_nok"]), num(v["ul_nof_dtx"]), num(v["ul_nof_retx"]),
+                     num(v["ul_nof_prbs"]), num(v["pusch_snr_db"]), num(round_half_up(v["cqi"])), num(v["dl_ri"]), num(v["sr_count"])))
     print_table(header, rows[:max_rows])
     if len(rows) > max_rows:
         print(f"... {len(rows) - max_rows} more, see --max-rows")

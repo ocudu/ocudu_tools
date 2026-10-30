@@ -4,9 +4,11 @@
 """Per-UE metrics of a schedtrace: the grants and reports of each UE in a slot, and their aggregates per bin of time,
 named as the fields of the METRICS "Scheduler UE" lines of OCUDU where they mean the same.
 
-The trace has no UL CRC, buffer status or power headroom, so UL rates are of the scheduled TBS of new transmissions,
-not of the decoded ones; ul_layers is the mean layers of the PUSCHs, not the UL RI of SRS. dl_nof_nok counts the
-HARQ-ACK reports of NACK and of DTX, as METRICS does, dl_nof_dtx the latter alone. HARQ processes that time out
+ul_brate is of the TBS of the UL CRCs of Ok, ul_sched_brate of the scheduled TBS of new transmissions. The trace has no
+buffer status or power headroom; ul_layers is the mean layers of the PUSCHs, not the UL RI of SRS. dl_nof_nok counts
+the HARQ-ACK reports of NACK and of DTX, as METRICS does, dl_nof_dtx the latter alone, and ul_nof_nok and ul_nof_dtx the
+UL CRCs of Ko and Dtx alike. pusch_snr_db, pusch_rsrp_db and ta are means over the CRCs of a bin with finite values, ta
+in seconds. HARQ processes that time out
 without a report, and those without feedback, e.g. of NTN, have no trace event, so they count in neither dl_nof_ok nor
 dl_nof_nok, unlike in METRICS. cqi and dl_ri are means over the reports of a bin, and dl_mcs the mean over the codewords
 of the PDSCHs of a bin, all unrounded, so that means over bins are not biased; METRICS prints cqi and dl_mcs rounded half
@@ -16,10 +18,11 @@ TC-RNTI with a ue_index of None, which a later grant or report of the RNTI fills
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from ..ran.rnti import normalize
-from .grid import Cell, rbg_crbs
+from .grid import Cell, vrb_bitmap_crbs
 
 # Default duration of an aggregation bin, in seconds.
 BIN_S = 0.01
@@ -29,24 +32,36 @@ ITEM_FIELDS: dict[str, tuple[str, ...]] = {
     "ul_grants": ("rnti", "ue_index", "harq_id", "tbs", "nof_prbs", "nof_layers", "rv", "nof_retxs", "k2"),
     "harq_acks": ("rnti", "ue_index", "harq_id", "status", "tbs"),
     "csi_reports": ("rnti", "ue_index", "cqi", "ri", "rsrp"),
+    "crcs": ("rnti", "ue_index", "harq_id", "status", "tbs", "snr", "rsrp_dbfs", "ta"),
 }
 # Units of the fields of slot_items() and of the aggregates.
-ITEM_UNITS = {"tbs": "B", "rsrp": "dBm"}
+ITEM_UNITS = {"tbs": "B", "rsrp": "dBm", "snr": "dB", "rsrp_dbfs": "dBFS", "ta": "s"}
 UE_FIELDS = ("rnti", "ue_index", "dl_brate", "dl_sched_brate", "dl_mcs", "dl_nof_prbs", "dl_nof_newtx", "dl_nof_retx",
-             "dl_nof_ok", "dl_nof_nok", "dl_nof_dtx", "dl_error_rate", "ul_sched_brate", "ul_nof_prbs", "ul_nof_newtx",
-             "ul_nof_retx", "ul_layers", "cqi", "dl_ri", "rsrp", "sr_count")
-UE_UNITS = {"dl_brate": "bps", "dl_sched_brate": "bps", "ul_sched_brate": "bps", "dl_error_rate": "%", "rsrp": "dBm"}
+             "dl_nof_ok", "dl_nof_nok", "dl_nof_dtx", "dl_error_rate", "ul_brate", "ul_sched_brate", "ul_nof_prbs",
+             "ul_nof_newtx", "ul_nof_retx", "ul_nof_ok", "ul_nof_nok", "ul_nof_dtx", "ul_error_rate", "ul_layers",
+             "pusch_snr_db", "pusch_rsrp_db", "ta", "cqi", "dl_ri", "rsrp", "sr_count")
+UE_UNITS = {"dl_brate": "bps", "dl_sched_brate": "bps", "ul_brate": "bps", "ul_sched_brate": "bps", "dl_error_rate": "%",
+            "ul_error_rate": "%", "pusch_snr_db": "dB", "pusch_rsrp_db": "dBFS", "ta": "s", "rsrp": "dBm"}
 CELL_FIELDS = ("latency_avg", "latency_max", "nof_slots", "dl_nof_prbs", "ul_nof_prbs", "dl_nof_ues", "ul_nof_ues",
                "failed_attempts")
 CELL_UNITS = {"latency_avg": "us", "latency_max": "us"}
 # OCUDU MAX_NOF_DU_UES, from which DU UE indexes are invalid, e.g. INVALID_DU_UE_INDEX of Msg3 PUSCHs.
 MAX_NOF_DU_UES = 8192
 _STATUS = ("Nack", "Ack", "Dtx")
+# CrcStatus values, as the decoder names them.
+_CRC_STATUS = ("Ok", "Ko", "Dtx")
+# Duration of the Tc time unit of time_advance, TS 38.211 4.1, in seconds.
+TC_S = 1 / (480e3 * 4096)
 
 
 def round_half_up(value: float | None) -> int | None:
     """A non-negative value rounded as std::round, unlike round(), which rounds halves to even; None as is."""
     return None if value is None else int(value + 0.5)
+
+
+def finite(value: float | None) -> float | None:
+    """A measurement, or None if it is absent or not finite, e.g. the -inf RSRP of a PHY without one."""
+    return value if value is not None and math.isfinite(value) else None
 
 
 def ue_index(value: int | None) -> int | None:
@@ -60,8 +75,8 @@ def nof_prbs(rbs: dict[str, Any] | None, bwp: dict[str, Any]) -> int:
         return 0
     if rbs.get("type") == "VrbAlloc":
         return rbs["vrb_length"]
-    if rbs.get("type") == "RbgAlloc":
-        return sum(n for _, n in rbg_crbs(rbs["bitmap"], rbs["nof_rbgs"], bwp))
+    if rbs.get("type") == "VrbBitmapAlloc":
+        return sum(n for _, n in vrb_bitmap_crbs(rbs["bitmap"], rbs["nof_vrbs"], bwp))
     return 0
 
 
@@ -84,7 +99,7 @@ def slot_items(event: dict[str, Any], cell: Cell) -> dict[str, list[tuple]]:
     ul = [(normalize(p["rnti"]), ue_index(p["ue_index"]), p["harq_id"], p["tb_size_bytes"],
            nof_prbs(p.get("rbs"), cell.ul_bwp), p.get("nof_layers"), p["rv_index"], p["nof_retxs"], p["k2"])
           for p in decision.get("puschs") or []]
-    acks, csis, srs = [], [], []
+    acks, csis, srs, crcs = [], [], [], []
     for i in event.get("inputs") or []:
         kind = i and i.get("type")
         if kind == "HarqAckEvent":
@@ -99,7 +114,14 @@ def slot_items(event: dict[str, Any], cell: Cell) -> dict[str, list[tuple]]:
                          rsrp[0] if rsrp else None))
         elif kind == "SrEvent":
             srs.append((normalize(i["rnti"]), ue_index(i["ue_idx"])))
-    return {"dl_grants": dl, "ul_grants": ul, "harq_acks": acks, "csi_reports": csis, "srs": srs}
+        elif kind == "CrcEvent":
+            status = i["status"]
+            if not isinstance(status, str):
+                status = _CRC_STATUS[status] if 0 <= status < len(_CRC_STATUS) else f"Status{status}"
+            ta = i.get("time_advance")
+            crcs.append((normalize(i["rnti"]), ue_index(i["ue_idx"]), i["harq_id"], status, i["tbs"],
+                         finite(i.get("ul_sinr_db")), finite(i.get("ul_rsrp_dbfs")), None if ta is None else ta * TC_S))
+    return {"dl_grants": dl, "ul_grants": ul, "harq_acks": acks, "csi_reports": csis, "srs": srs, "crcs": crcs}
 
 
 class Aggregator:
@@ -178,6 +200,18 @@ class Aggregator:
                 u["rsrp_n"] += 1
         for rnti, ue in items["srs"]:
             self._ue(b, rnti, ue, record)["sr_count"] += 1
+        for rnti, ue, _, status, tbs, snr, rsrp, ta in items["crcs"]:
+            u = self._ue(b, rnti, ue, record)
+            if status == "Ok":
+                u["ul_nof_ok"] += 1
+                u["ul_ok_bytes"] += tbs or 0
+            elif status in ("Ko", "Dtx"):
+                u["ul_nof_nok"] += 1
+                u["ul_nof_dtx"] += status == "Dtx"
+            for name, value in (("snr", snr), ("pusch_rsrp", rsrp), ("ta", ta)):
+                if value is not None:
+                    u[f"{name}_sum"] += value
+                    u[f"{name}_n"] += 1
 
     def merge(self, other: Aggregator) -> None:
         """Adds the sums of an aggregator of a later part of the trace, of the same bin size."""
@@ -252,13 +286,19 @@ class Aggregator:
 def _ue_values(rnti: str, u: dict[str, Any], seconds: float) -> tuple:
     """The values of UE_FIELDS from the sums of a UE over a span of seconds."""
     reports = u["dl_nof_ok"] + u["dl_nof_nok"]
+    crcs = u["ul_nof_ok"] + u["ul_nof_nok"]
+
+    def mean(name: str) -> float | None:
+        return u[f"{name}_sum"] / u[f"{name}_n"] if u[f"{name}_n"] else None
+
     return (
         rnti, u["ue_index"], u["dl_ok_bytes"] * 8 / seconds, u["dl_newtx_bytes"] * 8 / seconds,
         u["dl_mcs_sum"] / u["dl_mcs_n"] if u["dl_mcs_n"] else None,
         u["dl_nof_prbs"], u["dl_nof_newtx"], u["dl_nof_retx"], u["dl_nof_ok"], u["dl_nof_nok"], u["dl_nof_dtx"],
         100 * (reports - u["dl_nof_ok"]) / reports if reports else None,
-        u["ul_newtx_bytes"] * 8 / seconds, u["ul_nof_prbs"], u["ul_nof_newtx"], u["ul_nof_retx"],
-        u["ul_layers_sum"] / u["ul_layers_n"] if u["ul_layers_n"] else None,
+        u["ul_ok_bytes"] * 8 / seconds, u["ul_newtx_bytes"] * 8 / seconds, u["ul_nof_prbs"], u["ul_nof_newtx"],
+        u["ul_nof_retx"], u["ul_nof_ok"], u["ul_nof_nok"], u["ul_nof_dtx"],
+        100 * u["ul_nof_nok"] / crcs if crcs else None, mean("ul_layers"), mean("snr"), mean("pusch_rsrp"), mean("ta"),
         u["cqi_sum"] / u["cqi_n"] if u["cqi_n"] else None, u["ri_sum"] / u["ri_n"] if u["ri_n"] else None,
         u["rsrp_sum"] / u["rsrp_n"] if u["rsrp_n"] else None, u["sr_count"],
     )
@@ -267,4 +307,5 @@ def _ue_values(rnti: str, u: dict[str, Any], seconds: float) -> tuple:
 # Sums kept per bin and UE.
 _UE_SUMS = ("dl_ok_bytes", "dl_newtx_bytes", "dl_mcs_sum", "dl_mcs_n", "dl_nof_prbs", "dl_nof_newtx", "dl_nof_retx",
             "dl_nof_ok", "dl_nof_nok", "dl_nof_dtx", "ul_newtx_bytes", "ul_nof_prbs", "ul_nof_newtx", "ul_nof_retx",
-            "ul_layers_sum", "ul_layers_n", "cqi_sum", "cqi_n", "ri_sum", "ri_n", "rsrp_sum", "rsrp_n", "sr_count")
+            "ul_layers_sum", "ul_layers_n", "ul_ok_bytes", "ul_nof_ok", "ul_nof_nok", "ul_nof_dtx", "snr_sum", "snr_n",
+            "pusch_rsrp_sum", "pusch_rsrp_n", "ta_sum", "ta_n", "cqi_sum", "cqi_n", "ri_sum", "ri_n", "rsrp_sum", "rsrp_n", "sr_count")

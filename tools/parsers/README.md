@@ -254,15 +254,17 @@ collisions. `skills/analyze-ran-log/scripts/ocudu/schedtrace_collisions.py` prin
 reports and SRs of a slot, per UE, a DL grant with the MCS of its first and second codeword (`mcs`, `mcs2`) and the TBS
 of both, and `Aggregator` their sums per UE and 10 ms bin, as rows named after the fields of the METRICS `Scheduler UE`
 lines where they mean the same (`dl_brate` from the ACKed TBS, `dl_mcs` as the mean of every codeword, `dl_nof_ok`,
-`dl_nof_nok` of the NACK and DTX reports, `dl_error_rate`, `cqi` and `dl_ri` as means of a bin, all means unrounded
+`dl_nof_nok` of the NACK and DTX reports, `dl_error_rate`, `ul_brate` from the CRC OK TBS, `ul_nof_ok`,
+`ul_nof_nok` of the KO and DTX CRCs, `ul_error_rate`, `pusch_snr_db`, `pusch_rsrp_db` and `ta`, in seconds, as means of
+the CRCs with finite values (a PHY without RSRP reports -inf, which METRICS prints as n/a), `cqi` and `dl_ri` as means of a bin, all means unrounded
 (METRICS prints `dl_mcs` and `cqi` rounded half away from zero, as `ue_metrics.round_half_up()` does), `sr_count`), plus
 the scheduler latency, PRBs and UEs of the cell per bin. Aggregators of parts of a trace merge; `Aggregator(bin_s=1)`
 gives 1 s bins, the length of the default METRICS period, and `ue_totals()` the totals of each UE over a span. Bins
 start at whole multiples of `bin_s` since the epoch, while a METRICS period ends at the time of its line, so a 1 s bin
 overlaps two METRICS periods. Bins are whole microseconds, at least one: `Aggregator.bin_s` holds the size rounded to
-them. `skills/analyze-ran-log/scripts/ocudu/schedtrace_ue_metrics.py` prints them. The trace has no UL CRC or buffer
-status: UL rates are of scheduled new transmissions (`ul_sched_brate`), and `ul_layers` is of the PUSCHs, not the RI of
-SRS. HARQ processes that time out without a report, or have no feedback, have no trace event, so they count in neither
+them. `skills/analyze-ran-log/scripts/ocudu/schedtrace_ue_metrics.py` prints them. `slot_items()` gives the UL CRCs as
+`crcs`, `ul_sched_brate` is of scheduled new transmissions, and `ul_layers` is of the PUSCHs, not the RI of SRS. The
+trace has no buffer status. HARQ processes that time out without a report, or have no feedback, have no trace event, so they count in neither
 `dl_nof_ok` nor `dl_nof_nok`, unlike in METRICS. Msg3 PUSCHs carry OCUDU's invalid DU UE index (8192, `MAX_NOF_DU_UES`),
 so `slot_items()` gives them a `ue_index` of None and they count under their TC-RNTI. A UE's later grants and reports
 fill in its index in the bin and in `ue_totals()`.
@@ -283,17 +285,17 @@ for t, record, *values in agg.ue_rows():
 
 `schedtrace.harq` groups the life of each transport block on a HARQ process, `(direction, RNTI, HARQ id)`, as a
 `Transaction`: from its new transmission (`nof_retxs` 0) through its retransmissions, with their PDCCHs, the UCI of
-their HARQ-ACK and the HARQ-ACK reports, until a report of Ack or the next new transmission on the process. The trace
+their HARQ-ACK and the HARQ-ACK reports, or the UL CRCs of PUSCHs, until a report of Ack, a CRC of Ok or the next new
+transmission on the process. The trace
 has no link between these, so they are matched as OCUDU schedules them: a DL PDCCH with its PDSCH in the slot decision,
 by RNTI and HARQ id; a UL PDCCH `k2` slots before its PUSCH; the UCI `k1` slots after a PDSCH, a PUCCH of the RNTI with
 HARQ-ACK bits, which may carry those of other PDSCHs, else a PUSCH of the RNTI, marked `inferred`, since the trace does
-not say a PUSCH carries UCI; a report by RNTI, HARQ id and `slot_rx`, the UCI slot. Reports of a slot are applied before
+not say a PUSCH carries UCI; a report by RNTI, HARQ id and `slot_rx`, the UCI slot; a UL CRC by RNTI, HARQ id and `slot_rx`, the PUSCH slot. Reports of a slot are applied before
 its decision, which can start a new transmission on their process. `transactions()` yields them as they end, given the
 slot events with a key, e.g. their record, that the rows name; `find()` the one of an allocation, by that key and its
 `[list, index]` in the decision, stopping when it ends. `Transaction.outcome()` says how it ended: an ACK at a
-transmission, failed after NACK or DTX reports, or no report. The trace has no UL CRC, so UL transactions have no
-outcome, and no event of HARQ processes that time out, so a DL transaction without Ack ends at the next new
-transmission on its process. Slots unwrap across SFN wraps. `skills/analyze-ran-log/scripts/ocudu/schedtrace_harq.py`
+transmission, failed after NACK, KO or DTX reports, or no report. The trace has no event of HARQ processes that time
+out, so a transaction without Ack or Ok ends at the next new transmission on its process. Slots unwrap across SFN wraps. `skills/analyze-ran-log/scripts/ocudu/schedtrace_harq.py`
 prints them.
 
 ```python

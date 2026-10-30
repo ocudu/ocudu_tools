@@ -53,6 +53,9 @@ class SchedtraceUeMetricsTest(unittest.TestCase):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("12345", res.stdout)
         self.assertNotIn("0x4602", res.stdout)
+        res = run(str(TRACE), "--grants", "crc")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertRegex(res.stdout, r"0x4602 +1 +1 +Ko +900 +12\.5")
 
     def test_rnti_in_any_form(self):
         for rnti in ("4601", "0x4601", "17921"):
@@ -96,7 +99,7 @@ class SchedtraceUeMetricsTest(unittest.TestCase):
         agg = script.ue_metrics.Aggregator()
         msg3 = (0, 11, 3, 1, 0, 0, 0)
         items = {"dl_grants": [], "ul_grants": [("0x4603", None, *msg3), ("0x4601", None, *msg3)], "harq_acks": [],
-                 "csi_reports": [], "srs": [("0x4601", 0)]}
+                 "csi_reports": [], "srs": [("0x4601", 0)], "crcs": []}
         agg.add(0, {"timestamp_us": 0}, items)
         res = {"agg": agg, "t_min": 0.0, "t_max": 0.0, "slot_s": 0.001, "nof_slots": 1, "latency_sum": 0,
                "latency_max": 0, "kept": [("2026-01-01T00:00:00.000000", *row) for row in items["ul_grants"]]}

@@ -4,10 +4,9 @@
 """Resource grid occupancy of a schedtrace: the allocations of each slot as rectangles of symbols and CRBs, and their
 occupancy of groups of CRBs.
 
-Allocations are placed as the trace allows: VRBs map to PRBs one to one (non-interleaved), PRBs of a BWP to CRBs from
-the BWP start, and RBGs have the size of TS 38.214 Table 5.1.2.2.1-1 configuration 1 for the size of the BWP. The VRBs
-of PDSCHs of DCI format 1_0 in a common search space (SIB, RAR, paging, fallback) count from the lowest CRB of the
-CORESET of their PDCCH, TS 38.214 5.1.2.2.2, those of the other PDSCHs from the BWP start. PDCCHs take the REG bundles
+Allocations are placed as the trace allows: VRBs map to PRBs one to one (non-interleaved), and PRBs of a BWP to CRBs
+from the BWP start. The VRBs of PDSCHs of DCI format 1_0 in a common search space (SIB, RAR, paging, fallback) count
+from the lowest CRB of the CORESET of their PDCCH, TS 38.214 5.1.2.2.2, those of the other PDSCHs from the BWP start. PDCCHs take the REG bundles
 of their CCEs in their CORESET, TS 38.211 7.3.2.2, from the first monitoring symbol of their search space; those of an
 aggregation level or CCEs out of range of their CORESET, as of a corrupt event, are left out. PRACH
 occasions take the RBs of TS 38.211 Table 6.3.3.2-1 from msg1-FrequencyStart and the duration of their format; when the
@@ -87,11 +86,6 @@ def _bwp(params: dict[str, Any]) -> dict[str, Any]:
     return {"cp": params["cp"], "scs": params["scs"], "crb_start": crbs["start"], "crb_length": crbs["length"]}
 
 
-def rbg_size(nof_prbs: int) -> int:
-    """Nominal RBG size of a BWP of nof_prbs PRBs, TS 38.214 Table 5.1.2.2.1-1, configuration 1."""
-    return 2 if nof_prbs <= 36 else 4 if nof_prbs <= 72 else 8 if nof_prbs <= 144 else 16
-
-
 def allocations(slot_event: dict[str, Any], cell: Cell) -> list[dict[str, Any]]:
     """The allocations of a CellSlotEvent of schedtrace.read() as rectangles: "dir" ("DL" or "UL"), "channel",
     "sym_start", "sym_length", "crb_start", "crb_length", "item", the list of the decision and the index in it of the
@@ -121,8 +115,8 @@ def allocations(slot_event: dict[str, Any], cell: Cell) -> list[dict[str, Any]]:
                 half = sym_length // 2
                 add(direction, channel, sym_start, half, [first], info)
                 add(direction, channel, sym_start + half, sym_length - half, [(origin + hop, rbs["vrb_length"])], info)
-        elif rbs.get("type") == "RbgAlloc":
-            add(direction, channel, sym_start, sym_length, rbg_crbs(rbs["bitmap"], rbs["nof_rbgs"], bwp), info)
+        elif rbs.get("type") == "VrbBitmapAlloc":
+            add(direction, channel, sym_start, sym_length, vrb_bitmap_crbs(rbs["bitmap"], rbs["nof_vrbs"], bwp), info)
 
     dl, ul = cell.dl_bwp, cell.ul_bwp
     origins = _VrbOrigins(decision.get("dl_pdcchs") or [], cell)
@@ -323,27 +317,20 @@ class _VrbOrigins:
         return self.lowest_crb.get(pdcch["coreset_id"])
 
 
-def rbg_crbs(bitmap: int, nof_rbgs: int, bwp: dict[str, Any]) -> list[tuple[int, int]]:
-    """CRB ranges of the RBGs of a bitmap, merged where contiguous. RBG 0 is the most significant of the nof_rbgs bits,
-    as OCUDU writes them.
-    """
-    size = rbg_size(bwp["crb_length"])
+def vrb_bitmap_crbs(bitmap: list[int] | None, nof_vrbs: int, bwp: dict[str, Any]) -> list[tuple[int, int]]:
+    """CRB ranges of the VRBs of a VrbBitmapAlloc bitmap, VRB i in bit i % 64 of word i / 64, merged where contiguous."""
+    words = bitmap or []
     start, end = bwp["crb_start"], bwp["crb_start"] + bwp["crb_length"]
-    # The first RBG ends at the next multiple of the RBG size, counted in CRBs.
-    first_end = (start // size + 1) * size
     ranges: list[tuple[int, int]] = []
-    for i in range(nof_rbgs):
-        if not (bitmap >> (nof_rbgs - 1 - i)) & 1:
+    for i in range(min(nof_vrbs, 64 * len(words))):
+        crb = start + i
+        # VRBs past the BWP, as of a corrupt event, hold no CRBs.
+        if not (words[i // 64] >> (i % 64)) & 1 or crb >= end:
             continue
-        lo = start if i == 0 else first_end + (i - 1) * size
-        hi = min(end, first_end if i == 0 else lo + size)
-        # RBGs past the BWP, of a bitmap of another RBG size configuration or a corrupt one, hold no CRBs.
-        if hi <= lo:
-            continue
-        if ranges and ranges[-1][0] + ranges[-1][1] == lo:
-            ranges[-1] = (ranges[-1][0], hi - ranges[-1][0])
+        if ranges and ranges[-1][0] + ranges[-1][1] == crb:
+            ranges[-1] = (ranges[-1][0], ranges[-1][1] + 1)
         else:
-            ranges.append((lo, hi - lo))
+            ranges.append((crb, 1))
     return ranges
 
 

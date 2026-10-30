@@ -20,7 +20,8 @@ const DEFAULT_DATASETS = ["sched", "ue_metrics"];
 const DEFAULT_FIELDS = ["total_dl_brate", "dl_brate"];
 // Field each dataset is split by when picked, e.g. one series per UE.
 const DEFAULT_SPLITS = {
-  sched: "pci", sched_ue: "rnti", ue_metrics: "rnti", dl_grants: "rnti", ul_grants: "rnti", harq_acks: "rnti", csi_reports: "rnti",
+  sched: "pci", sched_ue: "rnti", ue_metrics: "rnti", dl_grants: "rnti", ul_grants: "rnti", harq_acks: "rnti", crcs: "rnti",
+  csi_reports: "rnti",
 };
 
 

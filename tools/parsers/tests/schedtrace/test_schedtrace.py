@@ -68,14 +68,15 @@ class SchedtraceTest(unittest.TestCase):
         slot = list(schedtrace.read(DATA / "schedtrace_cell0.bin"))[1]
         self.assertEqual((slot["slot_tx"], slot["latency_us"]), (12345, 42))
         # A vector of unions, with structs inline and enums by name.
-        rach, harq, sr, csi = slot["inputs"]
+        rach, harq, sr, csi, crc = slot["inputs"]
         self.assertEqual(rach["occasions"][0]["preambles"], [{"preamble_id": 23, "tc_rnti": 17922, "time_advance": -5}])
         self.assertEqual((harq["type"], harq["status"]), ("HarqAckEvent", "Dtx"))
         self.assertEqual(sr, {"type": "SrEvent", "slot_rx": 12342, "ue_idx": 1, "rnti": 17922})
         # Optional scalars are None when absent.
         self.assertEqual((csi["ri"], csi["li"], csi["pmi"]["type"], csi["pmi"]["i_1_2"]), (2, None, "PmiTypeISinglePanel", None))
+        self.assertEqual((crc["type"], crc["status"], crc["ul_sinr_db"], crc["time_advance"]), ("CrcEvent", "Ko", 12.5, None))
         decision = slot["decision"]
-        self.assertEqual(decision["ue_pdschs"][0]["rbs"], {"type": "RbgAlloc", "nof_rbgs": 9, "bitmap": 511})
+        self.assertEqual(decision["ue_pdschs"][0]["rbs"], {"type": "VrbBitmapAlloc", "nof_vrbs": 52, "bitmap": [(1 << 34) - 1]})
         self.assertEqual(decision["rar_pdschs"][0]["grants"][0]["tpc"], -1)
         self.assertIsNone(decision["ul_pdcchs"])
 
@@ -160,7 +161,8 @@ class SchedtraceTest(unittest.TestCase):
         self.assertEqual(list(schedtrace.read(DATA / "schedtrace_cell0.bin")), list(schedtrace.events(data)))
 
     def test_fields_of_newer_schemas_are_ignored(self):
-        with self.assertWarnsRegex(UserWarning, "format 1.1 is newer than 1.0"):
+        major, minor = schedtrace.FORMAT_VERSION
+        with self.assertWarnsRegex(UserWarning, f"format {major}.{minor + 1} is newer than {major}.{minor}"):
             (stop,) = schedtrace.read(DATA / "cell_stop_newer.bin")
         self.assertEqual(stop, {"timestamp_us": 1, "type": "CellStopEvent", "cell_idx": 3})
 
@@ -277,7 +279,7 @@ class GridTest(unittest.TestCase):
         by_channel = {}
         for r in rects:
             by_channel.setdefault(r["channel"], []).append((r["dir"], r["sym_start"], r["sym_length"], r["crb_start"], r["crb_length"]))
-        # 9 RBGs of 4 PRBs in a 52-PRB BWP starting at CRB 2, the first RBG cut short at CRB 4, merged.
+        # VRBs 0 to 33 of a 52-PRB BWP starting at CRB 2, merged.
         self.assertEqual(by_channel["PDSCH"], [("DL", 1, 13, 2, 34)])
         self.assertEqual(by_channel["PUSCH"], [("UL", 0, 14, 5, 20)])
         # The RAR PDSCH of the trace has no symbols, so no rectangle.
@@ -354,10 +356,14 @@ class GridTest(unittest.TestCase):
         self.assertFalse(thread.is_alive(), "placing garbled events hangs")
         self.assertEqual(errors, [])
 
-    def test_rbg_size(self):
-        self.assertEqual([grid.rbg_size(n) for n in (24, 52, 106, 273)], [2, 4, 8, 16])
+    def test_vrb_bitmap_crbs(self):
+        bwp = {"crb_start": 4, "crb_length": 106}
+        # VRBs 1, 2, 63 and 64 across the first two words, and 70.
+        bitmap = [(1 << 1) | (1 << 2) | (1 << 63), 1 | (1 << 6)]
+        self.assertEqual(grid.vrb_bitmap_crbs(bitmap, 106, bwp), [(5, 2), (67, 2), (74, 1)])
 
-    def test_rbgs_past_the_bwp_hold_no_crbs(self):
+    def test_vrbs_past_the_bwp_or_bitmap_hold_no_crbs(self):
         bwp = {"crb_start": 0, "crb_length": 52}
-        # 13 RBGs of 4 CRBs fill the BWP; 20 set bits, as of a corrupt bitmap, give no more.
-        self.assertEqual(grid.rbg_crbs((1 << 20) - 1, 20, bwp), [(0, 52)])
+        # 64 set bits, as of a corrupt bitmap, fill the BWP and no more; nof_vrbs past the words reads none.
+        self.assertEqual(grid.vrb_bitmap_crbs([(1 << 64) - 1], 128, bwp), [(0, 52)])
+        self.assertEqual(grid.vrb_bitmap_crbs(None, 10, bwp), [])

@@ -11,7 +11,7 @@ const DECISIONS = [
   ["csi_rs", "CSI-RS"], ["prachs", "PRACH"], ["srss", "SRS"], ["failed_attempts", "Failed attempts"],
 ];
 // Titles of the inputs of a slot, by type, in display order.
-const INPUTS = [["HarqAckEvent", "HARQ-ACK"], ["SrEvent", "SR"], ["CsiReportEvent", "CSI report"], ["RachIndication", "RACH"]];
+const INPUTS = [["HarqAckEvent", "HARQ-ACK"], ["CrcEvent", "UL CRC"], ["SrEvent", "SR"], ["CsiReportEvent", "CSI report"], ["RachIndication", "RACH"]];
 // Items of a list beyond which a nested list is shown by its length rather than as columns.
 const MAX_NESTED_ITEMS = 4;
 // Fields that hold a slot count, shown in SFN.slot.

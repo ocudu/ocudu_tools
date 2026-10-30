@@ -136,23 +136,23 @@ row per period per UE, or the grants and reports themselves:
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/schedtrace_ue_metrics.py <trace or run dir> \
   [--rnti 0x4601] [--ue 0] [--after 13:35:40] [--before 13:35:41] [--period 0.01] \
-  [--summary] [--grants dl|ul|harq|csi] [-j <workers>]
+  [--summary] [--grants dl|ul|harq|crc|csi] [-j <workers>]
 ```
 
 Fields follow the METRICS `Scheduler UE` lines where they mean the same: `dl_brate`
-is of the ACKed TBS, `dl_mcs` the mean of the codewords and `cqi` of the reports, both
+is of the ACKed TBS and `ul_brate` of the CRC OK one, `dl_mcs` the mean of the codewords and `cqi` of the reports, both
 rounded half up as METRICS rounds them. Periods are bins
 on whole multiples of `--period` since the epoch (UTC), while a METRICS period ends at
 the time of its line, so a 1 s period overlaps two METRICS periods: compare trends,
-not single values. Traces have no UL
-CRC or buffer status, so UL throughput is of the scheduled new transmissions
-(`ul_sched_brate`), and a DTX report counts as not ok.
+not single values. `ul_sched_brate` is of the scheduled new transmissions, and a DTX
+report or CRC counts as not ok. Traces have no buffer status.
 
 **Scheduler HARQ transactions** — for "what happened to this PDSCH/PUSCH" or "which
-DL transport blocks were never ACKed", group the scheduler event traces per HARQ
+transport blocks were never ACKed", group the scheduler event traces per HARQ
 process of a UE: a transport block's new transmission and retransmissions, their
 PDCCHs, the UCI of their HARQ-ACK (PUCCH, or a PUSCH of the UE in that slot,
-inferred) and the HARQ-ACK reports, until an ACK or the next new transmission:
+inferred), the HARQ-ACK reports and the UL CRCs, until an ACK, a CRC OK or the next new
+transmission:
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/schedtrace_harq.py <trace or run dir> \
@@ -161,9 +161,9 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/ocudu/schedtrace_harq.py <trace or run dir> 
 ```
 
 `--slot` matches a PDSCH or PUSCH at that SFN.slot of any SFN cycle; narrow with
-`--after`. Traces have no UL CRC, so UL transactions have no outcome, and no event of
-HARQ timeouts: a DL transaction without ACK ends at the next new transmission on
-its process, and `--failed` lists those with NACK/DTX reports or none.
+`--after`. Traces have no event of HARQ timeouts: a transaction without ACK or CRC OK
+ends at the next new transmission on its process, and `--failed` lists those with
+NACK/KO/DTX reports or none.
 
 ## answer shape
 

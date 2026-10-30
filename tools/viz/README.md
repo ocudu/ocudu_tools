@@ -112,14 +112,15 @@ In the page:
   trace when it opens.
 - Right-click a PDSCH, a PUSCH or the PDCCH of a UE in the grid and `Inspect HARQ process` opens its transport block in
   a tab of the log pane: its PDCCHs, PDSCHs or PUSCHs, the UCI of its HARQ-ACK (PUCCH, or a PUSCH of the UE in that
-  slot, marked `inferred`) and the HARQ-ACK reports, one row per PDU or report with its slot, transmission and
-  parameters, from its new transmission to an ACK or the next new transmission on the process, and its outcome in the
-  header (UL has none: the trace has no UL CRC). The grid outlines its allocations while the tab is shown. Click a row
+  slot, marked `inferred`) and the HARQ-ACK reports, or the UL CRCs of a PUSCH, one row per PDU or report with its
+  slot, transmission and parameters, from its new transmission to an ACK, a CRC OK or the next new transmission on the
+  process, and its outcome in the header. The grid outlines its allocations while the tab is shown. Click a row
   to mark its slot, double-click it to open its slot event.
 - A scheduler event trace also gives plots and tables per UE: `ue_metrics`, per UE and 10 ms (throughput as METRICS
-  `dl_brate`, from the ACKed TBS, scheduled DL and UL throughput, MCS, PRBs, new and retransmissions, ACK/NACK/DTX
-  and error rate, CQI, RI, RSRP, SRs); `cell_metrics`, the scheduler latency, PRBs and UEs per 10 ms; and the grants
-  and reports themselves (`dl_grants`, `ul_grants`, `harq_acks`, `csi_reports`). Click a point to see its slot event.
+  `dl_brate` and `ul_brate`, from the ACKed and CRC OK TBS, scheduled DL and UL throughput, MCS, PRBs, new and
+  retransmissions, ACK/NACK/DTX and UL CRC OK/KO/DTX with their error rates, PUSCH SNR, RSRP and TA, CQI, RI, RSRP,
+  SRs); `cell_metrics`, the scheduler latency, PRBs and UEs per 10 ms; and the grants
+  and reports themselves (`dl_grants`, `ul_grants`, `harq_acks`, `crcs`, `csi_reports`). Click a point to see its slot event.
 - `⛶` maximizes a plot, table, trace or grid: it fills the window, alone with the log pane, its chart taller (a trace
   showing more UE rows). `🗗` or Esc restores it.
 - Click a point to see its log line and the lines around it; scrolling the log pane loads the lines before or after

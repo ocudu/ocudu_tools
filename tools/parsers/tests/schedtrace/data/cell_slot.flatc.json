@@ -8,7 +8,8 @@
       "RachIndication",
       "HarqAckEvent",
       "SrEvent",
-      "CsiReportEvent"
+      "CsiReportEvent",
+      "CrcEvent"
     ],
     "inputs": [
       {
@@ -65,6 +66,17 @@
         "first_tb_wb_cqi": 15,
         "second_tb_wb_cqi": null,
         "valid": true
+      },
+      {
+        "slot_rx": 12344,
+        "ue_idx": 1,
+        "rnti": 17922,
+        "harq_id": 1,
+        "status": "Ko",
+        "tbs": 900,
+        "ul_sinr_db": 12.5,
+        "ul_rsrp_dbfs": null,
+        "time_advance": null
       }
     ],
     "decision": {
@@ -115,10 +127,12 @@
       "ue_pdschs": [
         {
           "rnti": 17921,
-          "rbs_type": "RbgAlloc",
+          "rbs_type": "VrbBitmapAlloc",
           "rbs": {
-            "nof_rbgs": 9,
-            "bitmap": 511
+            "nof_vrbs": 52,
+            "bitmap": [
+              17179869183
+            ]
           },
           "sym_start": 1,
           "sym_length": 13,

@@ -3,10 +3,10 @@
 
 """HARQ transactions of a schedtrace: the life of a transport block on a HARQ process of a UE, from its new
 transmission through its retransmissions, with the PDCCHs that schedule them, the UCI that carries their HARQ-ACK and
-the HARQ-ACK reports, so that one allocation can be followed to its outcome.
+the HARQ-ACK reports, or the UL CRCs of a PUSCH, so that one allocation can be followed to its outcome.
 
 A transaction of a process, the (RNTI, HARQ id) of a direction, starts at a PDSCH or PUSCH without retransmissions
-before it and lasts until a HARQ-ACK of Ack, or the next new transmission on the process. The trace has no link
+before it and lasts until a HARQ-ACK of Ack or a UL CRC of Ok, or the next new transmission on the process. The trace has no link
 between these, so they are matched as OCUDU schedules them:
 
 - A DL PDCCH and its PDSCH are in the same slot decision, of the same RNTI and HARQ id.
@@ -14,9 +14,10 @@ between these, so they are matched as OCUDU schedules them:
 - The UCI of a PDSCH is at k1 slots after it: a PUCCH of the RNTI with HARQ-ACK bits, which may carry those of other
   PDSCHs, else a PUSCH of the RNTI in that slot, which the trace does not say carries UCI.
 - A HARQ-ACK report is of the RNTI and HARQ id, received at that UCI slot (slot_rx).
+- A UL CRC is of the RNTI and HARQ id, received at the slot of its PUSCH (slot_rx).
 
-The trace has no UL CRC, so UL transactions have no outcome, and no event of HARQ processes that time out or reach
-their maximum retransmissions: a DL transaction without Ack is ended by the next new transmission on its process.
+The trace has no event of HARQ processes that time out or reach their maximum retransmissions: a transaction without
+Ack or Ok is ended by the next new transmission on its process.
 """
 
 from __future__ import annotations
@@ -26,8 +27,8 @@ from dataclasses import dataclass, field
 from typing import Any, Hashable
 
 from ..ran.rnti import normalize
-from .grid import MAX_AGGR_LVL_INDEX
-from .ue_metrics import ue_index
+from .grid import MAX_AGGR_LVL_INDEX, vrb_bitmap_crbs
+from .ue_metrics import finite, ue_index
 
 # Frames after which the SFN wraps.
 NOF_SFNS = 1024
@@ -37,10 +38,17 @@ DL_DCI_TYPES = ("si-rnti 1_0", "ra-rnti 1_0", "c-rnti 1_0", "tc-rnti 1_0", "p-rn
 UL_DCI_TYPES = ("tc-rnti 0_0", "c-rnti 0_0", "c-rnti 0_1", "cs-rnti 0_1")
 # HarqAckReportStatus values, as the decoder names them.
 _STATUSES = ("Nack", "Ack", "Dtx")
+# CrcStatus values, as the decoder names them.
+_CRC_STATUSES = ("Ok", "Ko", "Dtx")
+# Words of outcome() by direction: the success status, its name, the failures and the report.
+_OUTCOME_WORDS = {"DL": ("Ack", "ACK", "NACK/DTX", "HARQ-ACK report"), "UL": ("Ok", "CRC OK", "KO/DTX", "UL CRC")}
 # Largest k2 of a PUSCH, TS 38.331 PUSCH-TimeDomainResourceAllocation, beyond which a UL PDCCH is not matched to one.
 _MAX_K2 = 32
+# BWP of vrb_bitmap_crbs() whose CRBs are the VRBs of a bitmap.
+_VRB_SPACE = {"crb_start": 0, "crb_length": 1 << 16}
 # Kinds of the rows of a transaction.
-PDCCH, PDSCH, PUSCH, PUCCH, UCI_ON_PUSCH, HARQ_ACK = "PDCCH", "PDSCH", "PUSCH", "PUCCH", "UCI on PUSCH", "HARQ-ACK"
+PDCCH, PDSCH, PUSCH, PUCCH, UCI_ON_PUSCH, HARQ_ACK, CRC = ("PDCCH", "PDSCH", "PUSCH", "PUCCH", "UCI on PUSCH", "HARQ-ACK",
+                                                             "CRC")
 
 
 @dataclass
@@ -62,7 +70,8 @@ class Row:
 @dataclass
 class Transaction:
     """A transport block on a HARQ process: direction ("DL" or "UL"), RNTI as OCUDU logs print it, UE index, HARQ id,
-    TBS in bytes of its new transmission, its rows in slot order, and how it ended: "ack", "new_tx" (the next new
+    TBS in bytes of its new transmission, its rows in slot order, and how it ended: "ack" (a HARQ-ACK of Ack or a UL
+    CRC of Ok), "new_tx" (the next new
     transmission on its process) or "end" (the end of the events). started is False when its new transmission is
     before the events.
     """
@@ -75,11 +84,12 @@ class Transaction:
     rows: list[Row] = field(default_factory=list)
     ended_by: str = "end"
     started: bool = True
-    # Transmissions so far, and the HARQ-ACK statuses received.
+    # Transmissions so far, and the HARQ-ACK or CRC statuses received.
     nof_tx: int = 0
     statuses: list[str] = field(default_factory=list)
-    # UCI slots, unwrapped, of the PDSCHs of a DL transaction, with their transmission.
-    _uci_slots: dict[int, int] = field(default_factory=dict, repr=False)
+    # Slots, unwrapped, where reports of its transmissions are received, the UCI slots of the PDSCHs of a DL
+    # transaction or the slots of the PUSCHs of a UL one, with their transmission.
+    _rx_slots: dict[int, int] = field(default_factory=dict, repr=False)
     # RNTI as in the trace.
     _rnti: int = field(default=0, repr=False)
 
@@ -88,17 +98,16 @@ class Transaction:
         return self.ended_by == "ack"
 
     def outcome(self) -> str:
-        """One line of how it ended, e.g. "ACK at tx 2" or "failed after 4 NACK/DTX"."""
-        if self.dir == "UL":
-            return "outcome unknown, the trace has no UL CRC"
+        """One line of how it ended, e.g. "ACK at tx 2", "CRC OK at tx 1" or "failed after 4 NACK/DTX"."""
+        ok, ok_name, nok_name, report = _OUTCOME_WORDS[self.dir]
         if self.acked:
-            return f"ACK at tx {self.nof_tx}"
-        nok = sum(s != "Ack" for s in self.statuses)
+            return f"{ok_name} at tx {self.nof_tx}"
+        nok = sum(s != ok for s in self.statuses)
         if not nok:
-            return "no HARQ-ACK report" + (" by the end of the events" if self.ended_by == "end" else "")
+            return f"no {report}" + (" by the end of the events" if self.ended_by == "end" else "")
         if self.ended_by == "end":
-            return f"no ACK after {nok} NACK/DTX by the end of the events"
-        return f"failed after {nok} NACK/DTX"
+            return f"no {ok_name} after {nok} {nok_name} by the end of the events"
+        return f"failed after {nok} {nok_name}"
 
     def has(self, event: Hashable, item: tuple[str, int]) -> bool:
         """Whether an allocation, by the key of its slot event and its [list, index], is one of its PDCCHs, PDSCHs or
@@ -155,23 +164,32 @@ class _Tracker:
 
         # Reports are received before the slot decision, which may start a new transmission on their process.
         for inp in event.get("inputs") or []:
-            if not inp or inp.get("type") != "HarqAckEvent":
+            kind = inp and inp.get("type")
+            if kind == "HarqAckEvent":
+                direction, row_kind, statuses = "DL", HARQ_ACK, _STATUSES
+            elif kind == "CrcEvent":
+                direction, row_kind, statuses = "UL", CRC, _CRC_STATUSES
+            else:
                 continue
-            tr = self._open.get(("DL", inp["rnti"], inp["harq_id"]))
+            proc = (direction, inp["rnti"], inp["harq_id"])
+            tr = self._open.get(proc)
             slot_rx = inp.get("slot_rx")
             rx = None if slot_rx is None else self._unwrap_near(slot_rx, slot)
-            if tr is None or (rx is not None and rx not in tr._uci_slots):
+            if tr is None or (rx is not None and rx not in tr._rx_slots):
                 continue
             status = inp["status"]
             if not isinstance(status, str):
-                status = _STATUSES[status] if 0 <= status < len(_STATUSES) else f"Status{status}"
-            tx = tr._uci_slots.get(rx, tr.nof_tx)
-            tr.rows.append(row(HARQ_ACK, tx, None,
-                               {"status": status, "tbs": inp.get("tbs"), "slot_rx": self._sfn_slot(slot_rx)}))
+                status = statuses[status] if 0 <= status < len(statuses) else f"Status{status}"
+            tx = tr._rx_slots.get(rx, tr.nof_tx)
+            params = {"status": status, "tbs": inp.get("tbs"), "slot_rx": self._sfn_slot(slot_rx)}
+            if kind == "CrcEvent":
+                params.update(snr=finite(inp.get("ul_sinr_db")), rsrp_dbfs=finite(inp.get("ul_rsrp_dbfs")),
+                              ta=inp.get("time_advance"))
+            tr.rows.append(row(row_kind, tx, None, params))
             tr.statuses.append(status)
-            if status == "Ack":
+            if status == _OUTCOME_WORDS[direction][0]:
                 tr.ended_by = "ack"
-                done.append(self._open.pop(("DL", inp["rnti"], inp["harq_id"])))
+                done.append(self._open.pop(proc))
 
         dl_pdcchs = decision.get("dl_pdcchs") or []
         for i, p in enumerate(decision.get("ue_pdschs") or []):
@@ -189,7 +207,7 @@ class _Tracker:
             tr.rows.append(row(PDSCH, tr.nof_tx, ("ue_pdschs", i), params))
             if tr.tbs is None:
                 tr.tbs = params["tbs"]
-            tr._uci_slots[slot + p["k1"]] = tr.nof_tx
+            tr._rx_slots[slot + p["k1"]] = tr.nof_tx
 
         pending = self._ul_pdcchs
         for i, p in enumerate(decision.get("ul_pdcchs") or []):
@@ -211,6 +229,7 @@ class _Tracker:
             tr.rows.append(row(PUSCH, tr.nof_tx, ("puschs", i), params))
             if tr.tbs is None:
                 tr.tbs = p["tb_size_bytes"]
+            tr._rx_slots[slot] = tr.nof_tx
         # UL PDCCHs whose PUSCH is past the largest k2 are of PUSCHs never transmitted, or before the events.
         for k in list(pending):
             pending[k] = [x for x in pending[k] if slot - x[0] <= _MAX_K2]
@@ -219,9 +238,9 @@ class _Tracker:
 
         pucchs = decision.get("pucchs") or []
         for (direction, _, _), tr in self._open.items():
-            if direction != "DL" or slot not in tr._uci_slots:
+            if direction != "DL" or slot not in tr._rx_slots:
                 continue
-            tx = tr._uci_slots[slot]
+            tx = tr._rx_slots[slot]
             rnti = tr._rnti
             found = [(i, p) for i, p in enumerate(pucchs) if p["rnti"] == rnti and p.get("nof_bits_harq_ack")]
             for i, p in found:
@@ -285,8 +304,8 @@ def _rbs(alloc: dict[str, Any]) -> dict[str, Any]:
     rbs = alloc.get("rbs") or {}
     if rbs.get("type") == "VrbAlloc":
         return {"vrbs": f"{rbs['vrb_start']}+{rbs['vrb_length']}"}
-    if rbs.get("type") == "RbgAlloc":
-        return {"rbgs": f"{rbs['bitmap']:0{rbs['nof_rbgs']}b}"}
+    if rbs.get("type") == "VrbBitmapAlloc":
+        return {"vrbs": ",".join(f"{s}+{n}" for s, n in vrb_bitmap_crbs(rbs["bitmap"], rbs["nof_vrbs"], _VRB_SPACE))}
     return {}
 
 

@@ -65,7 +65,7 @@ class SchedtraceSourceTest(unittest.TestCase):
     def test_ue_datasets(self):
         datasets = self.store.datasets
         # The slot has a UE PDSCH and a PUSCH, HARQ-ACK and CSI reports, and an SR.
-        self.assertEqual(sorted(datasets), ["cell_metrics", "csi_reports", "dl_grants", "harq_acks", "ue_metrics",
+        self.assertEqual(sorted(datasets), ["cell_metrics", "crcs", "csi_reports", "dl_grants", "harq_acks", "ue_metrics",
                                             "ul_grants"])
         ue = datasets["ue_metrics"]
         self.assertEqual((ue["units"]["dl_brate"], ue["context"], ue["label"]), ("bps", ["rnti", "ue_index"],
@@ -106,7 +106,7 @@ class SchedtraceSourceTest(unittest.TestCase):
         self.assertEqual(json.loads(self.source.record_detail(self.path, 3))["type"], "CellStopEvent")
         # The structure of the event too, which the record pane shows as tables.
         slot = self.source.record_data(self.path, 2)
-        self.assertEqual((slot["type"], len(slot["inputs"]), len(slot["decision"]["ue_pdschs"])), ("CellSlotEvent", 4, 1))
+        self.assertEqual((slot["type"], len(slot["inputs"]), len(slot["decision"]["ue_pdschs"])), ("CellSlotEvent", 5, 1))
 
     def test_corrupt_last_event(self):
         path = self.dir / "garbled" / "schedtrace_cell0.bin"

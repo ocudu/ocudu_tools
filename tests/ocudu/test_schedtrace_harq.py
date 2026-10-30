@@ -40,7 +40,7 @@ class SchedtraceHarqTest(unittest.TestCase):
         res = run(str(TRACE.parent), "--rnti", "0x4602", "--harq-id", "0", "--dir", "ul")
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("UL rnti=0x4602", res.stdout)
-        self.assertIn("outcome unknown", res.stdout)
+        self.assertIn("no UL CRC by the end of the events", res.stdout)
         res = run(str(TRACE), "--rnti", "4601", "--harq-id", "3", "--slot", "1234.6")
         self.assertIn("no transactions match", res.stdout)
 
@@ -48,11 +48,13 @@ class SchedtraceHarqTest(unittest.TestCase):
         res = run(str(TRACE), "--failed")
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("no HARQ-ACK report by the end of the events", res.stdout)
-        self.assertNotIn("0x4602", res.stdout)
+        self.assertIn("0x4602", res.stdout)
+        res = run(str(TRACE), "--failed", "--dir", "ul")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertNotIn("0x4601", res.stdout)
 
     def test_usage_errors(self):
         self.assertEqual(run(str(TRACE)).returncode, 2)
-        self.assertEqual(run(str(TRACE), "--failed", "--dir", "ul").returncode, 2)
         self.assertEqual(run(str(TRACE), "--rnti", "4601", "--harq-id", "3", "--slot", "12").returncode, 2)
         res = run(str(TRACE.parent / "missing"), "--failed")
         self.assertEqual(res.returncode, 1)

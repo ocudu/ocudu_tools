@@ -56,18 +56,20 @@ def _union_vector(buf, types_at, values_at, members):
         out.append(_union(buf, values_at + 4 * i, kind, members) if kind else None)
     return out
 
-SCHEMA_HASH = "19d1467df20fb35b3427b7a56e124015878a0ea1f1b0ef9ae8d535d4d6134ea5"
-FORMAT_VERSION = (1, 0)
+SCHEMA_HASH = "d13921bf29278f4ad93bed4d9c6722eeb7e30540cf96efa0050718dab86e4fb4"
+FORMAT_VERSION = (2, 1)
 
 _ENUM_CyclicPrefix = {0: 'Normal', 1: 'Extended'}
 _ENUM_SubcarrierSpacing = {0: 'Khz15', 1: 'Khz30', 2: 'Khz60', 3: 'Khz120', 4: 'Khz240'}
 _ENUM_HarqAckReportStatus = {0: 'Nack', 1: 'Ack', 2: 'Dtx'}
-_ENUM_FileFormatVersionMajor = {1: 'Value'}
-_ENUM_FileFormatVersionMinor = {0: 'Value'}
+_ENUM_CrcStatus = {0: 'Ok', 1: 'Ko', 2: 'Dtx'}
+_ENUM_FileFormatVersionMajor = {2: 'Value'}
+_ENUM_FileFormatVersionMinor = {1: 'Value'}
 _s_bool = struct.Struct("<?").unpack_from
 _s_u8 = struct.Struct("<B").unpack_from
 _s_u16 = struct.Struct("<H").unpack_from
 _s_u32 = struct.Struct("<I").unpack_from
+_s_f32 = struct.Struct("<f").unpack_from
 _s_i64 = struct.Struct("<q").unpack_from
 _STRUCT_CrbInterval = struct.Struct("<HH")
 _STRUCT_BwpConfiguration = struct.Struct("<BBHH")
@@ -655,17 +657,53 @@ def _member_CsiReportEvent(buf, pos):
     }
 
 
-def _member_RbgAlloc(buf, pos):
+def _member_CrcEvent(buf, pos):
+    vt = pos - _i32(buf, pos)[0]
+    n = (_u16(buf, vt)[0] - 4) >> 1
+    vo = _VTABLES[9](buf, vt + 4) if n >= 9 else _VTABLES[n](buf, vt + 4) + (0,) * (9 - n)
+    o = vo[0]
+    v0 = _s_u32(buf, pos + o)[0] if o else 0
+    o = vo[1]
+    v1 = _s_u16(buf, pos + o)[0] if o else 0
+    o = vo[2]
+    v2 = _s_u16(buf, pos + o)[0] if o else 0
+    o = vo[3]
+    v3 = buf[pos + o] if o else 0
+    o = vo[4]
+    v4 = _ENUM_CrcStatus.get(x := _s_u8(buf, pos + o)[0], x) if o else 'Ok'
+    o = vo[5]
+    v5 = _s_u32(buf, pos + o)[0] if o else 0
+    o = vo[6]
+    v6 = _s_f32(buf, pos + o)[0] if o else None
+    o = vo[7]
+    v7 = _s_f32(buf, pos + o)[0] if o else None
+    o = vo[8]
+    v8 = _s_i64(buf, pos + o)[0] if o else None
+    return {
+        "type": "CrcEvent",
+        "slot_rx": v0,
+        "ue_idx": v1,
+        "rnti": v2,
+        "harq_id": v3,
+        "status": v4,
+        "tbs": v5,
+        "ul_sinr_db": v6,
+        "ul_rsrp_dbfs": v7,
+        "time_advance": v8,
+    }
+
+
+def _member_VrbBitmapAlloc(buf, pos):
     vt = pos - _i32(buf, pos)[0]
     n = (_u16(buf, vt)[0] - 4) >> 1
     vo = _VTABLES[2](buf, vt + 4) if n >= 2 else _VTABLES[n](buf, vt + 4) + (0,) * (2 - n)
     o = vo[0]
-    v0 = buf[pos + o] if o else 0
+    v0 = _s_u16(buf, pos + o)[0] if o else 0
     o = vo[1]
-    v1 = _s_u32(buf, pos + o)[0] if o else 0
+    v1 = _scalars(buf, pos + o + _u32(buf, pos + o)[0], "Q") if o else None
     return {
-        "type": "RbgAlloc",
-        "nof_rbgs": v0,
+        "type": "VrbBitmapAlloc",
+        "nof_vrbs": v0,
         "bitmap": v1,
     }
 
@@ -1420,17 +1458,53 @@ def _grid_member_CsiReportEvent(buf, pos):
     }
 
 
-def _grid_member_RbgAlloc(buf, pos):
+def _grid_member_CrcEvent(buf, pos):
+    vt = pos - _i32(buf, pos)[0]
+    n = (_u16(buf, vt)[0] - 4) >> 1
+    vo = _VTABLES[9](buf, vt + 4) if n >= 9 else _VTABLES[n](buf, vt + 4) + (0,) * (9 - n)
+    o = vo[0]
+    v0 = _s_u32(buf, pos + o)[0] if o else 0
+    o = vo[1]
+    v1 = _s_u16(buf, pos + o)[0] if o else 0
+    o = vo[2]
+    v2 = _s_u16(buf, pos + o)[0] if o else 0
+    o = vo[3]
+    v3 = buf[pos + o] if o else 0
+    o = vo[4]
+    v4 = _ENUM_CrcStatus.get(x := _s_u8(buf, pos + o)[0], x) if o else 'Ok'
+    o = vo[5]
+    v5 = _s_u32(buf, pos + o)[0] if o else 0
+    o = vo[6]
+    v6 = _s_f32(buf, pos + o)[0] if o else None
+    o = vo[7]
+    v7 = _s_f32(buf, pos + o)[0] if o else None
+    o = vo[8]
+    v8 = _s_i64(buf, pos + o)[0] if o else None
+    return {
+        "type": "CrcEvent",
+        "slot_rx": v0,
+        "ue_idx": v1,
+        "rnti": v2,
+        "harq_id": v3,
+        "status": v4,
+        "tbs": v5,
+        "ul_sinr_db": v6,
+        "ul_rsrp_dbfs": v7,
+        "time_advance": v8,
+    }
+
+
+def _grid_member_VrbBitmapAlloc(buf, pos):
     vt = pos - _i32(buf, pos)[0]
     n = (_u16(buf, vt)[0] - 4) >> 1
     vo = _VTABLES[2](buf, vt + 4) if n >= 2 else _VTABLES[n](buf, vt + 4) + (0,) * (2 - n)
     o = vo[0]
-    v0 = buf[pos + o] if o else 0
+    v0 = _s_u16(buf, pos + o)[0] if o else 0
     o = vo[1]
-    v1 = _s_u32(buf, pos + o)[0] if o else 0
+    v1 = _scalars(buf, pos + o + _u32(buf, pos + o)[0], "Q") if o else None
     return {
-        "type": "RbgAlloc",
-        "nof_rbgs": v0,
+        "type": "VrbBitmapAlloc",
+        "nof_vrbs": v0,
         "bitmap": v1,
     }
 
@@ -1744,13 +1818,13 @@ def _grid_table_CellEvent(buf, pos):
 
 _members_PucchFormat = {1: _member_PucchF0, 2: _member_PucchF1, 3: _member_PucchF2, 4: _member_PucchF3, 5: _member_PucchF4}
 _members_PmiValue = {1: _member_PmiUnknown, 2: _member_PmiTwoAntennaPorts, 3: _member_PmiTypeISinglePanel, 4: _member_PmiTypeII}
-_members_SlotInput = {1: _member_RachIndication, 2: _member_HarqAckEvent, 3: _member_SrEvent, 4: _member_CsiReportEvent}
-_members_RbAlloc = {1: _member_RbgAlloc, 2: _member_VrbAlloc}
+_members_SlotInput = {1: _member_RachIndication, 2: _member_HarqAckEvent, 3: _member_SrEvent, 4: _member_CsiReportEvent, 5: _member_CrcEvent}
+_members_RbAlloc = {1: _member_VrbBitmapAlloc, 2: _member_VrbAlloc}
 _members_PucchTxParams = {1: _member_PucchTxF0, 2: _member_PucchTxF1, 3: _member_PucchTxF2, 4: _member_PucchTxF3, 5: _member_PucchTxF4}
 _members_CellEventValue = {1: _member_CellStartEvent, 2: _member_CellSlotEvent, 3: _member_CellStopEvent}
 _grid_members_PucchFormat = {1: _grid_member_PucchF0, 2: _grid_member_PucchF1, 3: _grid_member_PucchF2, 4: _grid_member_PucchF3, 5: _grid_member_PucchF4}
-_grid_members_SlotInput = {1: _grid_member_RachIndication, 2: _grid_member_HarqAckEvent, 3: _grid_member_SrEvent, 4: _grid_member_CsiReportEvent}
-_grid_members_RbAlloc = {1: _grid_member_RbgAlloc, 2: _grid_member_VrbAlloc}
+_grid_members_SlotInput = {1: _grid_member_RachIndication, 2: _grid_member_HarqAckEvent, 3: _grid_member_SrEvent, 4: _grid_member_CsiReportEvent, 5: _grid_member_CrcEvent}
+_grid_members_RbAlloc = {1: _grid_member_VrbBitmapAlloc, 2: _grid_member_VrbAlloc}
 _grid_members_CellEventValue = {1: _grid_member_CellStartEvent, 2: _grid_member_CellSlotEvent, 3: _grid_member_CellStopEvent}
 
 
