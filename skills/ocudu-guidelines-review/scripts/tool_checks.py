@@ -61,6 +61,7 @@ UNKNOWN_ARG_RE = re.compile(r"error: (?:unknown argument|unsupported option|unkn
 MAX_RETRIES = 5
 IWYU_TIMEOUT_S = 900
 
+INCLUDE_DIR_FLAGS = ("-isystem", "-iquote", "-I")
 INCLUDE_RE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', re.MULTILINE)
 
 
@@ -177,15 +178,33 @@ def load_compile_commands(db):
     return entries
 
 
-def includes_header(source, header):
-    """True if `source` has an #include whose path is a suffix of `header`."""
+def include_dirs(entry):
+    """The -I, -iquote and -isystem directories of a compile_commands entry, absolute."""
+    args = entry.get("arguments") or shlex.split(entry["command"])
+    dirs = []
+    for i, a in enumerate(args):
+        for flag in INCLUDE_DIR_FLAGS:
+            if a == flag and i + 1 < len(args):
+                dirs.append(args[i + 1])
+            elif a.startswith(flag) and len(a) > len(flag):
+                dirs.append(a[len(flag):])
+            else:
+                continue
+            break
+    return [Path(entry["directory"], d) for d in dirs]
+
+
+def includes_header(source, header, entry):
+    """True if `source` has an #include that resolves to `header`, searched as the compiler does: the source's directory,
+    then the entry's include directories."""
     try:
         text = source.read_text(errors="replace")
     except OSError:
         return False
-    hdr = header.as_posix()
+    search = [source.parent, *include_dirs(entry)]
     for inc in INCLUDE_RE.findall(text):
-        if hdr.endswith("/" + inc.lstrip("./")) or Path(source.parent, inc).resolve() == header:
+        found = next((p for p in (d / inc for d in search) if p.is_file()), None)
+        if found is not None and found.resolve() == header:
             return True
     return False
 
@@ -200,16 +219,16 @@ def trailing_dir_match(a, b):
     return n
 
 
-def implementing_source(header, sources):
+def implementing_source(header, entries):
     """The source file that implements `header`: same stem, closest directory, and it includes the header. Falls back
     to any source file that includes it."""
-    same_stem = [s for s in sources if s.stem == header.stem]
+    same_stem = [s for s in entries if s.stem == header.stem]
     same_stem.sort(key=lambda s: (s.parent != header.parent, -trailing_dir_match(s, header), str(s)))
     for s in same_stem:
-        if includes_header(s, header):
+        if includes_header(s, header, entries[s]):
             return s
-    for s in sorted(sources):
-        if s.suffix in SOURCE_EXTS and includes_header(s, header):
+    for s in sorted(entries):
+        if s.suffix in SOURCE_EXTS and includes_header(s, header, entries[s]):
             return s
     return None
 
@@ -241,7 +260,7 @@ def run_iwyu(unit, log_path):
     args = iwyu_args(unit.entry, unit.source)
     extra = ["-Wno-unknown-warning-option"]
     for hdr in unit.check_also:
-        extra += ["-Xiwyu", f"--check_also=*/{Path(hdr).name}"]
+        extra += ["-Xiwyu", f"--check_also=*/{hdr}"]
     dropped = []
     for _ in range(MAX_RETRIES):
         cmd = ["include-what-you-use", *extra, *args, str(unit.source)]
@@ -319,7 +338,6 @@ def check_iwyu(repo, build, files, out_dir, jobs):
     if err:
         return f"failed: {err}", per_file
     entries = load_compile_commands(db)
-    sources = list(entries)
 
     units = {}
     for f in scoped:
@@ -330,7 +348,7 @@ def check_iwyu(repo, build, files, out_dir, jobs):
                 continue
             units.setdefault(path, Unit(path, entries[path])).report_on.append(f)
         else:
-            src = implementing_source(path, sources)
+            src = implementing_source(path, entries)
             if src is None:
                 per_file[f].status = "not checked: no source file in compile_commands.json includes it"
                 continue
