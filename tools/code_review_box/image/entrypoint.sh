@@ -31,13 +31,10 @@ seed_claude_config() {
     fix_owner "${HOME}/.claude"
     [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}${ANTHROPIC_API_KEY:-}" ]] ||
         log "warning: no CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY; claude will ask to log in"
-    # A login copied from the host by earlier images: its refresh token is shared with the host, and the box can read
-    # it.
-    rm -f "${HOME}/.claude/.credentials.json"
     # Box rules and permissions are user-level, so they apply in the workspace on top of ocudu's own project files.
-    # Installed on every start, so a new image replaces what an older one left in the persistent ~/.claude volume. The
-    # rules are assembled from CLAUDE.<part>.md files, named so that Claude does not load them when editing the box's
-    # own sources.
+    # ~/.claude lives and dies with the container, so a review starts from nothing an earlier one left. The rules are
+    # assembled from CLAUDE.<part>.md files, named so that Claude does not load them when editing the box's own
+    # sources.
     install -m 644 "${CONF_DIR}/CLAUDE.general.md" "${HOME}/.claude/CLAUDE.md"
     install -m 644 "${CONF_DIR}/settings.json" "${HOME}/.claude/settings.json"
     install -m 644 "${CONF_DIR}/headless-settings.json" "${HOME}/.claude/headless-settings.json"
@@ -130,8 +127,6 @@ bootstrap_repo() {
 link_skills() {
     local skills="${HOME}/.claude/skills" entry src linked=() missing=()
     mkdir -p "${skills}"
-    # ~/.claude is a persistent volume; drop the links an earlier start made.
-    find "${skills}" -maxdepth 1 -type l -delete
     while read -r entry; do
         entry=${entry%%#*}
         entry=${entry//[[:space:]]/}

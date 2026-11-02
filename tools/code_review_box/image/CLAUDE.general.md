@@ -104,6 +104,12 @@ A review posted on an MR, or written to be posted, is plain markdown in this lay
 
 <1 to 3 lines: what the change does.>
 
+### Since the last review
+
+<Each finding of the previous review, by its number there: fixed, still open (now N), or no longer applies, and why.>
+
+### Findings
+
 1. **<category>, <verdict>**: `<file>:<line>`. <What is wrong.> <Failure scenario.> <Fix, if there is one.>
 2. ...
 
@@ -113,7 +119,7 @@ A review posted on an MR, or written to be posted, is plain markdown in this lay
 
 ### Suggestions
 
-<N. Run `<CI job>`: <what it would catch, and which findings it checks, e.g. "checks 1">, continuing the numbering.>
+<N. Run `<exact CI job name>`: <what it would catch, which findings it checks ("checks 1")>, continuing the numbering.>
 
 Reviewed: <files, diff range, skill>.
 ```
@@ -123,13 +129,16 @@ Reviewed: <files, diff range, skill>.
   fit a comment.
 - No findings is a valid review: say so in one line instead of the list.
 - No paths of local files (results, patches, logs): the comment's readers cannot open them. Repo paths are fine.
-- Conventions and Suggestions are optional: leave out a section with nothing in it.
+- Since the last review, Conventions and Suggestions are optional: leave out a section with nothing in it. Since the
+  last review is there only when the task names a previous review to recheck.
 
 ### Suggestions
 
 Manual CI jobs that could confirm or rule out a finding, or that the diff calls for. Take the jobs from the CI config
 in the workspace (`.gitlab-ci.yml` and `.gitlab/ci/*.yml`, the jobs with `stage: extended`); name only jobs that exist
-there, exactly as named. Typical matches:
+there. Write each job's exact name in backticks, as the developer has to find it in the pipeline: "Run
+`smoke tsan cached`", never "the TSAN smoke job" or "the TSAN job (`cached`)". Typical matches, by what the job
+checks (look up the exact names):
 
 - A data race, a lock-order problem, or new state shared between executors: the TSAN smoke job.
 - Use after free, out-of-bounds access, a leak: the ASAN smoke job; `valgrind changed tests` for the tests the MR

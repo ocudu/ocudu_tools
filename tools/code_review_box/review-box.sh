@@ -195,19 +195,28 @@ cmd_review() {
     target=$(jq -r .target_branch <<<"${info}")
     title=$(jq -r .title <<<"${info}")
 
-    local name prompt report
-    name=$(box_name "mr-${iid}")
+    # One box, and one results directory, per MR: earlier reviews of this MR are in it. The project is in the name, as
+    # MR numbers are per project.
+    local name prompt report previous
+    name=$(box_name "${project}-mr-${iid}")
     # REVIEW_REF from .env would clash with the MR.
     export REVIEW_MR=${iid} REVIEW_BASE="origin/${target}" REVIEW_REF=""
-    prompt=$(sed -e "s|{MR_URL}|${url}|g" -e "s|{BASE}|${REVIEW_BASE}|g" -e "s|{IID}|${iid}|g" \
-        -e "s|{PROJECT}|${project}|g" "${prompt_file}")
     prepare_box "${name}"
-    report="${BOX_DIR}/results/${name}/$(date +%Y-%m-%d-%H%M)-report.md"
-    printf 'reviewing %s (base %s)\n' "${url}" "${REVIEW_BASE}" >&2
-    "${COMPOSE[@]}" run --rm -T --label "${USER_LABEL}" --name "${name}${CONTAINER_SUFFIX}" review-box \
-        claude -p "${prompt}" --settings /home/dev/.claude/headless-settings.json > "${report}" ||
-        die "review failed; partial output in ${report}"
-    [[ -s "${report}" ]] || die "empty report: ${report}"
+    # The newest report of a review that succeeded, relative to ~/results; failed ones are set aside as *.failed.md.
+    previous=$(cd "${BOX_DIR}/results/${name}" && ls -1t -- *-report.md 2>/dev/null | head -n 1 || true)
+    prompt=$(sed -e "s|{MR_URL}|${url}|g" -e "s|{BASE}|${REVIEW_BASE}|g" -e "s|{IID}|${iid}|g" \
+        -e "s|{PROJECT}|${project}|g" -e "s|{PREVIOUS_REPORT}|${previous:-none}|g" "${prompt_file}")
+    report="${BOX_DIR}/results/${name}/$(date +%Y-%m-%d-%H%M%S)-report.md"
+    printf 'reviewing %s (base %s)%s\n' "${url}" "${REVIEW_BASE}" "${previous:+, after ${previous}}" >&2
+    if ! "${COMPOSE[@]}" run --rm -T --label "${USER_LABEL}" --name "${name}${CONTAINER_SUFFIX}" review-box \
+        claude -p "${prompt}" --settings /home/dev/.claude/headless-settings.json > "${report}"; then
+        mv "${report}" "${report%.md}.failed.md"
+        die "review failed; output in ${report%.md}.failed.md"
+    fi
+    if [[ ! -s "${report}" ]]; then
+        mv "${report}" "${report%.md}.failed.md"
+        die "empty report: ${report%.md}.failed.md"
+    fi
     cat "${report}"
     printf '\nreport: %s\n' "${report}" >&2
 

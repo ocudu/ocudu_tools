@@ -42,9 +42,12 @@ in the README.
   session to the box. The token never refreshes, and revoking it does not log the user out elsewhere.
 - Nothing of the host's Claude config is mounted. `~/.claude.json` is written on every start: onboarding done, the
   workspace trusted.
-- The Claude volumes are per user (`review-box-claude-<uid>`), and containers carry the user's uid as a label and the
-  user's name in their name (`<box>.<user>`), so users sharing a Docker daemon never share Claude state or clash on box
-  names, and `ls`, `rm` and `prune` only touch the caller's. The image is shared: `prune` removes it only with
+- `~/.claude` is not kept: each box starts with only what the entrypoint writes, so nothing a review saw (session
+  transcripts, memory, a prompt injection in MR content) reaches the next one. What a later review should know is
+  passed explicitly, as the previous report (see "Unattended reviews"). The cost is no `claude --resume` across boxes.
+- The CLI volume is per user (`review-box-local-<uid>`), and containers carry the user's uid as a label and the user's
+  name in their name (`<box>.<user>`), so users sharing a Docker daemon never share it or clash on box names, and `ls`,
+  `rm` and `prune` only touch the caller's. The image is shared: `prune` removes it only with
   `--image`, and not while a box still runs on it.
 - The developer's checkout is never written to. The review edits `~/work/ocudu`, a repo that borrows the checkout's
   objects through git alternates (instant, no copy).
@@ -60,8 +63,13 @@ in the README.
 ## Unattended reviews
 
 - `review-box.sh review --mr <iid>` runs `claude -p` with a prompt from `prompts/`, so each kind of review is a
-  versioned prompt rather than a long command line. `{MR_URL}`, `{BASE}`, `{IID}` and `{PROJECT}` are filled in by the
-  launcher.
+  versioned prompt rather than a long command line. `{MR_URL}`, `{BASE}`, `{IID}`, `{PROJECT}` and `{PREVIOUS_REPORT}`
+  are filled in by the launcher.
+- One box name and results directory per MR, `<project>-mr-<iid>` (MR numbers are per project), so earlier reviews of
+  the MR are in `~/results`. The launcher names the newest report of a review that succeeded as `{PREVIOUS_REPORT}`;
+  failed runs are kept as `*.failed.md` and never picked. The review rechecks each earlier finding and says under
+  "Since the last review" whether it is fixed, still open or no longer applies, so findings do not silently change
+  between runs.
 - Permissions are an allow-list (`image/headless-settings.json`), passed with `--settings`: nobody can approve a tool,
   so anything not on the list is refused. The deny rules still apply on top. Skipping permissions is not used.
 - The workspace is the MR head, fetched from origin inside the box (`review-workspace init --mr`), so the developer's
@@ -71,9 +79,9 @@ in the README.
   MR comments name no result files.
 - The box is told no host paths. Compose uses `SRC_<REPO>` for the bind mounts but passes only `MOUNTED_<REPO>=1`, and
   the results directory is not passed at all.
-- Claude's final message is the report. The launcher saves it in `results/mr-<iid>/` and, with `--post`, posts it on
-  the MR from the host, as it is; a report without the title line gets one from the MR's title. The box keeps its
-  read-only GitLab token.
+- Claude's final message is the report. The launcher saves it in `results/<project>-mr-<iid>/` and, with `--post`,
+  posts it on the MR from the host, as it is; a report without the title line gets one from the MR's title. The box
+  keeps its read-only GitLab token.
 
 ## Scope of a review
 

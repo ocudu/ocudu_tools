@@ -32,11 +32,12 @@ report. `--post` posts it on the MR from the host; the box itself never writes t
 ```sh
 ./review-box.sh review --mr 1234                     # or the MR URL; other projects: REVIEW_MR_PROJECT
 ./review-box.sh review --mr 1234 --post              # also post the report as an MR note
-./review-box.sh review --mr 1234 --prompt my.md      # another prompt; {MR_URL}, {BASE}, {IID} and {PROJECT} are filled in
+./review-box.sh review --mr 1234 --prompt my.md      # another prompt; {MR_URL}, {BASE}, {IID}, {PROJECT}, {PREVIOUS_REPORT} are filled in
 ./review-box.sh review --mr 1234 --glab-comment --prompt inline.md   # Claude may post MR notes itself
 ```
 
-The report is also kept in `results/mr-<iid>/`. A review comment starts with `## AI review: <description>` and
+The report is also kept in `results/<project>-mr-<iid>/` (e.g. `results/ocudu-ocudu-mr-1234/`); the next review of the
+same MR reads it and rechecks its findings. A review comment starts with `## AI review: <description>` and
 lists its findings as a numbered list. Tools outside `image/headless-settings.json` are refused, not asked for.
 
 The name is usually the branch: `run feature/foo` works, and the box is called `feature-foo` (Docker allows no `/` in

@@ -77,16 +77,12 @@ services:
       # Shared with the host, so a target already built there is warm here.
       - "${HOME}/.cache/ccache:/home/dev/.cache/ccache"
       - "/etc/localtime:/etc/localtime:ro"
-      # Claude session state and the CLI (so an autoupdate outlives the container).
-      - "review-box-claude:/home/dev/.claude"
+      # The Claude CLI, so an autoupdate outlives the container. Claude's state (~/.claude) is not kept: each review
+      # starts from nothing an earlier one left.
       - "review-box-local:/home/dev/.local"
 
-# Per user, so boxes of different users on one Docker daemon never share Claude state.
+# Per user, so boxes of different users on one Docker daemon never share it.
 volumes:
-  review-box-claude:
-    name: "review-box-claude-${HOST_UID:-1000}"
-    labels:
-      io.srs.review-box.uid: "${HOST_UID:-1000}"
   review-box-local:
     name: "review-box-local-${HOST_UID:-1000}"
     labels:
