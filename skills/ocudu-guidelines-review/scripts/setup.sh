@@ -13,8 +13,8 @@
 #   path <dir>...  tracked C/C++ files under those paths
 #   all            every tracked C/C++ file
 #
-# Where things are, each overridable from the environment:
-#   OCUDU_REPO          the checkout to review and fix         default: the git repo of the current directory
+# The checkout to review and fix is the git repo of the current directory. Where the rest is, each overridable from the
+# environment:
 #   OCUDU_BUILD_DIR     its CMake build tree                   default: <repo>/build
 #   OCUDU_CODE_GUIDE    ocudu_docs' docs/dev_guide/code_guide  default: in an ocudu_docs checkout next to the repo
 #   REVIEW_RESULTS_DIR  where review directories are made     default: ~/.cache/ocudu-review
@@ -34,9 +34,7 @@ source "${here}/lib.sh"
 [[ $# -ge 1 ]] || set -- diff
 scope="$*"
 
-repo=${OCUDU_REPO:-$(git rev-parse --show-toplevel 2>/dev/null || true)}
-[[ -n ${repo} ]] || die "not in a git repo; run from the OCUDU checkout or set OCUDU_REPO"
-repo=$(cd "${repo}" && git rev-parse --show-toplevel) || die "${repo} is not a git repo"
+repo=$(git rev-parse --show-toplevel 2>/dev/null) || die "not in a git repo; run from the OCUDU checkout"
 cd "${repo}"
 
 build=${OCUDU_BUILD_DIR:-${repo}/build}

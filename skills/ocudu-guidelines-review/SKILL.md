@@ -32,7 +32,7 @@ scoped file and fixes every violation it finds. Every step that needs no judgeme
 d=$(bash "${CLAUDE_SKILL_DIR}/scripts/setup.sh" $ARGUMENTS)
 ```
 
-It finds the checkout (the current repo, or `OCUDU_REPO`), its build tree and the code guide, writes `scope.txt` and
+It finds the checkout (the current repo), its build tree and the code guide, writes `scope.txt` and
 `review.env` into a new results directory, records the tree as the review's baseline, and prints the directory: that is
 `$d` in every later step. Its notes (scope size, uncommitted changes) go to stderr. If it fails (no C/C++ files in
 scope, bad base, code guide not found), stop and tell the user its error.
