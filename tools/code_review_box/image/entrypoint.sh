@@ -24,22 +24,15 @@ fix_owner() {
     [[ -e "$1" && ! -O "$1" ]] && sudo chown "$(id -u):$(id -g)" "$1" || true
 }
 
-# Host Claude config is mounted read-only and copied in, so session state stays in the container's volume and the host
-# is never written to.
+# Claude authenticates with a token from the environment (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY); nothing of the
+# host's Claude config is mounted.
 seed_claude_config() {
     fix_owner "${HOME}/.claude"
-    local creds="${HOME}/.claude/.credentials.json"
-    # A token from the environment never refreshes. A copied login shares its refresh token with the host and the other
-    # boxes, and a refresh by one can invalidate the others; the newer copy wins so a host re-login reaches the box.
-    if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}${ANTHROPIC_API_KEY:-}" ]]; then
-        log "Claude credentials from the environment"
-    elif [[ -r /host-claude/.credentials.json && /host-claude/.credentials.json -nt "${creds}" ]]; then
-        install -m 600 -p /host-claude/.credentials.json "${creds}"
-        log "copied Claude credentials from host; set CLAUDE_CODE_OAUTH_TOKEN to stop sharing the host login"
-    fi
-    if [[ -r /host-claude.json && ! -e "${HOME}/.claude.json" ]]; then
-        install -m 600 /host-claude.json "${HOME}/.claude.json"
-    fi
+    [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}${ANTHROPIC_API_KEY:-}" ]] ||
+        log "warning: no CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY; claude will ask to log in"
+    # A login copied from the host by earlier images: its refresh token is shared with the host, and the box can read
+    # it.
+    rm -f "${HOME}/.claude/.credentials.json"
     # Box rules and permissions are user-level, so they apply in the workspace on top of ocudu's own project files.
     # Installed on every start, so a new image replaces what an older one left in the persistent ~/.claude volume. The
     # rules are assembled from CLAUDE.<part>.md files, named so that Claude does not load them when editing the box's
@@ -49,25 +42,24 @@ seed_claude_config() {
     install -m 644 "${CONF_DIR}/headless-settings.json" "${HOME}/.claude/headless-settings.json"
     [[ ${REVIEW_BOX_GLAB_COMMENT:-0} != 1 ]] || enable_glab_comment
 
-    # The workspace is a copy of the developer's own tree, so there is nothing for the user to vet.
-    local config="${HOME}/.claude.json" tmp
-    [[ -s "${config}" ]] || echo '{}' > "${config}"
-    tmp=$(mktemp)
-    jq --arg p "${WORKSPACE}" '.projects[$p].hasTrustDialogAccepted = true' \
-        "${config}" > "${tmp}" && install -m 600 "${tmp}" "${config}"
-    rm -f "${tmp}"
+    # ~/.claude.json is not in a volume, so each start writes it fresh: onboarding done, and the workspace trusted,
+    # since it is a copy of the developer's own tree. An API key is pre-approved by its last 20 characters, as Claude
+    # records it.
+    jq -n --arg p "${WORKSPACE}" --arg key "${ANTHROPIC_API_KEY:-}" '
+        {hasCompletedOnboarding: true, projects: {($p): {hasTrustDialogAccepted: true}}}
+        + (if $key == "" then {} else {customApiKeyResponses: {approved: [$key[-20:]], rejected: []}} end)' \
+        > "${HOME}/.claude.json"
+    chmod 600 "${HOME}/.claude.json"
 }
 
-# Lets Claude post MR notes and nothing else that writes: only the `glab mr note` deny rule is lifted, and a hook
-# rejects notes without the box's prefix. The token's scope was checked by review-box.sh.
+# Lets Claude post MR notes through review-post-note, which checks the prefix, and nothing else that writes: glab's own
+# note commands stay denied. The token's scope was checked by review-box.sh.
 enable_glab_comment() {
     local dir="${HOME}/.claude" tmp
     tmp=$(mktemp)
-    jq '.permissions.deny -= ["Bash(glab mr note*)"]
-        | .hooks.PreToolUse += [{"matcher": "Bash",
-                                 "hooks": [{"type": "command", "command": "/usr/local/bin/review-box-note-check"}]}]' \
+    jq '.permissions.deny -= ["Bash(review-post-note*)"]' \
         "${dir}/settings.json" > "${tmp}" && install -m 644 "${tmp}" "${dir}/settings.json"
-    jq '.permissions.allow += ["Bash(glab mr note *)"]' \
+    jq '.permissions.allow += ["Bash(review-post-note *)"]' \
         "${dir}/headless-settings.json" > "${tmp}" && install -m 644 "${tmp}" "${dir}/headless-settings.json"
     rm -f "${tmp}"
     cat "${CONF_DIR}/CLAUDE.glab-comment.md" >> "${dir}/CLAUDE.md"

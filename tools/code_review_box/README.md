@@ -10,7 +10,8 @@ themselves. Running it in CI is a separate issue.
 
 ```sh
 cp .env.example .env                                 # set SRC_OCUDU, SRC_OCUDU_DOCS
-                                                     # and CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)
+install -Dm600 /dev/null ~/.config/review-box/secrets.env   # then add tokens there, never in .env:
+                                                     # CLAUDE_CODE_OAUTH_TOKEN (claude setup-token), GITLAB_TOKEN
 ./review-box.sh run my-branch                        # builds the image the first time, opens a shell
 ./review-box.sh run --ref origin/feature-x mr-1234   # or review a given branch/commit
 
@@ -31,11 +32,12 @@ report. `--post` posts it on the MR from the host; the box itself never writes t
 ```sh
 ./review-box.sh review --mr 1234                     # or the MR URL; other projects: REVIEW_MR_PROJECT
 ./review-box.sh review --mr 1234 --post              # also post the report as an MR note
-./review-box.sh review --mr 1234 --prompt my.md      # another prompt; {MR_URL} and {BASE} are filled in
+./review-box.sh review --mr 1234 --prompt my.md      # another prompt; {MR_URL}, {BASE}, {IID} and {PROJECT} are filled in
 ./review-box.sh review --mr 1234 --glab-comment --prompt inline.md   # Claude may post MR notes itself
 ```
 
-The report is also kept in `results/mr-<iid>/`. Comments are prefixed with `ocudu code-review-box says:`. Tools outside `image/headless-settings.json` are refused, not asked for.
+The report is also kept in `results/mr-<iid>/`. A review comment starts with `## AI review: <description>` and
+lists its findings as a numbered list. Tools outside `image/headless-settings.json` are refused, not asked for.
 
 The name is usually the branch: `run feature/foo` works, and the box is called `feature-foo` (Docker allows no `/` in
 container names). `rm` accepts either spelling. Other commands: `review-box.sh ls`, `rm <name>`, `prune`, `build`.
@@ -49,13 +51,13 @@ container names). `rm` accepts either spelling. Other commands: `review-box.sh l
 | `docker-compose.yml` | Mounts and environment.                                                                                                                                                                                                                                                                                                                               |
 | `.env.example` | Template for `.env` (gitignored): repo paths, base branch.                                                                                                                                                                                                                                                                                            |
 | `image/Dockerfile` | The single image: toolchain, OCUDU build deps, clang-format/tidy, iwyu, reuse, Claude Code.                                                                                                                                                                                                                                                           |
-| `image/entrypoint.sh` | On start: copies Claude/git config from the host, mounts or clones repos, links skills.                                                                                                                                                                                                                                                               |
+| `image/entrypoint.sh` | On start: writes the Claude config, copies git config from the host, mounts or clones repos, links skills.                                                                                                                                                                                                                                                               |
 | `image/bin/review-workspace` | Creates the writable review copy and writes the patch.                                                                                                                                                                                                                                                                                                |
 | `image/bin/review-scope` | The file list for a review: `diff`, `path`, or `all`.                                                                                                                                                                                                                                                                                                 |
 | `image/bin/review-results` | A new output directory under `~/results`.                                                                                                                                                                                                                                                                                                             |
 | `image/bin/git-remote-push-disabled` | Refuses every git push from the box (see Permissions).                                                                                                                                                                                                                                                                                                |
 | `image/CLAUDE.glab-comment.md` | Appended to `~/.claude/CLAUDE.md` when GitLab comments are enabled. |
-| `image/bin/review-box-note-check` | Hook that refuses MR notes without the box's prefix (GitLab comments only). |
+| `image/bin/review-post-note` | The only way Claude posts an MR note: checks the prefix (GitLab comments only). |
 | `image/headless-settings.json` | Allow-list of the tools an unattended review may use. |
 | `prompts/` | Prompts of unattended reviews; `mr-review.md` is the default. |
 | `image/skills.txt` | Which skills are linked in.                                                                                                                                                                                                                                                                                                                           |
@@ -88,6 +90,10 @@ The box never pushes, and posts to GitLab only when started with `--glab-comment
 - **git push is disabled.** The entrypoint rewrites every push to a network remote (`url.push-disabled://.pushInsteadOf`)
   to `image/bin/git-remote-push-disabled`, which refuses it. Fetch and clone still work, and `--no-verify` does not
   skip it. It does not cover a remote with an explicit `pushurl`.
+- **Tokens stay out of the repo.** They live in `~/.config/review-box/secrets.env` (mode 600), which `review-box.sh`
+  parses and passes only to the compose call. `.env` is in ocudu_tools, which every box mounts, so `review-box.sh`
+  refuses to start when it sets a token. A box can still read the tokens it is given from its own environment: give it
+  only tokens you can afford to leak.
 - **The GitLab token is read-only.** `GITLAB_TOKEN` is the box's only GitLab credential by default; give it only the
   `read_api` scope. The deny rules below cannot cover every way to reach the API (curl, other `glab` commands), so the
   token's scope is what stops writes.
@@ -96,6 +102,6 @@ The box never pushes, and posts to GitLab only when started with `--glab-comment
   method or body. Reading MR metadata (`glab mr view`, `glab mr diff`, `glab api <GET endpoint>`) stays allowed. These
   rules apply to the commands Claude runs, not to commands scripts run for it.
 - **GitLab comments are opt-in.** `--glab-comment` on `run` or `review` hands the box `GITLAB_WRITE_TOKEN` instead of
-  `GITLAB_TOKEN`, after checking it has the `api` scope. Only the `glab mr note` deny rule is lifted; every other write
-  stays denied, and `git push` stays disabled. A hook refuses notes that do not start with `ocudu code-review-box says:`
-  or whose body is not inline (`-m`).
+  `GITLAB_TOKEN`, after checking it has the `api` scope. Claude may then run `review-post-note <iid> <project> <file>`,
+  which posts the file as a note only if its first line is the review title (`## AI review: ...`).
+  `glab mr note` and every other write stay denied, and `git push` stays disabled.

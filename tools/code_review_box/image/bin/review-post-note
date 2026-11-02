@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+# Post a file as a note on a GitLab MR. The only way the box posts to GitLab, and only when started with --glab-comment.
+#
+#   review-post-note <iid> <project> <file>
+#
+# The file's first line must be the review's title: "## AI review: <description>".
+
+set -euo pipefail
+
+MAX_BYTES=1000000
+
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+[[ $# -eq 3 ]] || die "usage: review-post-note <iid> <project> <file>"
+iid=$1 project=$2 file=$3
+[[ ${REVIEW_BOX_GLAB_COMMENT:-0} == 1 ]] ||
+    die "GitLab comments are not enabled in this box (review-box.sh --glab-comment)"
+[[ ${iid} =~ ^[0-9]+$ ]] || die "invalid MR ${iid}"
+[[ ${project} =~ ^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+$ ]] || die "invalid project ${project}"
+[[ -f ${file} && -r ${file} ]] || die "cannot read ${file}"
+title_re="^#{0,6}[[:space:]]*AI review:[[:space:]]*[^[:space:]]"
+[[ $(head -n 1 "${file}") =~ ${title_re} ]] ||
+    die "the first line of ${file} must be the title: ## AI review: <description>"
+[[ $(stat -c %s "${file}") -le ${MAX_BYTES} ]] || die "${file} is larger than ${MAX_BYTES} bytes"
+
+glab mr note "${iid}" -R "${project}" -m "$(cat "${file}")"

@@ -73,8 +73,6 @@ services:
       # This container's own output directory; review-box.sh creates it first so Docker does not create it root-owned.
       - "./results/${REVIEW_BOX_NAME:-review}:/home/dev/results"
       # Host config, read-only; the entrypoint copies what it needs.
-      - "${HOME}/.claude:/host-claude:ro"
-      - "${HOME}/.claude.json:/host-claude.json:ro"
       - "${HOME}/.gitconfig:/host-gitconfig:ro"
       - "${SSH_AUTH_SOCK:-/dev/null}:/ssh-agent.sock"
       # Shared with the host, so a target already built there is warm here.
@@ -84,6 +82,13 @@ services:
       - "review-box-claude:/home/dev/.claude"
       - "review-box-local:/home/dev/.local"
 
+# Per user, so boxes of different users on one Docker daemon never share Claude state.
 volumes:
   review-box-claude:
+    name: "review-box-claude-${HOST_UID:-1000}"
+    labels:
+      io.srs.review-box.uid: "${HOST_UID:-1000}"
   review-box-local:
+    name: "review-box-local-${HOST_UID:-1000}"
+    labels:
+      io.srs.review-box.uid: "${HOST_UID:-1000}"

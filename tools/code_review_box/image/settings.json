@@ -10,6 +10,8 @@
       "Bash(git config *pushinsteadof*)",
       "Bash(glab mr create*)",
       "Bash(glab mr note*)",
+      "Bash(glab mr comment*)",
+      "Bash(review-post-note*)",
       "Bash(glab mr approve*)",
       "Bash(glab mr revoke*)",
       "Bash(glab mr merge*)",

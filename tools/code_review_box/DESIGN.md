@@ -32,10 +32,18 @@ in the README.
   ocudu_tools' `skills/`, not in the box.
 - No file in the box's sources is named `CLAUDE.md`: Claude Code would load it while someone edits this repo. The rules
   are `CLAUDE.<part>.md` files, combined into `~/.claude/CLAUDE.md` only inside the container.
-- Credentials: a `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY` is preferred, since it
-  never refreshes. Without one, the host login is copied in, and replaced whenever the host's copy is newer; the host
-  and the boxes then share one refresh token.
-- The host's Claude config is mounted read-only and copied; the host is never written to.
+- Tokens live in `~/.config/review-box/secrets.env` (mode 600, parsed, never sourced), not in `.env`: `.env` is in
+  ocudu_tools, which every box mounts, so a token there would be readable by Claude in every box. The launcher refuses
+  a `.env` that sets one. Inside the box, a token is still readable from the environment; the defence is giving the box
+  only narrow tokens (a read-only GitLab token by default, a project access token for comments).
+- Credentials: a `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY` is required; the launcher
+  refuses to start without one. The host login is not copied: its refresh token would be shared with the host and
+  every box, which then log each other out, and copying it meant mounting `~/.claude`, which exposed every host
+  session to the box. The token never refreshes, and revoking it does not log the user out elsewhere.
+- Nothing of the host's Claude config is mounted. `~/.claude.json` is written on every start: onboarding done, the
+  workspace trusted.
+- The Claude volumes are per user (`review-box-claude-<uid>`), and containers carry the user's uid as a label, so users
+  sharing a Docker daemon never share Claude state, and `ls`, `rm` and `prune` only touch the caller's.
 
 ## Workspace
 
@@ -53,13 +61,15 @@ in the README.
 ## Unattended reviews
 
 - `review-box.sh review --mr <iid>` runs `claude -p` with a prompt from `prompts/`, so each kind of review is a
-  versioned prompt rather than a long command line. `{MR_URL}` and `{BASE}` are filled in by the launcher.
+  versioned prompt rather than a long command line. `{MR_URL}`, `{BASE}`, `{IID}` and `{PROJECT}` are filled in by the
+  launcher.
 - Permissions are an allow-list (`image/headless-settings.json`), passed with `--settings`: nobody can approve a tool,
   so anything not on the list is refused. The deny rules still apply on top. Skipping permissions is not used.
 - The workspace is the MR head, fetched from origin inside the box (`review-workspace init --mr`), so the developer's
   checkout needs no fetch and is never written to. The base is the MR's target branch.
 - Claude's final message is the report. The launcher saves it in `results/mr-<iid>/` and, with `--post`, posts it on
-  the MR from the host as an `ocudu code-review-box says:` quote. The box keeps its read-only GitLab token.
+  the MR from the host, as it is; a report without the title line gets one from the MR's title. The box keeps its
+  read-only GitLab token.
 
 ## Scope of a review
 
@@ -77,11 +87,16 @@ in the README.
 - Claude is also denied `git push`, changes to the push rewrite, and the glab commands that write. These give an early,
   clear refusal; they are not the guarantee.
 - GitLab comments are opt-in per box (`--glab-comment`) and limited to MR notes. The write token is its own variable,
-  `GITLAB_WRITE_TOKEN`, so the default stays read-only; the launcher checks its `api` scope before starting. The
-  entrypoint lifts only the `glab mr note` deny rule and appends the write rules to `~/.claude/CLAUDE.md`.
-- Every GitLab comment from the box starts with `ocudu code-review-box says:`. Host posts (`--post`) add it themselves;
-  notes Claude posts are checked by a PreToolUse hook, which also requires an inline `-m` body so the prefix can be
-  checked.
+  `GITLAB_WRITE_TOKEN`, so the default stays read-only; the launcher checks its `api` scope before starting.
+- Claude posts only through `review-post-note <iid> <project> <file>`, which refuses unless the box was started with
+  `--glab-comment` and the file's first line is the prefix. The entrypoint lifts only its deny rule; `glab mr note` and
+  `glab mr comment` stay denied in every mode. A command with a file body beats a hook on `glab mr note`: Claude Code
+  refuses `-m "$(cat <file>)"` before any hook runs, and an inline body in a shell command is fragile.
+- A review comment starts with the title line `## AI review: <description>`, which marks it as AI-written;
+  `review-post-note` refuses a file without it. No prefix, and no MR number: the comment is already on the MR.
+- Findings are a numbered list, most severe first, so comments can refer to them by number. No tables: wide tables do
+  not fit a GitLab comment. The layout is in the box's `CLAUDE.general.md` ("MR comments"), so every prompt and
+  interactive session uses the same one.
 - Claude runs in its normal permission mode; relaxing it is a team decision. The read-only mounts keep the checkout
   safe either way.
 

@@ -17,7 +17,7 @@ mounted is the developer's real data.
 - Nothing leaves the container except files in `~/results`: `git push` is disabled and the `glab` commands that write
   are denied. Reading MR metadata with `glab` is fine. A box started with GitLab comments enabled has a
   "GitLab comments" section below; without it, there are none.
-- Text meant for a GitLab comment starts with the line `ocudu code-review-box says:`.
+- Text meant for a GitLab MR comment follows "MR comments" below.
 
 ## Layout
 
@@ -91,6 +91,28 @@ Rules for the patch:
 
 End every review by giving the developer the host paths of `report.md` and `review.patch` (`review-workspace patch`
 prints the host path).
+
+## MR comments
+
+A review posted on an MR, or written to be posted, is plain markdown in this layout:
+
+```markdown
+## AI review: <what the MR does, in a few words>
+
+<1 to 3 lines: what the change does.>
+
+1. **<category>, <verdict>**: `<file>:<line>`. <What is wrong.> <Failure scenario.> <Fix, if there is one.>
+2. ...
+
+<Conventions, continuing the same numbering: N. `<file>:<line>`: <issue>.>
+
+Reviewed: <files, diff range, skill>.
+```
+
+- The title line is always first; `review-post-note` refuses a file without it.
+- Findings are a numbered list, most severe first, so comments can refer to them by number. No tables: they do not
+  fit a comment.
+- No findings is a valid review: say so in one line instead of the list.
 
 ## Building
 
