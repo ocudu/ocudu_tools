@@ -78,19 +78,33 @@ mapfile -t formatted < <(diff <(printf '%s\n' "${before}") <(sha1sum -- "${edite
 
 # --- build -----------------------------------------------------------------------------------------------------------
 
-# Translation units: the edited sources, and every source that includes an edited header (by file name, so it may
-# build a few more than needed, never fewer).
+# Translation units: the edited sources, and every source that includes an edited header, directly or through other
+# headers (by file name, so it may build a few more than needed, never fewer).
 tus=()
+declare -A seen=()
+frontier=()
 for f in "${edited[@]}"; do
     if [[ ${f} =~ ${SRC_RE} ]]; then
         tus+=("${REPO}/${f}")
         continue
     fi
     name=$(basename "${f}")
-    while read -r tu; do
-        [[ -n ${tu} ]] && tus+=("${REPO}/${tu}")
-    done < <(git grep --untracked -lE "#[[:space:]]*include[[:space:]]*[<\"]([^>\"]*/)?${name//./\\.}[>\"]" \
-        -- lib apps tests include | grep -E "${SRC_RE}" || true)
+    [[ -n ${seen[${name}]:-} ]] || { seen[${name}]=1; frontier+=("${name}"); }
+done
+# Each round finds the files including a header of the last round; the headers among them make the next round.
+while [[ ${#frontier[@]} -gt 0 ]]; do
+    names=$(printf '%s\n' "${frontier[@]}" | sed 's/[][\.*^$+?(){}|/]/\\&/g' | paste -sd'|')
+    frontier=()
+    while read -r f; do
+        [[ -n ${f} ]] || continue
+        if [[ ${f} =~ ${SRC_RE} ]]; then
+            tus+=("${REPO}/${f}")
+            continue
+        fi
+        name=$(basename "${f}")
+        [[ -n ${seen[${name}]:-} ]] || { seen[${name}]=1; frontier+=("${name}"); }
+    done < <(git grep --untracked -lE "#[[:space:]]*include[[:space:]]*[<\"]([^>\"]*/)?(${names})[>\"]" \
+        -- lib apps tests include | grep -E "${CPP_RE}" || true)
 done
 
 # Each object's CMake target is in its output path: <dir>/CMakeFiles/<target>.dir/<source>.o.
