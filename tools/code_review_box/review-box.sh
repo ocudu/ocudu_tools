@@ -241,7 +241,8 @@ cmd_rm() {
     for name in "$@"; do
         name=$(box_name "${name}")
         if box_names -a | grep -qxF "${name}"; then
-            docker rm -f "${name}${CONTAINER_SUFFIX}" >/dev/null && printf 'removed box %s\n' "${name}"
+            # -v: the anonymous volumes of cloned repos go with the box, as with `run --rm`.
+            docker rm -f -v "${name}${CONTAINER_SUFFIX}" >/dev/null && printf 'removed box %s\n' "${name}"
         else
             printf 'no box %s\n' "${name}" >&2
         fi
@@ -254,7 +255,7 @@ cmd_prune() {
         read -r -p "Remove your review-box containers and volumes, and the image (results are kept)? [y/N] " ans
         [[ ${ans} == [yY]* ]] || exit 0
     fi
-    docker ps -aq --filter "label=${USER_LABEL}" | xargs -r docker rm -f >/dev/null
+    docker ps -aq --filter "label=${USER_LABEL}" | xargs -r docker rm -f -v >/dev/null
     docker images -q --filter "label=${LABEL}" | sort -u | xargs -r docker rmi -f >/dev/null
     docker volume ls -q --filter "label=${USER_LABEL}" | xargs -r docker volume rm >/dev/null
     printf 'pruned\n'
