@@ -14,6 +14,8 @@ in the README.
 - One image: the OCUDU build toolchain (for `compile_commands.json`), the formatters and checkers CI runs, and
   include-what-you-use.
 - Repos are not baked in. Each is bind-mounted read-only when `SRC_<REPO>` is set, else cloned on start.
+- ocudu_tools is mounted by default from the checkout that holds the box, since the box's skills live there. Cloning
+  it is the exception: `SRC_OCUDU_TOOLS=` (empty) in `.env`.
 - Cloned ocudu is a partial clone (`--filter=blob:none`): history for diffs against a base, blobs fetched on demand.
   The reference repos are shallow clones.
 - The container user has the host uid/gid, so bind mounts and results are owned by the developer.

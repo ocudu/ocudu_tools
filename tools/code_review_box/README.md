@@ -9,7 +9,7 @@ themselves. Running it in CI is a separate issue.
 ## Quick start
 
 ```sh
-cp .env.example .env                                 # set SRC_OCUDU, SRC_OCUDU_DOCS, SRC_OCUDU_TOOLS
+cp .env.example .env                                 # set SRC_OCUDU, SRC_OCUDU_DOCS
                                                      # and CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)
 ./review-box.sh run my-branch                        # builds the image the first time, opens a shell
 ./review-box.sh run --ref origin/feature-x mr-1234   # or review a given branch/commit

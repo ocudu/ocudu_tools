@@ -26,6 +26,13 @@ usage() { sed -n '8,15s/^# \{0,1\}//p' "$0" >&2; exit 1; }
 
 export HOST_UID="$(id -u)" HOST_GID="$(id -g)"
 
+# The skills the box runs live in the ocudu_tools checkout that holds this script, so it is mounted unless the
+# environment or .env says otherwise (empty means clone). The shell environment overrides .env for compose, so this is
+# only set when neither has it.
+if [[ ! -v SRC_OCUDU_TOOLS ]] && ! grep -qE '^[[:space:]]*SRC_OCUDU_TOOLS=' "${BOX_DIR}/.env" 2>/dev/null; then
+    export SRC_OCUDU_TOOLS="$(cd "${BOX_DIR}/../.." && pwd)"
+fi
+
 # A box is usually named after a branch, but the name becomes the container name, which
 # Docker restricts to [a-zA-Z0-9][a-zA-Z0-9_.-]*: feature/foo becomes feature-foo.
 box_name() {
