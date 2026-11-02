@@ -88,7 +88,7 @@ tree=$(GIT_INDEX_FILE=${idx} git write-tree)
 baseline=$(GIT_AUTHOR_NAME=ocudu-review GIT_AUTHOR_EMAIL=ocudu-review@localhost \
     GIT_COMMITTER_NAME=ocudu-review GIT_COMMITTER_EMAIL=ocudu-review@localhost \
     git commit-tree "${tree}" -p HEAD -m "ocudu-guidelines-review baseline: ${name}")
-# A ref keeps the baseline from being garbage-collected while the review is open.
+# A ref keeps the baseline from being garbage-collected while the review is open; patch.sh deletes it.
 git update-ref "refs/review/${name}" "${baseline}"
 
 mkdir "${d}"

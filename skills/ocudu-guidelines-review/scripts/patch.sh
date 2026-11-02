@@ -33,6 +33,9 @@ else
     printf '\npatch:  %s\n' "${d}/review.patch"
 fi
 printf 'report: %s\n' "${d}/report.md"
+# The review is done; without the ref, gc drops the baseline and the untracked files it snapshotted. BASELINE still
+# resolves until then, so running this again soon after works.
+git update-ref -d "refs/review/${d##*/}" 2>/dev/null || true
 
 if [[ -n ${REVIEW_RESULTS_HOST_DIR:-} && -n ${REVIEW_RESULTS_DIR:-} && ${d} == "${REVIEW_RESULTS_DIR%/}"/* ]]; then
     printf 'outside: %s\n' "${REVIEW_RESULTS_HOST_DIR%/}${d#"${REVIEW_RESULTS_DIR%/}"}"
