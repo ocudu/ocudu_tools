@@ -70,7 +70,11 @@ The box never pushes or posts to GitLab:
 - **git push is disabled.** The entrypoint rewrites every push to a network remote (`url.push-disabled://.pushInsteadOf`)
   to `image/bin/git-remote-push-disabled`, which refuses it. Fetch and clone still work, and `--no-verify` does not
   skip it. It does not cover a remote with an explicit `pushurl`.
-- **Claude is denied the write commands.** `image/settings.json` (installed as `~/.claude/settings.json`) denies `git push`, changing the push
-  rewrite, the `glab mr` / `glab issue` subcommands that write, and `glab api` with a method or body. Reading MR
+- **The GitLab token is read-only.** `GITLAB_TOKEN` is the box's only GitLab credential; give it only the `read_api`
+  scope. The deny rules below cannot cover every way to reach the API (curl, other `glab` commands), so the token's
+  scope is what stops writes.
+- **Claude is denied the write commands.** `image/settings.json` (installed as `~/.claude/settings.json`) denies
+  `git push`, changing the push rewrite, the `glab mr` / `glab issue` subcommands that write, and `glab api` with a
+  method or body. Reading MR
   metadata (`glab mr view`, `glab mr diff`, `glab api <GET endpoint>`) stays allowed. These rules apply to the commands
   Claude runs, not to commands scripts run for it.
