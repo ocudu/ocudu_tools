@@ -79,6 +79,14 @@ cmd_init() {
     if [[ -n "${origin}" ]]; then
         git -C "${WS}" remote add origin "${origin}"
     fi
+    # A partial clone's alternates lack blobs never fetched; without the promisor config git cannot fetch them on demand.
+    if [[ -n "${origin}" && $(git -C "${SRC}" config --bool remote.origin.promisor || true) == true ]]; then
+        git -C "${WS}" config core.repositoryformatversion 1
+        git -C "${WS}" config extensions.partialClone origin
+        git -C "${WS}" config remote.origin.promisor true
+        git -C "${WS}" config remote.origin.partialclonefilter \
+            "$(git -C "${SRC}" config remote.origin.partialclonefilter)"
+    fi
 
     git -C "${WS}" checkout -q -b review "${sha}"
     [[ -n "${ref}" ]] || carry_local_changes
