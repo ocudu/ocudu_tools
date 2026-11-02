@@ -41,6 +41,7 @@ SOURCE_EXTS = {".c", ".cc", ".cpp", ".cxx"}
 
 # The expression of .gitlab/ci/static/hex2lowercase.sh: sed 's/0x[0-9a-fA-F]*/\L&/g'.
 HEX_RE = re.compile(r"0x[0-9a-fA-F]*")
+HEX_SKIP_DIRS = {"bundled", "external"}
 
 # GCC-only flags clang rejects. Anything else clang rejects is found from its "unknown argument" errors and dropped on
 # a retry, so this list only saves the retries.
@@ -93,7 +94,8 @@ def check_hex(repo, files, out_dir):
     log = []
     for rel in files:
         path = repo / rel
-        if not path.is_file():
+        # Third-party code, which CI's hex2lowercase.sh leaves alone too.
+        if not path.is_file() or HEX_SKIP_DIRS & set(Path(rel).parts[:-1]):
             continue
         # newline="" keeps CRLF files byte-identical; surrogateescape keeps non-UTF-8 bytes.
         with open(path, encoding="utf-8", errors="surrogateescape", newline="") as f:
