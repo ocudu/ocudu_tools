@@ -35,6 +35,8 @@ source "${here}/lib.sh"
 scope="$*"
 
 repo=$(git rev-parse --show-toplevel 2>/dev/null) || die "not in a git repo; run from the OCUDU checkout"
+# path arguments are relative to where the user ran the skill.
+start=${PWD}
 cd "${repo}"
 
 build=${OCUDU_BUILD_DIR:-${repo}/build}
@@ -60,7 +62,7 @@ case ${mode} in
         ;;
     path)
         [[ $# -ge 1 ]] || die "usage: setup.sh path <dir>..."
-        files=$(git ls-files -- "$@")
+        files=$(git -C "${start}" ls-files --full-name -- "$@")
         ;;
     all)
         files=$(git ls-files)
