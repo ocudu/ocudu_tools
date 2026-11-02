@@ -24,7 +24,7 @@
     },
     {
       "name": "ocudu-review-mechanical",
-      "description": "Apply the OCUDU code guide to a diff, a folder or the whole tree — hex literals, include hygiene (iwyu) and every guide rule — fixing what it finds and writing a report plus a patch.",
+      "description": "Review OCUDU code against the OCUDU code guide, so changes follow the project's conventions; writes a report and a patch with the fixes.",
       "source": "./skills/ocudu-review-mechanical"
     }
   ]
