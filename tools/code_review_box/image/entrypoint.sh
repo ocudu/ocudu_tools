@@ -24,13 +24,18 @@ fix_owner() {
     [[ -e "$1" && ! -O "$1" ]] && sudo chown "$(id -u):$(id -g)" "$1" || true
 }
 
-# Host Claude config is mounted read-only and copied in, so token refreshes and session state stay in the container's
-# volume and the host is never written to.
+# Host Claude config is mounted read-only and copied in, so session state stays in the container's volume and the host
+# is never written to.
 seed_claude_config() {
     fix_owner "${HOME}/.claude"
-    if [[ -r /host-claude/.credentials.json && ! -e "${HOME}/.claude/.credentials.json" ]]; then
-        install -m 600 /host-claude/.credentials.json "${HOME}/.claude/.credentials.json"
-        log "seeded Claude credentials from host"
+    local creds="${HOME}/.claude/.credentials.json"
+    # A token from the environment never refreshes. A copied login shares its refresh token with the host and the other
+    # boxes, and a refresh by one can invalidate the others; the newer copy wins so a host re-login reaches the box.
+    if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}${ANTHROPIC_API_KEY:-}" ]]; then
+        log "Claude credentials from the environment"
+    elif [[ -r /host-claude/.credentials.json && /host-claude/.credentials.json -nt "${creds}" ]]; then
+        install -m 600 -p /host-claude/.credentials.json "${creds}"
+        log "copied Claude credentials from host; set CLAUDE_CODE_OAUTH_TOKEN to stop sharing the host login"
     fi
     if [[ -r /host-claude.json && ! -e "${HOME}/.claude.json" ]]; then
         install -m 600 /host-claude.json "${HOME}/.claude.json"
