@@ -297,6 +297,35 @@ class ResolveDiffTest(unittest.TestCase):
         self.assertIn(f"origin is {remote.name} ", result.stderr)
         self.assertIn("but the MR is in ocudu/ocudu", result.stderr)
 
+    def test_merge_request_review_prunes_old_reviews(self):
+        url, _ = self.make_mr(iid=7)
+        state = Path(self.root) / ".git" / "ocudu-code-review"
+        state.mkdir(parents=True)
+        head = git(self.root, "rev-parse", "HEAD").strip()
+        # A ref from before stamps, one of a recent review, and one whose stamp is two days old.
+        for iid in (1, 2, 3):
+            git(self.root, "update-ref", f"refs/ocudu-code-review/mr-{iid}", head)
+        (state / "mr-2.stamp").touch()
+        old = state / "mr-3.stamp"
+        old.touch()
+        two_days_ago = old.stat().st_mtime - 2 * 86400
+        os.utime(old, (two_days_ago, two_days_ago))
+        (state / "mr-3-comments.md").write_text("old digest\n")
+        os.utime(state / "mr-3-comments.md", (two_days_ago, two_days_ago))
+
+        env = self.make_glab('{"target_branch":"dev"}')
+        result = subprocess.run(
+            ["bash", str(SCRIPT), url], cwd=self.root, env=env,
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        refs = git(self.root, "for-each-ref", "--format=%(refname)", "refs/ocudu-code-review/").split()
+        self.assertEqual(sorted(refs), ["refs/ocudu-code-review/mr-2", "refs/ocudu-code-review/mr-7"])
+        self.assertFalse((state / "mr-3-comments.md").exists())
+        self.assertTrue((state / "mr-7.stamp").exists())
+        # glab answered, so its empty error output is not kept.
+        self.assertFalse((state / "mr-7-comments.err").exists())
+
     def test_merge_request_url_resolves_to_its_head(self):
         url, mr_head = self.make_mr(iid=7)
         out = self.resolve(url, "--base=origin/dev")

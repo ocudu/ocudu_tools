@@ -139,18 +139,32 @@ remote_project() {
     printf '%s' "$1" | sed -E 's#^[a-z+]+://[^/]+/##; s#^[^/:]+@[^:]+:##; s#\.git$##; s#/$##'
 }
 
+# Drops the MR refs and thread digests of reviews older than a day, so they do not pile up in the checkout. A day,
+# not all of them: a review of another MR may be running in the same checkout. The stamp file of a review is what
+# dates its ref; a ref without one is from before stamps and goes too.
+prune_old_reviews() {
+    local ref iid
+    mkdir -p "$state_dir"
+    find "$state_dir" -maxdepth 1 -type f -mmin +1440 -delete
+    git for-each-ref --format='%(refname)' refs/ocudu-code-review/ | while read -r ref; do
+        iid=${ref##*/mr-}
+        [ -e "${state_dir}/mr-${iid}.stamp" ] || git update-ref -d "$ref"
+    done
+}
+
 # Digests the MR's existing review threads. Sets `comments` to the count and
 # prints their COMMENT= lines, so a review can avoid repeating them.
 read_mr_comments() {
     local out err lines
-    out="$(git rev-parse --absolute-git-dir)/ocudu-code-review/mr-${2}-comments.md"
+    out="${state_dir}/mr-${2}-comments.md"
     err="${out%.md}.err"
-    mkdir -p "$(dirname "$out")"
+    mkdir -p "$state_dir"
     if ! lines=$("${script_dir}/mr_comments.py" --project "$1" --iid "$2" --out "$out" 2>"$err"); then
         comments_error=$(head -n 1 "$err")
         comments_error="${comments_error#mr_comments: }"
         return 1
     fi
+    [ -s "$err" ] || rm -f "$err"
     [ -n "$lines" ] || return 0
     printf '%s\n' "$lines"
     comments=$(printf '%s\n' "$lines" | grep -c '^COMMENT=' || true)
@@ -167,6 +181,9 @@ mr_target_branch() {
         grep -oE '"target_branch"[[:space:]]*:[[:space:]]*"[^"]+"' |
         head -n 1 | sed -E 's/.*"([^"]+)"$/\1/'
 }
+
+# Per-checkout scratch of MR reviews: thread digests and the stamps that date the MR refs.
+state_dir="$(git rev-parse --absolute-git-dir)/ocudu-code-review"
 
 # Classify the target first, so a malformed one is reported before anything
 # is fetched.
@@ -231,6 +248,8 @@ case "$kind" in
         # GitLab exposes every MR head under refs/merge-requests/<iid>/head,
         # so no API token is needed.
         tip="refs/ocudu-code-review/mr-${mr_iid}"
+        prune_old_reviews
+        touch "${state_dir}/mr-${mr_iid}.stamp"
         if ! git fetch --quiet origin "refs/merge-requests/${mr_iid}/head:${tip}"; then
             want=$(mr_project "$target")
             want="${want//%2F//}"
