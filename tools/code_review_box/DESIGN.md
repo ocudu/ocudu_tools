@@ -23,12 +23,15 @@ in the README.
 
 ## Claude configuration
 
-- The box's rules (`image/CLAUDE.md`) and permissions (`image/settings.json`) are user-level config, installed into
-  `~/.claude/` on every start, so a new image replaces what an older one left in the persistent volume.
+- The box's rules (`image/CLAUDE.general.md`, plus `image/CLAUDE.glab-comment.md` when comments are enabled) and
+  permissions (`image/settings.json`) are user-level config, assembled into `~/.claude/` on every start, so a new image
+  replaces what an older one left in the persistent volume.
 - Claude starts in the workspace, `~/work/ocudu`, so ocudu's own project instructions load on top of the box's rules.
   The box is not a project of its own.
 - Skills are linked into `~/.claude/skills` from the repos, as listed in `image/skills.txt`. Review skills live in
   ocudu_tools' `skills/`, not in the box.
+- No file in the box's sources is named `CLAUDE.md`: Claude Code would load it while someone edits this repo. The rules
+  are `CLAUDE.<part>.md` files, combined into `~/.claude/CLAUDE.md` only inside the container.
 - Credentials: a `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY` is preferred, since it
   never refreshes. Without one, the host login is copied in, and replaced whenever the host's copy is newer; the host
   and the boxes then share one refresh token.

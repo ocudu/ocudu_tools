@@ -80,7 +80,7 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/review-* /usr/local/bin/git-remote-push-disabled /usr/local/bin/entrypoint.sh
 
 RUN mkdir -p /opt/review-box
-COPY skills.txt CLAUDE.md CLAUDE.glab-comment.md settings.json headless-settings.json /opt/review-box/
+COPY skills.txt CLAUDE.general.md CLAUDE.glab-comment.md settings.json headless-settings.json /opt/review-box/
 
 USER ${USERNAME}
 ENV HOME=/home/${USERNAME}

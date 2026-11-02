@@ -41,8 +41,10 @@ seed_claude_config() {
         install -m 600 /host-claude.json "${HOME}/.claude.json"
     fi
     # Box rules and permissions are user-level, so they apply in the workspace on top of ocudu's own project files.
-    # Installed on every start, so a new image replaces what an older one left in the persistent ~/.claude volume.
-    install -m 644 "${CONF_DIR}/CLAUDE.md" "${HOME}/.claude/CLAUDE.md"
+    # Installed on every start, so a new image replaces what an older one left in the persistent ~/.claude volume. The
+    # rules are assembled from CLAUDE.<part>.md files, named so that Claude does not load them when editing the box's
+    # own sources.
+    install -m 644 "${CONF_DIR}/CLAUDE.general.md" "${HOME}/.claude/CLAUDE.md"
     install -m 644 "${CONF_DIR}/settings.json" "${HOME}/.claude/settings.json"
     install -m 644 "${CONF_DIR}/headless-settings.json" "${HOME}/.claude/headless-settings.json"
     [[ ${REVIEW_BOX_GLAB_COMMENT:-0} != 1 ]] || enable_glab_comment
