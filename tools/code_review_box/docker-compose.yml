@@ -27,7 +27,7 @@ services:
     stdin_open: true
     tty: true
     hostname: "${REVIEW_BOX_NAME:-review}"
-    working_dir: /home/dev/review
+    working_dir: /home/dev/work
     environment:
       TERM: xterm-256color
       SSH_AUTH_SOCK: /ssh-agent.sock
@@ -66,8 +66,6 @@ services:
       - *vol-ocudu-docs
       - *vol-3gpp-md
       - *vol-ocudu-tools
-      # The project the session starts in.
-      - "./project:/home/dev/review:ro"
       # This container's own output directory; review-box.sh creates it first so Docker does not create it root-owned.
       - "./results/${REVIEW_BOX_NAME:-review}:/home/dev/results"
       # Host config, read-only; the entrypoint copies what it needs.

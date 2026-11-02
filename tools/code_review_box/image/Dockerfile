@@ -80,7 +80,7 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/review-* /usr/local/bin/git-remote-push-disabled /usr/local/bin/entrypoint.sh
 
 RUN mkdir -p /opt/review-box
-COPY skills.txt /opt/review-box/
+COPY skills.txt CLAUDE.md settings.json /opt/review-box/
 
 USER ${USERNAME}
 ENV HOME=/home/${USERNAME}
@@ -90,10 +90,9 @@ ENV PATH="/usr/lib/ccache:${PATH}:${HOME}/.local/bin"
 # Mount points, created as this user so volumes and bind mounts land with the right owner.
 #   repos/    ocudu (read-only), ocudu_docs, 3gpp_md, ocudu_tools
 #   box/      this box's own directory (skills), read-only
-#   review/   the project Claude starts in
 #   results/  this container's reports and patches, on the host
-#   work/     the writable review workspace and build tree, inside the container only
-RUN mkdir -p ${HOME}/repos ${HOME}/review ${HOME}/results ${HOME}/work \
+#   work/     the writable review workspace (where Claude starts) and build tree, inside the container only
+RUN mkdir -p ${HOME}/repos ${HOME}/results ${HOME}/work \
         ${HOME}/.claude ${HOME}/.cache/ccache
 
 # Native install, as this user, so the autoupdater can replace it without root.
@@ -101,6 +100,6 @@ RUN curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}" \
     && rm -rf ${HOME}/.claude/* ${HOME}/.claude.json \
     && test -x ${HOME}/.local/bin/claude
 
-WORKDIR ${HOME}/review
+WORKDIR ${HOME}/work
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash", "-l"]

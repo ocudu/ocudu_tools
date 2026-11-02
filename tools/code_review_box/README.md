@@ -41,8 +41,8 @@ container names). `rm` accepts either spelling. Other commands: `review-box.sh l
 | `image/bin/review-results` | A new output directory under `~/results`.                                                                                                                                                                                                                                                                                                             |
 | `image/bin/git-remote-push-disabled` | Refuses every git push from the box (see Permissions).                                                                                                                                                                                                                                                                                                |
 | `image/skills.txt` | Which skills are linked in.                                                                                                                                                                                                                                                                                                                           |
-| `project/CLAUDE.md` | The review project, and the one place for paths, rules, workflow, scope and output contract. Claude starts here.                                                                                                                                                                                                                                      |
-| `project/.claude/settings.json` | Denies Claude the commands that push or post to GitLab (see Permissions).                                                                                                                                                                                                                                                                              |
+| `image/CLAUDE.md` | Installed as `~/.claude/CLAUDE.md`: the one place for paths, rules, workflow, scope and output contract. Claude starts in `~/work/ocudu`, so ocudu's own project instructions load too. |
+| `image/settings.json` | Installed as `~/.claude/settings.json`: denies Claude the commands that push or post to GitLab (see Permissions). |
 | `skills/` | `ocudu-review-mechanical` lives in ocudu_tools' `skills/` and is linked in from there (`image/skills.txt`); planned: `ocudu-review-expert` (search for correctness, 3GPP issues, life cycle issues, design smells and performance issues), `ocudu-review-concurrency` (search for concurrency issues), `ocudu-review-testing` (search for testing completion and simplicity). |
 | `results/` | Output, one directory per container. Gitignored.                                                                                                                                                                                                                                                                                                      |
 
@@ -70,7 +70,7 @@ The box never pushes or posts to GitLab:
 - **git push is disabled.** The entrypoint rewrites every push to a network remote (`url.push-disabled://.pushInsteadOf`)
   to `image/bin/git-remote-push-disabled`, which refuses it. Fetch and clone still work, and `--no-verify` does not
   skip it. It does not cover a remote with an explicit `pushurl`.
-- **Claude is denied the write commands.** `project/.claude/settings.json` denies `git push`, changing the push
+- **Claude is denied the write commands.** `image/settings.json` (installed as `~/.claude/settings.json`) denies `git push`, changing the push
   rewrite, the `glab mr` / `glab issue` subcommands that write, and `glab api` with a method or body. Reading MR
   metadata (`glab mr view`, `glab mr diff`, `glab api <GET endpoint>`) stays allowed. These rules apply to the commands
   Claude runs, not to commands scripts run for it.

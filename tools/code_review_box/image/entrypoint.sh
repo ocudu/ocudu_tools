@@ -8,7 +8,7 @@
 set -euo pipefail
 
 REPOS_DIR="${HOME}/repos"
-PROJECT_DIR="${HOME}/review"
+WORKSPACE="${HOME}/work/ocudu"
 CONF_DIR=/opt/review-box
 MANIFEST="${HOME}/box.yml"
 # Repos the box knows about. Each is mounted when SRC_<NAME> is set, else cloned from CLONE_<NAME> (at REF_<NAME>) into
@@ -35,15 +35,16 @@ seed_claude_config() {
     if [[ -r /host-claude.json && ! -e "${HOME}/.claude.json" ]]; then
         install -m 600 /host-claude.json "${HOME}/.claude.json"
     fi
-    # Everything Claude needs is in the project's CLAUDE.md; drop the user memory that earlier images left in the
-    # persistent ~/.claude volume.
-    rm -f "${HOME}/.claude/CLAUDE.md"
+    # Box rules and permissions are user-level, so they apply in the workspace on top of ocudu's own project files.
+    # Installed on every start, so a new image replaces what an older one left in the persistent ~/.claude volume.
+    install -m 644 "${CONF_DIR}/CLAUDE.md" "${HOME}/.claude/CLAUDE.md"
+    install -m 644 "${CONF_DIR}/settings.json" "${HOME}/.claude/settings.json"
 
-    # The project ships with the box, so there is nothing for the user to vet.
+    # The workspace is a copy of the developer's own tree, so there is nothing for the user to vet.
     local config="${HOME}/.claude.json" tmp
     [[ -s "${config}" ]] || echo '{}' > "${config}"
     tmp=$(mktemp)
-    jq --arg p "${PROJECT_DIR}" '.projects[$p].hasTrustDialogAccepted = true' \
+    jq --arg p "${WORKSPACE}" '.projects[$p].hasTrustDialogAccepted = true' \
         "${config}" > "${tmp}" && install -m 600 "${tmp}" "${config}"
     rm -f "${tmp}"
 }
@@ -134,9 +135,8 @@ write_manifest() {
     {
         printf '# Generated on container start; edits are lost.\n'
         printf 'container: "%s"\n' "$(hostname)"
-        printf 'project: "%s"\n' "${PROJECT_DIR}"
         printf 'results: "%s"          # persists, on the host\n' "${HOME}/results"
-        printf 'workspace: "%s"   # writable, lost with the container\n' "${HOME}/work/ocudu"
+        printf 'workspace: "%s"   # writable, lost with the container\n' "${WORKSPACE}"
         printf 'repos:\n'
         for entry in ${REPO_FACTS[@]+"${REPO_FACTS[@]}"}; do
             IFS='|' read -r name source origin <<<"${entry}"
@@ -175,4 +175,6 @@ init_workspace
 log "results: ~/results  ->  ${REVIEW_BOX_HOST_RESULTS:-<host results dir>}"
 log "ready: run claude"
 
+# Claude starts in the ocudu workspace, so ocudu's own project instructions load.
+[[ -d "${WORKSPACE}" ]] && cd "${WORKSPACE}"
 exec "$@"

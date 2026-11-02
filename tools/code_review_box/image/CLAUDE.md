@@ -21,12 +21,11 @@ mounted is the developer's real data.
 
 | Path | What it is                                                 | Writable          | Survives   |
 | ---- |------------------------------------------------------------|-------------------|------------|
-| `~/review` | This project.                                              | no                | yes        |
 | `~/repos/ocudu` | The developer's checkout, when mounted.                    | **no** if mounted | if mounted |
 | `~/repos/ocudu_docs` | The code guide is `docs/dev_guide/code_guide/`. The rulebook. | if cloned         | if mounted |
 | `~/repos/3gpp_md` | 3GPP specs in markdown (`spec-explorer` skill).            | if cloned         | if mounted |
 | `~/repos/ocudu_tools` | Shared skills and tools.                                   | if cloned         | if mounted |
-| `~/work/ocudu` | The review workspace: a writable copy of the developer's tree. | yes               | **no**     |
+| `~/work/ocudu` | The review workspace: a writable copy of the developer's tree. Claude starts here. | yes               | **no**     |
 | `~/work/build` | Configure / build tree for the workspace.                  | yes               | no         |
 | `~/results` | This container's output, on the host.                      | yes               | **yes**    |
 
@@ -37,6 +36,7 @@ mounted is the developer's real data.
 The workspace is made when the container starts: the developer's HEAD plus their uncommitted changes, or the ref they
 passed to `review-box.sh run --ref`. `review-workspace status` says which. To review something else, ask the developer
 first: `review-workspace init --force --ref <ref>` discards the current workspace and any edits not yet in a patch.
+It recreates `~/work/ocudu`, so `cd ~/work/ocudu` again afterwards.
 
 ```sh
 review-workspace status
