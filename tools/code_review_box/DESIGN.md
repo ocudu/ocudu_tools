@@ -44,7 +44,8 @@ in the README.
   workspace trusted.
 - The Claude volumes are per user (`review-box-claude-<uid>`), and containers carry the user's uid as a label and the
   user's name in their name (`<box>.<user>`), so users sharing a Docker daemon never share Claude state or clash on box
-  names, and `ls`, `rm` and `prune` only touch the caller's.
+  names, and `ls`, `rm` and `prune` only touch the caller's. The image is shared: `prune` removes it only with
+  `--image`, and not while a box still runs on it.
 - The developer's checkout is never written to. The review edits `~/work/ocudu`, a repo that borrows the checkout's
   objects through git alternates (instant, no copy).
 - The workspace reproduces what the developer has: their HEAD plus uncommitted and untracked files, committed as one

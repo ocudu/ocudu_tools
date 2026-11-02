@@ -41,7 +41,8 @@ lists its findings as a numbered list. Tools outside `image/headless-settings.js
 
 The name is usually the branch: `run feature/foo` works, and the box is called `feature-foo` (Docker allows no `/` in
 container names); its container is `feature-foo.<user>`, so users sharing a Docker daemon can reuse names. `rm`
-accepts either spelling. Other commands: `review-box.sh ls`, `rm <name>`, `prune`, `build`.
+accepts either spelling. Other commands: `review-box.sh ls`, `rm <name>`, `prune` (your
+containers and volumes; `--image` also removes the image all users share), `build`.
 
 ## Layout
 

@@ -13,7 +13,8 @@
 #   review-box.sh build                     (re)build the image
 #   review-box.sh ls                        running boxes, images, volumes
 #   review-box.sh rm <name>...              remove those containers (results are kept)
-#   review-box.sh prune [--yes]             remove your containers and volumes, and the image
+#   review-box.sh prune [--yes] [--image]   remove your containers and volumes; the shared image too
+#                                           with --image
 
 set -euo pipefail
 
@@ -27,7 +28,7 @@ CONTAINER_SUFFIX=".${CONTAINER_SUFFIX//[^a-zA-Z0-9_.-]/-}"
 COMPOSE=(docker compose --project-directory "${BOX_DIR}" -f "${BOX_DIR}/docker-compose.yml")
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
-usage() { sed -n '8,16s/^# \{0,1\}//p' "$0" >&2; exit 1; }
+usage() { sed -n '8,17s/^# \{0,1\}//p' "$0" >&2; exit 1; }
 
 export HOST_UID="$(id -u)" HOST_GID="$(id -g)"
 
@@ -250,14 +251,28 @@ cmd_rm() {
     done
 }
 
+# The image is shared by every user of the Docker daemon, so it goes only on request, and never from under a box that
+# still runs on it.
 cmd_prune() {
-    if [[ ${1:-} != --yes ]]; then
-        read -r -p "Remove your review-box containers and volumes, and the image (results are kept)? [y/N] " ans
+    local yes=0 image=0 what="your review-box containers and volumes"
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --yes) yes=1; shift ;;
+            --image) image=1; shift ;;
+            *) usage ;;
+        esac
+    done
+    [[ ${image} -eq 0 ]] || what+=", and the image shared by all users"
+    if [[ ${yes} -eq 0 ]]; then
+        read -r -p "Remove ${what} (results are kept)? [y/N] " ans
         [[ ${ans} == [yY]* ]] || exit 0
     fi
     docker ps -aq --filter "label=${USER_LABEL}" | xargs -r docker rm -f -v >/dev/null
-    docker images -q --filter "label=${LABEL}" | sort -u | xargs -r docker rmi -f >/dev/null
     docker volume ls -q --filter "label=${USER_LABEL}" | xargs -r docker volume rm >/dev/null
+    if [[ ${image} -eq 1 ]]; then
+        docker images -q --filter "label=${LABEL}" | sort -u | xargs -r docker rmi >/dev/null 2>&1 ||
+            printf 'image kept: a box still uses it\n' >&2
+    fi
     printf 'pruned\n'
 }
 
