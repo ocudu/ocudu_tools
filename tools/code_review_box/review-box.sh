@@ -21,6 +21,9 @@ BOX_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LABEL="io.srs.review-box=true"
 # Containers and volumes are per user; ls, rm and prune touch only the caller's.
 USER_LABEL="io.srs.review-box.uid=$(id -u)"
+# Container names are global to the Docker daemon, so box <name> runs as container <name>.<user>.
+CONTAINER_SUFFIX=$(id -un)
+CONTAINER_SUFFIX=".${CONTAINER_SUFFIX//[^a-zA-Z0-9_.-]/-}"
 COMPOSE=(docker compose --project-directory "${BOX_DIR}" -f "${BOX_DIR}/docker-compose.yml")
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -77,7 +80,7 @@ enable_glab_comment() {
     printf 'GitLab comments enabled: Claude may post MR notes\n' >&2
 }
 
-# A box is usually named after a branch, but the name becomes the container name, which
+# A box is usually named after a branch, but the name goes into the container name, which
 # Docker restricts to [a-zA-Z0-9][a-zA-Z0-9_.-]*: feature/foo becomes feature-foo.
 box_name() {
     local name
@@ -92,11 +95,19 @@ cmd_build() {
     "${COMPOSE[@]}" build review-box
 }
 
+# The names of the caller's boxes, running or not with -a.
+box_names() {
+    local container
+    docker ps "$@" --filter "label=${USER_LABEL}" --format '{{.Names}}' | while read -r container; do
+        printf '%s\n' "${container%"${CONTAINER_SUFFIX}"}"
+    done
+}
+
 # Checks the host, prepares the results directory of box <name> and builds the image.
 prepare_box() {
     local name=$1
-    if docker ps -a --format '{{.Names}}' | grep -qx "${name}"; then
-        die "container '${name}' already exists ($(basename "$0") rm ${name})"
+    if docker ps -a --format '{{.Names}}' | grep -qxF "${name}${CONTAINER_SUFFIX}"; then
+        die "box '${name}' already exists ($(basename "$0") rm ${name})"
     fi
 
     # Docker would create a directory in place of a missing bind-mount source.
@@ -113,16 +124,18 @@ prepare_box() {
     # one with anything in it. A running box's directory is its bind-mount source, so
     # removing it would leave that box writing into a deleted directory.
     local dir running
-    running=$(docker ps --format '{{.Names}}')
+    running=$(box_names)
     for dir in "${BOX_DIR}"/results/*/; do
         grep -qxF "$(basename "${dir}")" <<<"${running}" || rmdir "${dir}" 2>/dev/null || true
     done
     mkdir -p "${BOX_DIR}/results/${name}"
 
     export REVIEW_BOX_NAME="${name}"
-    export REVIEW_BOX_HOST_RESULTS="${BOX_DIR}/results/${name}"
+    # Host paths stay on the host: the box names result files relative to ~/results, which is this directory.
+    printf 'results: %s\n' "${BOX_DIR}/results/${name}" >&2
 
-    cmd_build
+    # stdout is the review's report in `review`.
+    cmd_build >&2
 }
 
 cmd_run() {
@@ -144,7 +157,7 @@ cmd_run() {
     [[ "${name}" == "$1" ]] || printf 'box name: %s\n' "${name}" >&2
     shift
     prepare_box "${name}"
-    exec "${COMPOSE[@]}" run --rm --label "${USER_LABEL}" --name "${name}" review-box "$@"
+    exec "${COMPOSE[@]}" run --rm --label "${USER_LABEL}" --name "${name}${CONTAINER_SUFFIX}" review-box "$@"
 }
 
 # Unattended: claude -p with the allow-list of image/headless-settings.json, so a tool not on it is refused rather
@@ -190,7 +203,7 @@ cmd_review() {
     prepare_box "${name}"
     report="${BOX_DIR}/results/${name}/$(date +%Y-%m-%d-%H%M)-report.md"
     printf 'reviewing %s (base %s)\n' "${url}" "${REVIEW_BASE}" >&2
-    "${COMPOSE[@]}" run --rm -T --label "${USER_LABEL}" --name "${name}" review-box \
+    "${COMPOSE[@]}" run --rm -T --label "${USER_LABEL}" --name "${name}${CONTAINER_SUFFIX}" review-box \
         claude -p "${prompt}" --settings /home/dev/.claude/headless-settings.json > "${report}" ||
         die "review failed; partial output in ${report}"
     [[ -s "${report}" ]] || die "empty report: ${report}"
@@ -212,8 +225,8 @@ cmd_review() {
 }
 
 cmd_ls() {
-    printf '\ncontainers\n'
-    docker ps --filter "label=${USER_LABEL}" --format 'table {{.Names}}\t{{.Status}}'
+    printf '\nboxes\n'
+    box_names
     printf '\nimages\n'
     docker images --filter "label=${LABEL}" --format 'table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Size}}'
     printf '\nvolumes\n'
@@ -227,10 +240,10 @@ cmd_rm() {
     local name
     for name in "$@"; do
         name=$(box_name "${name}")
-        if docker ps -a --filter "label=${USER_LABEL}" --format '{{.Names}}' | grep -qx "${name}"; then
-            docker rm -f "${name}" >/dev/null && printf 'removed container %s\n' "${name}"
+        if box_names -a | grep -qxF "${name}"; then
+            docker rm -f "${name}${CONTAINER_SUFFIX}" >/dev/null && printf 'removed box %s\n' "${name}"
         else
-            printf 'no container %s\n' "${name}" >&2
+            printf 'no box %s\n' "${name}" >&2
         fi
         rmdir "${BOX_DIR}/results/${name}" 2>/dev/null || true
     done

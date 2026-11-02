@@ -22,8 +22,8 @@ claude
 > /ocudu-review-concurrency path lib/scheduler
 > /ocudu-review-testing path lib/scheduler
 
-# back on the host, you can apply the resulting patch to review it:
-git -C ~/repos/ocudu apply results/my-branch/<set>/review.patch
+# back on the host, apply the patch from the root of your ocudu checkout:
+cd ~/repos/ocudu && git apply <this dir>/results/my-branch/<set>/review.patch
 ```
 
 Unattended MR review: the box checks out the MR head, runs `claude -p` with a prompt and an allow-list, and prints the
@@ -40,7 +40,8 @@ The report is also kept in `results/mr-<iid>/`. A review comment starts with `##
 lists its findings as a numbered list. Tools outside `image/headless-settings.json` are refused, not asked for.
 
 The name is usually the branch: `run feature/foo` works, and the box is called `feature-foo` (Docker allows no `/` in
-container names). `rm` accepts either spelling. Other commands: `review-box.sh ls`, `rm <name>`, `prune`, `build`.
+container names); its container is `feature-foo.<user>`, so users sharing a Docker daemon can reuse names. `rm`
+accepts either spelling. Other commands: `review-box.sh ls`, `rm <name>`, `prune`, `build`.
 
 ## Layout
 

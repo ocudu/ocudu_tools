@@ -11,8 +11,9 @@ REPOS_DIR="${HOME}/repos"
 WORKSPACE="${HOME}/work/ocudu"
 CONF_DIR=/opt/review-box
 MANIFEST="${HOME}/box.yml"
-# Repos the box knows about. Each is mounted when SRC_<NAME> is set, else cloned from CLONE_<NAME> (at REF_<NAME>) into
-# the container and discarded when it exits.
+# Repos the box knows about. Each is mounted when MOUNTED_<NAME> is 1 (compose sets it from the host's SRC_<NAME>, whose
+# path the box is not told), else cloned from CLONE_<NAME> (at REF_<NAME>) into the container and discarded when it
+# exits.
 BOX_REPOS="ocudu ocudu_docs 3gpp_md ocudu_tools"
 
 REPO_FACTS=()
@@ -94,16 +95,16 @@ seed_git() {
 
 bootstrap_repo() {
     local name=$1 key=${1^^}
-    local src_var="SRC_${key}" url_var="CLONE_${key}" ref_var="REF_${key}"
-    local src=${!src_var:-} url=${!url_var:-} ref=${!ref_var:-}
+    local mounted_var="MOUNTED_${key}" url_var="CLONE_${key}" ref_var="REF_${key}"
+    local mounted=${!mounted_var:-} url=${!url_var:-} ref=${!ref_var:-}
     local dir="${REPOS_DIR}/${name}"
 
     [[ -d "${dir}" ]] || return 0
 
-    # SRC_<NAME> is the compose-side truth; an empty directory alone could be a mounted checkout that happens to be
-    # empty.
-    if [[ -n "${src}" ]]; then
-        REPO_FACTS+=("${name}|mounted|${src}")
+    # MOUNTED_<NAME> is the compose-side truth; an empty directory alone could be a mounted checkout that happens to
+    # be empty.
+    if [[ "${mounted}" == 1 ]]; then
+        REPO_FACTS+=("${name}|mounted|")
         return 0
     fi
     fix_owner "${dir}"
@@ -170,7 +171,7 @@ write_manifest() {
 # still useful to find out why.
 init_workspace() {
     [[ -e "${REPOS_DIR}/ocudu/.git" ]] || {
-        log "workspace: no ocudu repo; set SRC_OCUDU or CLONE_OCUDU"
+        log "workspace: no ocudu repo; set SRC_OCUDU or CLONE_OCUDU in .env"
         return 0
     }
     local at=${REVIEW_REF:-HEAD + uncommitted changes}
@@ -192,7 +193,7 @@ done
 write_manifest
 link_skills
 init_workspace
-log "results: ~/results  ->  ${REVIEW_BOX_HOST_RESULTS:-<host results dir>}"
+log "results: ~/results, kept on the host (review-box.sh printed where)"
 log "ready: run claude"
 
 # Claude starts in the ocudu workspace, so ocudu's own project instructions load.

@@ -14,6 +14,9 @@ mounted is the developer's real data.
 - Never edit `~/repos/ocudu`; it is the developer's checkout (read-only when mounted) and the workspace's source. All 
   edits go to `~/work/ocudu`.
 - The deliverable is files in `~/results`. Nothing left only in `~/work` survives.
+- Paths you write in a report, a comment or a final message are relative: source files to the ocudu root
+  (`lib/du/...`), result files to `~/results` (`<review dir>/report.md`). Never a `/home/dev/...` path: it means
+  nothing outside the box. The box is not told where things are on the host.
 - Nothing leaves the container except files in `~/results`: `git push` is disabled and the `glab` commands that write
   are denied. Reading MR metadata with `glab` is fine. A box started with GitLab comments enabled has a
   "GitLab comments" section below; without it, there are none.
@@ -89,8 +92,8 @@ Rules for the patch:
 - Behaviour-preserving unless the finding is a bug and the report says so.
 - `review-workspace patch` diffs against `refs/review/baseline`; do not move or delete that ref.
 
-End every review by giving the developer the host paths of `report.md` and `review.patch` (`review-workspace patch`
-prints the host path).
+End every review by naming `report.md` and `review.patch` relative to `~/results`. The developer knows where that is on
+the host, and applies the patch from their ocudu checkout's root.
 
 ## MR comments
 
@@ -113,6 +116,7 @@ Reviewed: <files, diff range, skill>.
 - Findings are a numbered list, most severe first, so comments can refer to them by number. No tables: they do not
   fit a comment.
 - No findings is a valid review: say so in one line instead of the list.
+- No paths of local files (results, patches, logs): the comment's readers cannot open them. Repo paths are fine.
 
 ## Building
 

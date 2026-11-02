@@ -173,11 +173,6 @@ cmd_patch() {
 
     git -C "${WS}" diff --cached --stat "${BASELINE}"
     printf '\npatch: %s\n' "${patch}"
-    if [[ -n "${REVIEW_BOX_HOST_RESULTS:-}" ]]; then
-        # Same file on the host: ~/results is bind-mounted from REVIEW_BOX_HOST_RESULTS.
-        printf 'on the host: git apply %s\n' \
-            "${REVIEW_BOX_HOST_RESULTS}${patch#"${HOME}/results"}"
-    fi
 }
 
 [[ $# -ge 1 ]] || usage

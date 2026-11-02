@@ -38,12 +38,10 @@ services:
       REVIEW_REF: "${REVIEW_REF:-}"
       # A GitLab MR iid; the workspace is its head, fetched from origin. Exclusive with REVIEW_REF.
       REVIEW_MR: "${REVIEW_MR:-}"
-      REVIEW_BOX_HOST_RESULTS: "${REVIEW_BOX_HOST_RESULTS:-}"
       # Where ocudu-guidelines-review finds things; outside the box it works them out from the checkout.
       OCUDU_BUILD_DIR: /home/dev/work/build
       OCUDU_CODE_GUIDE: /home/dev/repos/ocudu_docs/docs/dev_guide/code_guide
       REVIEW_RESULTS_DIR: /home/dev/results
-      REVIEW_RESULTS_HOST_DIR: "${REVIEW_BOX_HOST_RESULTS:-}"
       CCACHE_DIR: /home/dev/.cache/ccache
       CCACHE_BASEDIR: /home/dev
       CCACHE_NOHASHDIR: "1"
@@ -53,10 +51,11 @@ services:
       GITLAB_TOKEN: "${GITLAB_TOKEN:-}"
       # 1 when review-box.sh was given --glab-comment; GITLAB_TOKEN is then the checked write token.
       REVIEW_BOX_GLAB_COMMENT: "${REVIEW_BOX_GLAB_COMMENT:-0}"
-      SRC_OCUDU: "${SRC_OCUDU:-}"
-      SRC_OCUDU_DOCS: "${SRC_OCUDU_DOCS:-}"
-      SRC_3GPP_MD: "${SRC_3GPP_MD:-}"
-      SRC_OCUDU_TOOLS: "${SRC_OCUDU_TOOLS:-}"
+      # 1 when the repo is mounted; the host path itself stays out of the box.
+      MOUNTED_OCUDU: "${SRC_OCUDU:+1}"
+      MOUNTED_OCUDU_DOCS: "${SRC_OCUDU_DOCS:+1}"
+      MOUNTED_3GPP_MD: "${SRC_3GPP_MD:+1}"
+      MOUNTED_OCUDU_TOOLS: "${SRC_OCUDU_TOOLS:+1}"
       CLONE_OCUDU: "${CLONE_OCUDU:-git@gitlab.com:ocudu/ocudu.git}"
       CLONE_OCUDU_DOCS: "${CLONE_OCUDU_DOCS:-git@gitlab.com:ocudu/ocudu_docs.git}"
       CLONE_3GPP_MD: "${CLONE_3GPP_MD:-git@gitlab.com:softwareradiosystems/3gpp_md.git}"

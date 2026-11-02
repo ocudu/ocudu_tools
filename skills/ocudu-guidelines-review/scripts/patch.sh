@@ -8,8 +8,7 @@
 #   patch.sh <results-dir>
 #
 # Writes <results-dir>/review.patch, or removes it when nothing changed, and prints the paths of the patch and
-# report.md. When the results directory is a bind mount (REVIEW_RESULTS_HOST_DIR is where REVIEW_RESULTS_DIR is seen
-# from outside), the paths are printed as seen from outside too.
+# report.md.
 
 set -euo pipefail
 
@@ -37,6 +36,3 @@ printf 'report: %s\n' "${d}/report.md"
 # resolves until then, so running this again soon after works.
 git update-ref -d "refs/review/${d##*/}" 2>/dev/null || true
 
-if [[ -n ${REVIEW_RESULTS_HOST_DIR:-} && -n ${REVIEW_RESULTS_DIR:-} && ${d} == "${REVIEW_RESULTS_DIR%/}"/* ]]; then
-    printf 'outside: %s\n' "${REVIEW_RESULTS_HOST_DIR%/}${d#"${REVIEW_RESULTS_DIR%/}"}"
-fi
