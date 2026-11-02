@@ -100,6 +100,10 @@ in the README.
 - Findings are a numbered list, most severe first, so comments can refer to them by number. No tables: wide tables do
   not fit a GitLab comment. The layout is in the box's `CLAUDE.general.md` ("MR comments"), so every prompt and
   interactive session uses the same one.
+- An optional Suggestions section after Conventions names manual CI jobs (the `extended` stage) worth running, each
+  tied to the findings it would check, e.g. a TSAN smoke job for a possible race. Claude reads the jobs from the
+  workspace's CI config rather than a list in the box, so the suggestions follow the CI. They are for the developer to
+  run; the box's permissions are unchanged.
 - Claude runs in its normal permission mode; relaxing it is a team decision. The read-only mounts keep the checkout
   safe either way.
 

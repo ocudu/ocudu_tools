@@ -107,7 +107,13 @@ A review posted on an MR, or written to be posted, is plain markdown in this lay
 1. **<category>, <verdict>**: `<file>:<line>`. <What is wrong.> <Failure scenario.> <Fix, if there is one.>
 2. ...
 
-<Conventions, continuing the same numbering: N. `<file>:<line>`: <issue>.>
+### Conventions
+
+<N. `<file>:<line>`: <issue>, continuing the numbering.>
+
+### Suggestions
+
+<N. Run `<CI job>`: <what it would catch, and which findings it checks, e.g. "checks 1">, continuing the numbering.>
 
 Reviewed: <files, diff range, skill>.
 ```
@@ -117,6 +123,22 @@ Reviewed: <files, diff range, skill>.
   fit a comment.
 - No findings is a valid review: say so in one line instead of the list.
 - No paths of local files (results, patches, logs): the comment's readers cannot open them. Repo paths are fine.
+- Conventions and Suggestions are optional: leave out a section with nothing in it.
+
+### Suggestions
+
+Manual CI jobs that could confirm or rule out a finding, or that the diff calls for. Take the jobs from the CI config
+in the workspace (`.gitlab-ci.yml` and `.gitlab/ci/*.yml`, the jobs with `stage: extended`); name only jobs that exist
+there, exactly as named. Typical matches:
+
+- A data race, a lock-order problem, or new state shared between executors: the TSAN smoke job.
+- Use after free, out-of-bounds access, a leak: the ASAN smoke job; `valgrind changed tests` for the tests the MR
+  touches.
+- Allocation or blocking calls on a real-time path: the RTSAN smoke job.
+- CUDA code: the CUDA smoke job. GDB pretty printers: the pretty-printers job.
+
+Prefer the `cached` variant; the `clean` one runs only on an MR labelled `ci-no-cache`. Suggest a job only for a reason
+in this review, not as a checklist. The suggestions are for the developer to run; never start a job yourself.
 
 ## Building
 
