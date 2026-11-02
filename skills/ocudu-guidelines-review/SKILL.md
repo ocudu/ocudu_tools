@@ -98,8 +98,8 @@ bash "${CLAUDE_SKILL_DIR}/scripts/validate.sh" "$d"
 
 It finds the edited files itself (the tree against the baseline, out-of-scope files included), formats them (diff
 scope: only the changed lines), builds the CMake targets of every edited source and of every source that includes an
-edited header, and runs the tests of the test executables among them. Formatting runs after all fixes so it also covers
-the code the fixes added. Logs go to `$d/validation/`; `summary.md` there holds the report's Validation row.
+edited header, directly or not, and runs the tests of the test executables among them and of those linking them.
+Formatting runs after all fixes so it also covers the code the fixes added. Logs go to `$d/validation/`; `summary.md` there holds the report's Validation row.
 
 If it fails, read the log it names, fix or revert the fix that broke it (§3), and run it again until it passes.
 

@@ -115,6 +115,23 @@ mapfile -t targets < <(printf '%s\n' "${objects[@]}" | sed -nE 's#(.*/)?CMakeFil
 mapfile -t test_targets < <(printf '%s\n' "${objects[@]}" | grep '^tests/' |
     sed -nE 's#.*/CMakeFiles/([^/]+)\.dir/.*#\1#p' | sort -u || true)
 
+# Test executables that link an edited target, directly or through other libraries, cover the edit too. CMake's
+# dependers graphs list them; the test executables are the targets with objects under tests/.
+graph="${out}/graph/deps.dot"
+mkdir -p "${out}/graph"
+if [[ ${#targets[@]} -gt 0 ]] && cmake --graphviz="${graph}" "${BUILD}" > "${out}/graph.log" 2>&1; then
+    mapfile -t test_targets < <({
+        printf '%s\n' "${test_targets[@]}"
+        for t in "${targets[@]}"; do
+            [[ ! -f ${graph}.${t}.dependers ]] || sed -nE 's/.*label = "([^"]+)".*/\1/p' "${graph}.${t}.dependers"
+        done | sort -u | comm -12 - <(jq -r '.[].output // empty' "${db}" | grep '^tests/' |
+            sed -nE 's#.*/CMakeFiles/([^/]+)\.dir/.*#\1#p' | sort -u)
+    } | sed '/^$/d' | sort -u)
+    mapfile -t targets < <(printf '%s\n' "${targets[@]}" "${test_targets[@]}" | sed '/^$/d' | sort -u)
+elif [[ ${#targets[@]} -gt 0 ]]; then
+    printf 'warning: cmake --graphviz failed, see validation/graph.log; tests that only link an edited library are not run\n' >&2
+fi
+
 details=(
     "Edited files: ${#edited[@]}; reformatted: ${#formatted[@]}${formatted[*]:+ (${formatted[*]})}"
     "Targets built: ${#targets[@]}; test executables: ${#test_targets[@]}${test_targets[*]:+ (${test_targets[*]})}"
@@ -133,7 +150,7 @@ fi
 # --- test ------------------------------------------------------------------------------------------------------------
 
 if [[ ${#test_targets[@]} -eq 0 ]]; then
-    finish "ok: built ${#targets[@]} targets; no test executable includes an edited file" "${details[@]}"
+    finish "ok: built ${#targets[@]} targets; no test executable covers an edited file" "${details[@]}"
     exit
 fi
 
