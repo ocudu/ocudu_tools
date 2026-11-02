@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
 # SPDX-License-Identifier: BSD-3-Clause-Open-MPI
 
-# Write a mechanical review's patch: every change to the tree since setup.sh recorded the baseline, new files included.
+# Write a guidelines review's patch: every change to the tree since setup.sh recorded the baseline, new files included.
 #
 #   patch.sh <results-dir>
 #

@@ -23,9 +23,9 @@
       "source": "./skills/ocudu-code-review"
     },
     {
-      "name": "ocudu-review-mechanical",
+      "name": "ocudu-guidelines-review",
       "description": "Review OCUDU code against the OCUDU code guide, so changes follow the project's conventions; writes a report and a patch with the fixes.",
-      "source": "./skills/ocudu-review-mechanical"
+      "source": "./skills/ocudu-guidelines-review"
     }
   ]
 }

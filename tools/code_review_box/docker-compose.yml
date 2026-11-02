@@ -37,7 +37,7 @@ services:
       # What the workspace is made from; empty means the checkout's HEAD + uncommitted.
       REVIEW_REF: "${REVIEW_REF:-}"
       REVIEW_BOX_HOST_RESULTS: "${REVIEW_BOX_HOST_RESULTS:-}"
-      # Where ocudu-review-mechanical finds things; outside the box it works them out from the checkout.
+      # Where ocudu-guidelines-review finds things; outside the box it works them out from the checkout.
       OCUDU_REPO: /home/dev/work/ocudu
       OCUDU_BUILD_DIR: /home/dev/work/build
       OCUDU_CODE_GUIDE: /home/dev/repos/ocudu_docs/docs/dev_guide/code_guide

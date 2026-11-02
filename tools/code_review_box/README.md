@@ -15,7 +15,7 @@ cp .env.example .env                                 # set SRC_OCUDU, SRC_OCUDU_
 
 # inside the container: the workspace is already made, so you can just start a claude session and use the skills:
 claude
-> /ocudu-review-mechanical diff
+> /ocudu-guidelines-review diff
 > /ocudu-review-expert path lib/scheduler
 > /ocudu-review-concurrency path lib/scheduler
 > /ocudu-review-testing path lib/scheduler
@@ -43,7 +43,7 @@ container names). `rm` accepts either spelling. Other commands: `review-box.sh l
 | `image/skills.txt` | Which skills are linked in.                                                                                                                                                                                                                                                                                                                           |
 | `image/CLAUDE.md` | Installed as `~/.claude/CLAUDE.md`: the one place for paths, rules, workflow, scope and output contract. Claude starts in `~/work/ocudu`, so ocudu's own project instructions load too. |
 | `image/settings.json` | Installed as `~/.claude/settings.json`: denies Claude the commands that push or post to GitLab (see Permissions). |
-| `skills/` | `ocudu-review-mechanical` lives in ocudu_tools' `skills/` and is linked in from there (`image/skills.txt`); planned: `ocudu-review-expert` (search for correctness, 3GPP issues, life cycle issues, design smells and performance issues), `ocudu-review-concurrency` (search for concurrency issues), `ocudu-review-testing` (search for testing completion and simplicity). |
+| `skills/` | `ocudu-guidelines-review` lives in ocudu_tools' `skills/` and is linked in from there (`image/skills.txt`); planned: `ocudu-review-expert` (search for correctness, 3GPP issues, life cycle issues, design smells and performance issues), `ocudu-review-concurrency` (search for concurrency issues), `ocudu-review-testing` (search for testing completion and simplicity). |
 | `results/` | Output, one directory per container. Gitignored.                                                                                                                                                                                                                                                                                                      |
 
 ## How it works

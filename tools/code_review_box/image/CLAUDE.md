@@ -65,7 +65,7 @@ is the developer's last fetch.
 
 | Skill                      | What                                                                           | Edits code?                                                         |
 |----------------------------|--------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `ocudu-review-mechanical`  | Formatting, hex literals, includes (iwyu), and every rule of the code guide. Its own scripts do the workflow above (same scopes, same `~/results`). | Yes, every violation it can fix.                                    |
+| `ocudu-guidelines-review`  | Formatting, hex literals, includes (iwyu), and every rule of the code guide. Its own scripts do the workflow above (same scopes, same `~/results`). | Yes, every violation it can fix.                                    |
 | `ocudu-code-review`        | ocudu_tools' reviewer; the deep review uses its checklists.                    | No.                                                                 |
 | `spec-explorer`            | Reads the 3GPP specs in `~/repos/3gpp_md`, for protocol code.                  | No.                                                                 |
 

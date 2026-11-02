@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
 # SPDX-License-Identifier: BSD-3-Clause-Open-MPI
 
-# Set up a mechanical review: find the checkout, its build tree and the code guide, list the scope, record the tree as
+# Set up a guidelines review: find the checkout, its build tree and the code guide, list the scope, record the tree as
 # the review's baseline, and print the results directory.
 #
 #   setup.sh [diff [BASE] | path <dir>... | all]     default: diff
@@ -74,7 +74,7 @@ files=$(grep -E "${CPP_RE}" <<<"${files}" || true)
 
 mkdir -p "${results_root}"
 results_root=$(cd "${results_root}" && pwd)
-d="${results_root}/$(date +%Y-%m-%d-%H%M)-mechanical"
+d="${results_root}/$(date +%Y-%m-%d-%H%M)-guidelines"
 if [[ -e ${d} ]]; then
     n=2
     while [[ -e "${d}.${n}" ]]; do n=$((n + 1)); done
@@ -87,7 +87,7 @@ trap 'rm -f "${idx}"' EXIT
 tree=$(GIT_INDEX_FILE=${idx} git write-tree)
 baseline=$(GIT_AUTHOR_NAME=ocudu-review GIT_AUTHOR_EMAIL=ocudu-review@localhost \
     GIT_COMMITTER_NAME=ocudu-review GIT_COMMITTER_EMAIL=ocudu-review@localhost \
-    git commit-tree "${tree}" -p HEAD -m "ocudu-review-mechanical baseline: ${name}")
+    git commit-tree "${tree}" -p HEAD -m "ocudu-guidelines-review baseline: ${name}")
 # A ref keeps the baseline from being garbage-collected while the review is open.
 git update-ref "refs/review/${name}" "${baseline}"
 

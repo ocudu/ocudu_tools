@@ -8,7 +8,7 @@
 
 # Code-guide review. It lives in ocudu_tools so it also runs outside the box; docker-compose.yml points it at the
 # box's workspace, build tree, code guide and results directory.
-repos/ocudu_tools/skills/ocudu-review-mechanical
+repos/ocudu_tools/skills/ocudu-guidelines-review
 
 # Existing ocudu_tools skill: correctness / realtime / security / deps review. The deep review builds on it rather than
 # restating its checklists.

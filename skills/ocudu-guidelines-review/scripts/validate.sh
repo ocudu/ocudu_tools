@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
 # SPDX-License-Identifier: BSD-3-Clause-Open-MPI
 
-# Validate a mechanical review's edits: format them, build what they touch, run the tests that cover them.
+# Validate a guidelines review's edits: format them, build what they touch, run the tests that cover them.
 #
 #   validate.sh <results-dir>
 #

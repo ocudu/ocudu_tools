@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
 # SPDX-License-Identifier: BSD-3-Clause-Open-MPI
 
-"""Tool checks of the mechanical review: hex literals and include-what-you-use, over a review's scope.
+"""Tool checks of the guidelines review: hex literals and include-what-you-use, over a review's scope.
 
     tool_checks.py <results-dir> [--jobs <n>]
 

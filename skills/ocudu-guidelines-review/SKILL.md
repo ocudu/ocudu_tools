@@ -1,12 +1,10 @@
 ---
-name: ocudu-review-mechanical
+name: ocudu-guidelines-review
 description: >
-  Code-guide review of OCUDU code: formatting, hex literals, include hygiene
-  (include-what-you-use), and every rule of the SRS code guide, read from the guide itself
-  and fixed in the checkout (including structural fixes such as splitting constructor
-  parameters into configuration and dependencies). Writes a report plus a patch. Use for
-  "mechanical review", "check formatting/includes", "apply the code guide", "lint this
-  branch/folder", "/ocudu-review-mechanical".
+  Review OCUDU code against the OCUDU code guide, read from the guide itself, and fix the
+  violations in the checkout. Writes a report plus a patch. Use for "guidelines review",
+  "apply the code guide", "check this branch/folder against the code guide",
+  "/ocudu-guidelines-review".
 argument-hint: "[diff [BASE] | path <dir>... | all]"
 user-invocable: true
 metadata:
@@ -22,7 +20,7 @@ compatibility: >
 
 # OCUDU code-guide review
 
-**Usage:** `/ocudu-review-mechanical [diff [BASE] | path <dir>... | all]` — default `diff`.
+**Usage:** `/ocudu-guidelines-review [diff [BASE] | path <dir>... | all]` — default `diff`.
 
 The SRS code guide is the rulebook; this skill holds no rules of its own. It checks every rule of the guide over every
 scoped file and fixes every violation it finds. Every step that needs no judgement is a script in this skill's
@@ -110,7 +108,7 @@ If it fails, read the log it names, fix or revert the fix that broke it (§3), a
 Write `$d/report.md` with this layout, then the patch:
 
 ```markdown
-# Mechanical review — <SCOPE>
+# Guidelines review — <SCOPE>
 Repo: <REPO> at <COMMIT> (<BRANCH>)   Base: <BASE>, merge-base <MERGE_BASE> (diff scope only)
 Files: <n> (scope.txt), plus <m> out-of-scope files edited by fixes
 
