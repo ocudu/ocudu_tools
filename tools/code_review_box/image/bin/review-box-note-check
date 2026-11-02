@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+# Claude Code PreToolUse hook, installed only when GitLab comments are enabled. Blocks a `glab mr note` whose body is
+# not given inline with -m or does not start with the box's prefix.
+
+set -euo pipefail
+
+PREFIX="ocudu code-review-box says:"
+
+cmd=$(jq -r '.tool_input.command // empty')
+grep -qE '(^|[;&|[:space:]])glab[[:space:]]+(mr[[:space:]]+)?note([[:space:]]|$)' <<<"${cmd}" || exit 0
+
+# The body must be inline so the prefix can be checked; a file or editor body cannot be.
+if grep -qE '(^|[[:space:]])(-F|--file)' <<<"${cmd}" ||
+    ! grep -qE '(^|[[:space:]])(-m|--message)' <<<"${cmd}"; then
+    printf 'glab mr note: pass the body with -m, starting with the line "%s".\n' "${PREFIX}" >&2
+    exit 2
+fi
+if ! grep -qE "(-m|--message)[= ]+\\\$?[\"']?${PREFIX}" <<<"${cmd}"; then
+    printf 'glab mr note: the body must start with the line "%s".\n' "${PREFIX}" >&2
+    exit 2
+fi

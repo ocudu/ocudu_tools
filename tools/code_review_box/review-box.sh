@@ -5,10 +5,11 @@
 
 # Manage OCUDU code review box containers.
 #
-#   review-box.sh run [--ref <ref>] <name> [command...]
+#   review-box.sh run [--glab-comment] [--ref <ref>] <name> [command...]
 #                                           build if needed, then enter a review box
-#   review-box.sh review --mr <iid|url> [--prompt <file>] [--post]
+#   review-box.sh review --mr <iid|url> [--prompt <file>] [--post] [--glab-comment]
 #                                           unattended review of a GitLab MR; prints the report
+#   --glab-comment lets Claude post MR notes, with GITLAB_WRITE_TOKEN (api scope)
 #   review-box.sh build                     (re)build the image
 #   review-box.sh ls                        running boxes, images, volumes
 #   review-box.sh rm <name>...              remove those containers (results are kept)
@@ -22,7 +23,7 @@ PROJECT_LABEL="com.docker.compose.project=review-box"
 COMPOSE=(docker compose --project-directory "${BOX_DIR}" -f "${BOX_DIR}/docker-compose.yml")
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
-usage() { sed -n '8,15s/^# \{0,1\}//p' "$0" >&2; exit 1; }
+usage() { sed -n '8,16s/^# \{0,1\}//p' "$0" >&2; exit 1; }
 
 export HOST_UID="$(id -u)" HOST_GID="$(id -g)"
 
@@ -32,6 +33,29 @@ export HOST_UID="$(id -u)" HOST_GID="$(id -g)"
 if [[ ! -v SRC_OCUDU_TOOLS ]] && ! grep -qE '^[[:space:]]*SRC_OCUDU_TOOLS=' "${BOX_DIR}/.env" 2>/dev/null; then
     export SRC_OCUDU_TOOLS="$(cd "${BOX_DIR}/../.." && pwd)"
 fi
+
+# The value of a variable from the environment, else from .env.
+env_value() {
+    if [[ -v $1 ]]; then
+        printf '%s\n' "${!1}"
+        return
+    fi
+    sed -nE "s/^[[:space:]]*$1=[\"']?([^\"']*)[\"']?[[:space:]]*$/\1/p" "${BOX_DIR}/.env" 2>/dev/null | tail -n 1
+}
+
+# GitLab comments: the box gets GITLAB_WRITE_TOKEN in place of the read token, once its scopes are checked. Compose takes
+# the shell environment over .env, so the read token is not seen.
+enable_glab_comment() {
+    local token host=${1:-gitlab.com} self scopes
+    token=$(env_value GITLAB_WRITE_TOKEN)
+    [[ -n "${token}" ]] || die "--glab-comment needs GITLAB_WRITE_TOKEN in .env or the environment"
+    self=$(curl -fsS -H "PRIVATE-TOKEN: ${token}" "https://${host}/api/v4/personal_access_tokens/self") ||
+        die "cannot read the scopes of GITLAB_WRITE_TOKEN from ${host}"
+    scopes=$(jq -r '.scopes // [] | join(" ")' <<<"${self}")
+    [[ " ${scopes} " == *" api "* ]] || die "GITLAB_WRITE_TOKEN lacks the api scope (has: ${scopes:-none})"
+    export GITLAB_TOKEN=${token} REVIEW_BOX_GLAB_COMMENT=1
+    printf 'GitLab comments enabled: Claude may post MR notes\n' >&2
+}
 
 # A box is usually named after a branch, but the name becomes the container name, which
 # Docker restricts to [a-zA-Z0-9][a-zA-Z0-9_.-]*: feature/foo becomes feature-foo.
@@ -78,6 +102,10 @@ prepare_box() {
 }
 
 cmd_run() {
+    if [[ ${1:-} == --glab-comment ]]; then
+        enable_glab_comment
+        shift
+    fi
     # The workspace is made on start from the checkout's HEAD and uncommitted changes, or
     # from this ref (a branch, a commit, origin/<mr-branch>) when given.
     if [[ ${1:-} == --ref ]]; then
@@ -97,12 +125,13 @@ cmd_run() {
 # Unattended: claude -p with the allow-list of image/headless-settings.json, so a tool not on it is refused rather
 # than asked for. The box only reads GitLab; the report is posted from the host.
 cmd_review() {
-    local mr="" prompt_file="${BOX_DIR}/prompts/mr-review.md" post=0
+    local mr="" prompt_file="${BOX_DIR}/prompts/mr-review.md" post=0 comment=0
     while [[ $# -gt 0 ]]; do
         case $1 in
             --mr) mr=${2:?}; shift 2 ;;
             --prompt) prompt_file=${2:?}; shift 2 ;;
             --post) post=1; shift ;;
+            --glab-comment) comment=1; shift ;;
             *) usage ;;
         esac
     done
@@ -119,6 +148,7 @@ cmd_review() {
     else
         die "invalid MR ${mr}; give its number or URL"
     fi
+    [[ ${comment} -eq 0 ]] || enable_glab_comment "${host}"
     local info url target
     info=$(glab mr view "${iid}" -R "${host}/${project}" -F json) || die "cannot read MR ${iid} of ${project}"
     url=$(jq -r .web_url <<<"${info}")
@@ -133,7 +163,7 @@ cmd_review() {
     report="${BOX_DIR}/results/${name}/$(date +%Y-%m-%d-%H%M)-report.md"
     printf 'reviewing %s (base %s)\n' "${url}" "${REVIEW_BASE}" >&2
     "${COMPOSE[@]}" run --rm -T --name "${name}" review-box \
-        claude -p "${prompt}" --settings /opt/review-box/headless-settings.json > "${report}" ||
+        claude -p "${prompt}" --settings /home/dev/.claude/headless-settings.json > "${report}" ||
         die "review failed; partial output in ${report}"
     [[ -s "${report}" ]] || die "empty report: ${report}"
     cat "${report}"
@@ -141,7 +171,7 @@ cmd_review() {
 
     if [[ ${post} -eq 1 ]]; then
         local body
-        body=$(printf 'Claude says:\n'; sed 's/^/> /' "${report}")
+        body=$(printf 'ocudu code-review-box says:\n'; sed 's/^/> /' "${report}")
         glab mr note "${iid}" -R "${host}/${project}" -m "${body}" >/dev/null ||
             die "posting failed; report kept in ${report}"
         printf 'posted on %s\n' "${url}" >&2

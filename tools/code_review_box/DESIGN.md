@@ -56,7 +56,7 @@ in the README.
 - The workspace is the MR head, fetched from origin inside the box (`review-workspace init --mr`), so the developer's
   checkout needs no fetch and is never written to. The base is the MR's target branch.
 - Claude's final message is the report. The launcher saves it in `results/mr-<iid>/` and, with `--post`, posts it on
-  the MR from the host as a `Claude says:` quote. The box keeps its read-only GitLab token.
+  the MR from the host as an `ocudu code-review-box says:` quote. The box keeps its read-only GitLab token.
 
 ## Scope of a review
 
@@ -73,6 +73,12 @@ in the README.
   stops writes: a deny list cannot cover every way to reach the API.
 - Claude is also denied `git push`, changes to the push rewrite, and the glab commands that write. These give an early,
   clear refusal; they are not the guarantee.
+- GitLab comments are opt-in per box (`--glab-comment`) and limited to MR notes. The write token is its own variable,
+  `GITLAB_WRITE_TOKEN`, so the default stays read-only; the launcher checks its `api` scope before starting. The
+  entrypoint lifts only the `glab mr note` deny rule and appends the write rules to `~/.claude/CLAUDE.md`.
+- Every GitLab comment from the box starts with `ocudu code-review-box says:`. Host posts (`--post`) add it themselves;
+  notes Claude posts are checked by a PreToolUse hook, which also requires an inline `-m` body so the prefix can be
+  checked.
 - Claude runs in its normal permission mode; relaxing it is a team decision. The read-only mounts keep the checkout
   safe either way.
 

@@ -44,6 +44,8 @@ seed_claude_config() {
     # Installed on every start, so a new image replaces what an older one left in the persistent ~/.claude volume.
     install -m 644 "${CONF_DIR}/CLAUDE.md" "${HOME}/.claude/CLAUDE.md"
     install -m 644 "${CONF_DIR}/settings.json" "${HOME}/.claude/settings.json"
+    install -m 644 "${CONF_DIR}/headless-settings.json" "${HOME}/.claude/headless-settings.json"
+    [[ ${REVIEW_BOX_GLAB_COMMENT:-0} != 1 ]] || enable_glab_comment
 
     # The workspace is a copy of the developer's own tree, so there is nothing for the user to vet.
     local config="${HOME}/.claude.json" tmp
@@ -52,6 +54,22 @@ seed_claude_config() {
     jq --arg p "${WORKSPACE}" '.projects[$p].hasTrustDialogAccepted = true' \
         "${config}" > "${tmp}" && install -m 600 "${tmp}" "${config}"
     rm -f "${tmp}"
+}
+
+# Lets Claude post MR notes and nothing else that writes: only the `glab mr note` deny rule is lifted, and a hook
+# rejects notes without the box's prefix. The token's scope was checked by review-box.sh.
+enable_glab_comment() {
+    local dir="${HOME}/.claude" tmp
+    tmp=$(mktemp)
+    jq '.permissions.deny -= ["Bash(glab mr note*)"]
+        | .hooks.PreToolUse += [{"matcher": "Bash",
+                                 "hooks": [{"type": "command", "command": "/usr/local/bin/review-box-note-check"}]}]' \
+        "${dir}/settings.json" > "${tmp}" && install -m 644 "${tmp}" "${dir}/settings.json"
+    jq '.permissions.allow += ["Bash(glab mr note *)"]' \
+        "${dir}/headless-settings.json" > "${tmp}" && install -m 644 "${tmp}" "${dir}/headless-settings.json"
+    rm -f "${tmp}"
+    cat "${CONF_DIR}/CLAUDE.glab-comment.md" >> "${dir}/CLAUDE.md"
+    log "GitLab comments enabled: Claude may post MR notes"
 }
 
 seed_git() {

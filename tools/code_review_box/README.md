@@ -32,9 +32,10 @@ report. `--post` posts it on the MR from the host; the box itself never writes t
 ./review-box.sh review --mr 1234                     # or the MR URL; other projects: REVIEW_MR_PROJECT
 ./review-box.sh review --mr 1234 --post              # also post the report as an MR note
 ./review-box.sh review --mr 1234 --prompt my.md      # another prompt; {MR_URL} and {BASE} are filled in
+./review-box.sh review --mr 1234 --glab-comment --prompt inline.md   # Claude may post MR notes itself
 ```
 
-The report is also kept in `results/mr-<iid>/`. Tools outside `image/headless-settings.json` are refused, not asked for.
+The report is also kept in `results/mr-<iid>/`. Comments are prefixed with `ocudu code-review-box says:`. Tools outside `image/headless-settings.json` are refused, not asked for.
 
 The name is usually the branch: `run feature/foo` works, and the box is called `feature-foo` (Docker allows no `/` in
 container names). `rm` accepts either spelling. Other commands: `review-box.sh ls`, `rm <name>`, `prune`, `build`.
@@ -53,6 +54,8 @@ container names). `rm` accepts either spelling. Other commands: `review-box.sh l
 | `image/bin/review-scope` | The file list for a review: `diff`, `path`, or `all`.                                                                                                                                                                                                                                                                                                 |
 | `image/bin/review-results` | A new output directory under `~/results`.                                                                                                                                                                                                                                                                                                             |
 | `image/bin/git-remote-push-disabled` | Refuses every git push from the box (see Permissions).                                                                                                                                                                                                                                                                                                |
+| `image/CLAUDE.glab-comment.md` | Appended to `~/.claude/CLAUDE.md` when GitLab comments are enabled. |
+| `image/bin/review-box-note-check` | Hook that refuses MR notes without the box's prefix (GitLab comments only). |
 | `image/headless-settings.json` | Allow-list of the tools an unattended review may use. |
 | `prompts/` | Prompts of unattended reviews; `mr-review.md` is the default. |
 | `image/skills.txt` | Which skills are linked in.                                                                                                                                                                                                                                                                                                                           |
@@ -80,16 +83,19 @@ container names). `rm` accepts either spelling. Other commands: `review-box.sh l
 `claude` inside the container runs in its normal permission mode; whether to relax that is a decision for the team. The
 read-only mounts are what keep the developer's checkout safe either way.
 
-The box never pushes or posts to GitLab:
+The box never pushes, and posts to GitLab only when started with `--glab-comment`:
 
 - **git push is disabled.** The entrypoint rewrites every push to a network remote (`url.push-disabled://.pushInsteadOf`)
   to `image/bin/git-remote-push-disabled`, which refuses it. Fetch and clone still work, and `--no-verify` does not
   skip it. It does not cover a remote with an explicit `pushurl`.
-- **The GitLab token is read-only.** `GITLAB_TOKEN` is the box's only GitLab credential; give it only the `read_api`
-  scope. The deny rules below cannot cover every way to reach the API (curl, other `glab` commands), so the token's
-  scope is what stops writes.
+- **The GitLab token is read-only.** `GITLAB_TOKEN` is the box's only GitLab credential by default; give it only the
+  `read_api` scope. The deny rules below cannot cover every way to reach the API (curl, other `glab` commands), so the
+  token's scope is what stops writes.
 - **Claude is denied the write commands.** `image/settings.json` (installed as `~/.claude/settings.json`) denies
   `git push`, changing the push rewrite, the `glab mr` / `glab issue` subcommands that write, and `glab api` with a
-  method or body. Reading MR
-  metadata (`glab mr view`, `glab mr diff`, `glab api <GET endpoint>`) stays allowed. These rules apply to the commands
-  Claude runs, not to commands scripts run for it.
+  method or body. Reading MR metadata (`glab mr view`, `glab mr diff`, `glab api <GET endpoint>`) stays allowed. These
+  rules apply to the commands Claude runs, not to commands scripts run for it.
+- **GitLab comments are opt-in.** `--glab-comment` on `run` or `review` hands the box `GITLAB_WRITE_TOKEN` instead of
+  `GITLAB_TOKEN`, after checking it has the `api` scope. Only the `glab mr note` deny rule is lifted; every other write
+  stays denied, and `git push` stays disabled. A hook refuses notes that do not start with `ocudu code-review-box says:`
+  or whose body is not inline (`-m`).

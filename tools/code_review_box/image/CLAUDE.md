@@ -15,7 +15,9 @@ mounted is the developer's real data.
   edits go to `~/work/ocudu`.
 - The deliverable is files in `~/results`. Nothing left only in `~/work` survives.
 - Nothing leaves the container except files in `~/results`: `git push` is disabled and the `glab` commands that write
-  are denied. Reading MR metadata with `glab` is fine.
+  are denied. Reading MR metadata with `glab` is fine. A box started with GitLab comments enabled has a
+  "GitLab comments" section below; without it, there are none.
+- Text meant for a GitLab comment starts with the line `ocudu code-review-box says:`.
 
 ## Layout
 
