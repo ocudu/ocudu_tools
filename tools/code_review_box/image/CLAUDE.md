@@ -33,9 +33,11 @@ mounted is the developer's real data.
 
 ## Workflow
 
-The workspace is made when the container starts: the developer's HEAD plus their uncommitted changes, or the ref they
-passed to `review-box.sh run --ref`. `review-workspace status` says which. To review something else, ask the developer
-first: `review-workspace init --force --ref <ref>` discards the current workspace and any edits not yet in a patch.
+The workspace is made when the container starts: the developer's HEAD plus their uncommitted changes, the ref they
+passed to `review-box.sh run --ref`, or the head of the MR given to `review-box.sh review --mr`.
+`review-workspace status` says which. To review something else, ask the developer first:
+`review-workspace init --force --ref <ref>` (or `--mr <iid>`) discards the current workspace and any edits not yet in
+a patch.
 It recreates `~/work/ocudu`, so `cd ~/work/ocudu` again afterwards.
 
 ```sh

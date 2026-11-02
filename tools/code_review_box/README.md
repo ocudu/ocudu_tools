@@ -25,6 +25,17 @@ claude
 git -C ~/repos/ocudu apply results/my-branch/<set>/review.patch
 ```
 
+Unattended MR review: the box checks out the MR head, runs `claude -p` with a prompt and an allow-list, and prints the
+report. `--post` posts it on the MR from the host; the box itself never writes to GitLab.
+
+```sh
+./review-box.sh review --mr 1234                     # or the MR URL; other projects: REVIEW_MR_PROJECT
+./review-box.sh review --mr 1234 --post              # also post the report as an MR note
+./review-box.sh review --mr 1234 --prompt my.md      # another prompt; {MR_URL} and {BASE} are filled in
+```
+
+The report is also kept in `results/mr-<iid>/`. Tools outside `image/headless-settings.json` are refused, not asked for.
+
 The name is usually the branch: `run feature/foo` works, and the box is called `feature-foo` (Docker allows no `/` in
 container names). `rm` accepts either spelling. Other commands: `review-box.sh ls`, `rm <name>`, `prune`, `build`.
 
@@ -42,6 +53,8 @@ container names). `rm` accepts either spelling. Other commands: `review-box.sh l
 | `image/bin/review-scope` | The file list for a review: `diff`, `path`, or `all`.                                                                                                                                                                                                                                                                                                 |
 | `image/bin/review-results` | A new output directory under `~/results`.                                                                                                                                                                                                                                                                                                             |
 | `image/bin/git-remote-push-disabled` | Refuses every git push from the box (see Permissions).                                                                                                                                                                                                                                                                                                |
+| `image/headless-settings.json` | Allow-list of the tools an unattended review may use. |
+| `prompts/` | Prompts of unattended reviews; `mr-review.md` is the default. |
 | `image/skills.txt` | Which skills are linked in.                                                                                                                                                                                                                                                                                                                           |
 | `image/CLAUDE.md` | Installed as `~/.claude/CLAUDE.md`: the one place for paths, rules, workflow, scope and output contract. Claude starts in `~/work/ocudu`, so ocudu's own project instructions load too. |
 | `image/settings.json` | Installed as `~/.claude/settings.json`: denies Claude the commands that push or post to GitLab (see Permissions). |

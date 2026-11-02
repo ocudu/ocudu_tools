@@ -161,8 +161,11 @@ init_workspace() {
         log "workspace: no ocudu repo; set SRC_OCUDU or CLONE_OCUDU"
         return 0
     }
-    if review-workspace init ${REVIEW_REF:+--ref "${REVIEW_REF}"} >/dev/null 2>"${HOME}/.workspace-init.log"; then
-        log "workspace: ~/work/ocudu at ${REVIEW_REF:-HEAD + uncommitted changes}"
+    local at=${REVIEW_REF:-HEAD + uncommitted changes}
+    [[ -z "${REVIEW_MR:-}" ]] || at="MR !${REVIEW_MR}"
+    if review-workspace init ${REVIEW_REF:+--ref "${REVIEW_REF}"} ${REVIEW_MR:+--mr "${REVIEW_MR}"} \
+        >/dev/null 2>"${HOME}/.workspace-init.log"; then
+        log "workspace: ~/work/ocudu at ${at}"
     else
         log "workspace: init failed, see ~/.workspace-init.log"
         sed 's/^/    /' "${HOME}/.workspace-init.log" >&2

@@ -45,6 +45,17 @@ in the README.
 - The workspace is made by the entrypoint on every start, not left as a step to remember. It and the build tree are
   container-local and lost with the container; `~/results` persists on the host.
 
+## Unattended reviews
+
+- `review-box.sh review --mr <iid>` runs `claude -p` with a prompt from `prompts/`, so each kind of review is a
+  versioned prompt rather than a long command line. `{MR_URL}` and `{BASE}` are filled in by the launcher.
+- Permissions are an allow-list (`image/headless-settings.json`), passed with `--settings`: nobody can approve a tool,
+  so anything not on the list is refused. The deny rules still apply on top. Skipping permissions is not used.
+- The workspace is the MR head, fetched from origin inside the box (`review-workspace init --mr`), so the developer's
+  checkout needs no fetch and is never written to. The base is the MR's target branch.
+- Claude's final message is the report. The launcher saves it in `results/mr-<iid>/` and, with `--post`, posts it on
+  the MR from the host as a `Claude says:` quote. The box keeps its read-only GitLab token.
+
 ## Scope of a review
 
 - One definition of scope for every skill: `diff [BASE]` (since `merge-base(BASE, HEAD)`, plus uncommitted), `path

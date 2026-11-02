@@ -5,7 +5,7 @@
 
 # The writable copy of OCUDU that a review edits, and the patch it hands back.
 #
-#   review-workspace init [--ref <ref>] [--src <repo>] [--force]
+#   review-workspace init [--ref <ref> | --mr <iid>] [--src <repo>] [--force]
 #                                                        (re)create ~/work/ocudu from <repo>
 #                                                        (default ~/repos/ocudu)
 #   review-workspace status                              what it was made from, what changed
@@ -17,7 +17,8 @@
 # workspace against it, so review.patch holds the review's changes and nothing else.
 #
 # With --ref, the workspace is that ref instead (a branch, a commit, origin/<mr-branch>), and the user's uncommitted
-# work is left out.
+# work is left out. With --mr, it is the head of that GitLab MR, fetched from origin into the workspace, so the user's
+# checkout needs no fetch.
 #
 # The entrypoint runs init on every container start (with --ref when the box was started with
 # `review-box.sh run --ref <ref>`), so a session finds the workspace ready. Run it by hand only to switch to another
@@ -38,10 +39,11 @@ usage() {
 }
 
 cmd_init() {
-    local ref="" force=0
+    local ref="" mr="" force=0
     while [[ $# -gt 0 ]]; do
         case $1 in
             --ref) ref=${2:?}; shift 2 ;;
+            --mr) mr=${2:?}; shift 2 ;;
             --src) SRC=${2:?}; shift 2 ;;
             --force) force=1; shift ;;
             *) usage ;;
@@ -50,9 +52,16 @@ cmd_init() {
 
     local common objects sha origin
     git -C "${SRC}" rev-parse --git-dir >/dev/null 2>&1 || die "${SRC} is not a git repo"
+    [[ -z "${ref}" || -z "${mr}" ]] || die "--ref and --mr are exclusive"
+    [[ -z "${mr}" || ${mr} =~ ^[0-9]+$ ]] || die "invalid MR ${mr}"
     # Resolved before --force removes anything, so a typo never leaves no workspace at all.
-    sha=$(git -C "${SRC}" rev-parse --verify -q "${ref:-HEAD}^{commit}") ||
-        die "unknown ref ${ref:-HEAD}"
+    if [[ -n "${mr}" ]]; then
+        [[ -n $(git -C "${SRC}" ls-remote origin "refs/merge-requests/${mr}/head" 2>/dev/null) ]] ||
+            die "no MR ${mr} at origin of ${SRC}"
+    else
+        sha=$(git -C "${SRC}" rev-parse --verify -q "${ref:-HEAD}^{commit}") ||
+            die "unknown ref ${ref:-HEAD}"
+    fi
     if [[ -e "${WS}" ]]; then
         [[ ${force} -eq 1 ]] ||
             die "${WS} exists; --force discards it (and any review edits not yet in a patch)"
@@ -79,13 +88,22 @@ cmd_init() {
     if [[ -n "${origin}" ]]; then
         git -C "${WS}" remote add origin "${origin}"
     fi
-    # A partial clone's alternates lack blobs never fetched; without the promisor config git cannot fetch them on demand.
+    # A partial clone's alternates lack blobs never fetched; without the promisor config git cannot fetch them on
+    # demand.
     if [[ -n "${origin}" && $(git -C "${SRC}" config --bool remote.origin.promisor || true) == true ]]; then
         git -C "${WS}" config core.repositoryformatversion 1
         git -C "${WS}" config extensions.partialClone origin
         git -C "${WS}" config remote.origin.promisor true
         git -C "${WS}" config remote.origin.partialclonefilter \
             "$(git -C "${SRC}" config remote.origin.partialclonefilter)"
+    fi
+
+    if [[ -n "${mr}" ]]; then
+        [[ -n "${origin}" ]] || die "--mr needs an origin remote in ${SRC}"
+        ref="origin/mr/${mr}"
+        git -C "${WS}" fetch -q --no-tags origin "+refs/merge-requests/${mr}/head:refs/remotes/${ref}" ||
+            die "cannot fetch MR ${mr} from ${origin}"
+        sha=$(git -C "${WS}" rev-parse "${ref}^{commit}")
     fi
 
     git -C "${WS}" checkout -q -b review "${sha}"

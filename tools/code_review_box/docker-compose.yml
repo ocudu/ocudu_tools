@@ -36,6 +36,8 @@ services:
       REVIEW_BASE: "${REVIEW_BASE:-origin/dev}"
       # What the workspace is made from; empty means the checkout's HEAD + uncommitted.
       REVIEW_REF: "${REVIEW_REF:-}"
+      # A GitLab MR iid; the workspace is its head, fetched from origin. Exclusive with REVIEW_REF.
+      REVIEW_MR: "${REVIEW_MR:-}"
       REVIEW_BOX_HOST_RESULTS: "${REVIEW_BOX_HOST_RESULTS:-}"
       # Where ocudu-guidelines-review finds things; outside the box it works them out from the checkout.
       OCUDU_BUILD_DIR: /home/dev/work/build
