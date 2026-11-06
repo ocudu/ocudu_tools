@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause-Open-MPI
 
 """
-Fetch failed job traces for a GitLab pipeline.
+Fetch the failures of a GitLab pipeline (and its downstream pipelines).
 
 Usage:
     fetch_pipeline.py <url> [-o OUTPUT_DIR] [--token TOKEN]
@@ -14,30 +14,38 @@ URL forms accepted:
   https://gitlab.example.com/group/project/-/pipelines/<pipeline_id>
   https://gitlab.example.com/api/v4/projects/<project_id>/pipeline_schedules/<schedule_id>
 
+A failure is one failing test of a failed job, read from the pipeline's test report, or the whole job when the report
+has no failing test for it (build or setup failures, or no report). Each failure carries its job, the job's trace,
+and its artifacts: the test's own when its path names the test, else the job's. A job allowed to fail is triaged like
+any other; its `allow_failure` says so.
+
 Output layout:
   <output_dir>/
     <pipeline_id>/
-      data.json           # pipeline metadata (id, url, name, ref, status, ...)
+      fetch.json          # what is printed to stdout
       <job_id>/
-        data.json         # job metadata
         trace.txt         # raw job log
+        artifacts/...     # known log files from the job's artifacts
+        tests/<n>.txt     # output of each failing test, ANSI codes stripped
 """
 
 import argparse
-import io
 import json
 import os
 import re
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
-import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+import remote_zip
+from gitlab_api import Client, GitLabError, failed_test_cases, pipeline_tree, project_path, strip_ansi
 
 # https://gitlab.example.com/group/sub/project/-/jobs/123
 # https://gitlab.example.com/group/sub/project/-/pipelines/123
 _WEB_URL_RE = re.compile(r"(https?://[^/]+)/(.+?)/-/(jobs|pipelines)/(\d+)/?$")
+
+# https://gitlab.example.com/api/v4/projects/<project_id>/pipeline_schedules/<schedule_id>
+_SCHEDULE_API_RE = re.compile(r"(https?://[^/]+)/api/v4/projects/([^/]+)/pipeline_schedules/(\d+)/?$")
 
 # Artifact files to download from each failed job (matched against the full artifact path).
 _ARTIFACT_PATTERNS: list[re.Pattern] = [
@@ -46,145 +54,198 @@ _ARTIFACT_PATTERNS: list[re.Pattern] = [
     re.compile(r"[^/]*stdout[^/]*\.log$"),
 ]
 
-# https://gitlab.example.com/api/v4/projects/<project_id>/pipeline_schedules/<schedule_id>
-_SCHEDULE_API_RE = re.compile(r"(https?://[^/]+)/api/v4/projects/([^/]+)/pipeline_schedules/(\d+)/?$")
-
-
-class _Client:
-    def __init__(self, base_url: str, token: str = ""):
-        self._base = base_url.rstrip("/")
-        self._headers = {"PRIVATE-TOKEN": token} if token else {}
-
-    def _get(self, path: str, params: dict | None = None) -> bytes:
-        url = f"{self._base}/api/v4/{path.lstrip('/')}"
-        if params:
-            url = f"{url}?{urllib.parse.urlencode(params)}"
-        req = urllib.request.Request(url, headers=self._headers)
-        with urllib.request.urlopen(req) as resp:
-            return resp.read()
-
-    def _get_json(self, path: str, params: dict | None = None) -> dict | list:
-        return json.loads(self._get(path, params).decode())
-
-    def _project_root(self, project: str) -> str:
-        encoded = urllib.parse.quote(project, safe="") if "/" in project else project
-        return f"projects/{encoded}"
-
-    def job(self, project: str, job_id: int) -> dict:
-        return self._get_json(f"{self._project_root(project)}/jobs/{job_id}")
-
-    def pipeline(self, project: str, pipeline_id: int) -> dict:
-        return self._get_json(f"{self._project_root(project)}/pipelines/{pipeline_id}")
-
-    def schedule(self, project: str, schedule_id: int) -> dict:
-        return self._get_json(f"{self._project_root(project)}/pipeline_schedules/{schedule_id}")
-
-    def latest_scheduled_pipeline(self, project: str, schedule_id: int) -> dict:
-        pipelines = self._get_json(
-            f"{self._project_root(project)}/pipeline_schedules/{schedule_id}/pipelines",
-            {"per_page": 1, "order_by": "id", "sort": "desc"},
-        )
-        if not pipelines:
-            raise ValueError(f"No pipelines found for schedule {schedule_id}")
-        return pipelines[0]
-
-    def pipeline_jobs(self, project: str, pipeline_id: int) -> list:
-        jobs, page = [], 1
-        while True:
-            batch = self._get_json(
-                f"{self._project_root(project)}/pipelines/{pipeline_id}/jobs",
-                {"per_page": 100, "page": page, "include_retried": "false"},
-            )
-            if not batch:
-                break
-            jobs.extend(batch)
-            page += 1
-        return jobs
-
-    def job_trace(self, project: str, job_id: int) -> str:
-        return self._get(f"{self._project_root(project)}/jobs/{job_id}/trace").decode(errors="replace")
-
-    def artifacts_zip(self, project: str, job_id: int) -> bytes | None:
-        """Download the full artifacts zip. Returns None if no artifacts exist for this job."""
-        try:
-            return self._get(f"{self._project_root(project)}/jobs/{job_id}/artifacts")
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                return None
-            raise
-
-
-def _resolve(client: _Client, raw_url: str, log=print) -> tuple[str, int, dict]:
-    """
-    Returns (project, pipeline_id, extra_pipeline_fields).
-    extra_pipeline_fields carries schedule_description when resolved from a schedule URL.
-    """
-    url = raw_url.rstrip("/")
-
-    m = _SCHEDULE_API_RE.match(url)
-    if m:
-        project = m.group(2)
-        schedule_id = int(m.group(3))
-        log(f"Schedule URL — fetching schedule {schedule_id} ...")
-        sched = client.schedule(project, schedule_id)
-        log(f"  schedule: {sched.get('description', '')} — resolving latest pipeline ...")
-        p = client.latest_scheduled_pipeline(project, schedule_id)
-        pipeline_id = p["id"]
-        log(f"  latest pipeline: {pipeline_id} ({p.get('web_url', '')})")
-        return project, pipeline_id, {"name": sched.get("description", "")}
-
-    m = _WEB_URL_RE.match(url)
-    if not m:
-        raise ValueError(f"Cannot parse as GitLab job/pipeline/schedule URL: {raw_url!r}")
-
-    project = m.group(2)
-    kind = m.group(3)  # "jobs" or "pipelines"
-    id_ = int(m.group(4))
-
-    if kind == "jobs":
-        log(f"Job URL — fetching job {id_} to resolve pipeline ...")
-        job_data = client.job(project, id_)
-        pipeline_id = job_data["pipeline"]["id"]
-        log(f"  pipeline: {pipeline_id}")
-        return project, pipeline_id, {}
-
-    return project, id_, {}
-
-
-def _extract_matching(zip_bytes: bytes, patterns: list[re.Pattern]) -> list[tuple[str, bytes]]:
-    """Return [(path, content)] for every file in the zip whose path matches any pattern."""
-    matched = []
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        for name in zf.namelist():
-            if any(p.search(name) for p in patterns):
-                matched.append((name, zf.read(name)))
-    return matched
-
 
 def _pick(data: dict, *keys) -> dict:
     return {k: data[k] for k in keys if k in data}
 
 
+def _resolve(client: Client, raw_url: str, log) -> tuple[str, int, int | None]:
+    """Returns (project, pipeline_id, schedule ID when the URL is a schedule's)."""
+    url = raw_url.rstrip("/")
+
+    m = _SCHEDULE_API_RE.match(url)
+    if m:
+        project, schedule_id = m.group(2), int(m.group(3))
+        log(f"Schedule URL — fetching schedule {schedule_id} ...")
+        pipelines = client.get(f"{project_path(project)}/pipeline_schedules/{schedule_id}/pipelines",
+                               {"per_page": 1, "order_by": "id", "sort": "desc"})
+        if not pipelines:
+            raise ValueError(f"No pipelines found for schedule {schedule_id}")
+        log(f"  latest pipeline: {pipelines[0]['id']}")
+        return project, pipelines[0]["id"], schedule_id
+
+    m = _WEB_URL_RE.match(url)
+    if not m:
+        raise ValueError(f"Cannot parse as GitLab job/pipeline/schedule URL: {raw_url!r}")
+    project, kind, id_ = m.group(2), m.group(3), int(m.group(4))
+    if kind == "jobs":
+        log(f"Job URL — fetching job {id_} to resolve pipeline ...")
+        return project, client.get(f"{project_path(project)}/jobs/{id_}")["pipeline"]["id"], None
+    return project, id_, None
+
+
+def _schedule_of(client: Client, project: str, pipeline_id: int, schedule_id: int | None,
+                 description: str) -> dict:
+    """{id, description} of the schedule that started the pipeline: by ID, by description, else by its pipelines."""
+    schedules = client.get(f"{project_path(project)}/pipeline_schedules", {"per_page": 100})
+    for sched in schedules:
+        if sched["id"] == schedule_id or (description and sched.get("description") == description):
+            return {"id": sched["id"], "description": sched.get("description", "")}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        recent = pool.map(lambda sc: client.get(f"{project_path(project)}/pipeline_schedules/{sc['id']}/pipelines",
+                                                {"per_page": 50, "sort": "desc"}), schedules)
+        for sched, pipelines in zip(schedules, recent):
+            if any(p["id"] == pipeline_id for p in pipelines):
+                return {"id": sched["id"], "description": sched.get("description", "")}
+    return {"id": None, "description": description}
+
+
+def _open_artifacts(client: Client, project: str, job_id: int):
+    """Range access to a job's artifacts archive, with its tail already read, or None."""
+    return client.ranged(f"{project_path(project)}/jobs/{job_id}/artifacts", remote_zip.TAIL)
+
+
+def _extract_artifacts(remote, job_dir: Path, tests: list[str]) -> list[str]:
+    """Known log files of the archive, read by byte ranges: the failed tests' own when their paths name them, else
+    all. A 180 MB E2E archive costs a few MB."""
+    if not remote:
+        return []
+
+    def select(names: list[str]) -> list[str]:
+        logs = [n for n in names if any(p.search(n) for p in _ARTIFACT_PATTERNS)]
+        own = [n for n in logs if any(f"/{t}/" in n for t in tests)]
+        return own or logs
+
+    paths = []
+    for name, content in remote_zip.extract(*remote, select).items():
+        dest = job_dir / "artifacts" / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(content)
+        paths.append(str(dest))
+    return sorted(paths)
+
+
+def _artifacts_of(artifacts: list[str], test: str | None) -> list[str]:
+    """A test's own artifacts, found by a path segment named after it (Retina: tests/<file>/<test>/...); all the
+    job's when none is, or for a job-level failure."""
+    if test is None:
+        return artifacts
+    own = [a for a in artifacts if f"/{test}/" in a]
+    return own or artifacts
+
+
+def _job_info(job: dict, node: dict) -> dict:
+    return {**_pick(job, "id", "name", "stage", "web_url"), "allow_failure": bool(job.get("allow_failure")),
+            "project": node["project"], "pipeline_id": node["id"], "via": node["bridge"]}
+
+
+def _fetch_job(client: Client, node: dict, job: dict, has_failed_tests: bool, pipeline_dir: Path, log) -> list[dict]:
+    """The failures of one failed job, with its trace, test outputs and artifacts on disk."""
+    proj, pid = node["project"], node["id"]
+    info = _job_info(job, node)
+    job_dir = pipeline_dir / str(job["id"])
+    job_dir.mkdir(exist_ok=True)
+    log(f"  [{job['id']}] {job['name']} ...")
+
+    def get_trace() -> str | None:
+        try:
+            text = client.get_raw(f"{project_path(proj)}/jobs/{job['id']}/trace").decode(errors="replace")
+        except GitLabError as exc:
+            log(f"    trace: skipped ({exc})")
+            return None
+        (job_dir / "trace.txt").write_text(text, encoding="utf-8")
+        return str(job_dir / "trace.txt")
+
+    # The test report is slow to load (seconds for a 12k-test suite): trace and archive index meanwhile.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        trace_future = pool.submit(get_trace)
+        remote_future = pool.submit(_open_artifacts, client, proj, job["id"])
+        cases = failed_test_cases(client, proj, pid, [job["id"]]) if has_failed_tests else []
+        artifacts = _extract_artifacts(remote_future.result(), job_dir, [c["name"] for c in cases])
+        trace = trace_future.result()
+
+    if not cases:
+        return [{"job": info, "test": None, "output": None, "trace": trace, "artifacts": artifacts,
+                 "recent_failures": None}]
+    (job_dir / "tests").mkdir(exist_ok=True)
+    failures = []
+    for n, case in enumerate(cases, 1):
+        out = job_dir / "tests" / f"{n}.txt"
+        text = "\n\n".join(t for t in (case.get("stackTrace"), case.get("systemOutput")) if t)
+        out.write_text(strip_ansi(text), encoding="utf-8")
+        recent = case.get("recentFailures")
+        failures.append({
+            "job": info,
+            "test": case["name"],
+            "output": str(out),
+            "trace": trace,
+            "artifacts": _artifacts_of(artifacts, case["name"]),
+            "recent_failures": {"count": recent["count"], "branch": recent["baseBranch"]} if recent else None,
+        })
+    return failures
+
+
+def fetch(client: Client, project: str, pipeline_id: int, schedule_id: int | None, output_dir: Path, log) -> dict:
+    root = client.get(f"{project_path(project)}/pipelines/{pipeline_id}")
+    if project.isdigit():
+        project = client.get(project_path(project))["path_with_namespace"]
+    # In a CI job of this same pipeline, GitLab already names the schedule.
+    schedule = ""
+    if os.environ.get("CI_PIPELINE_ID") == str(pipeline_id):
+        schedule = os.environ.get("CI_PIPELINE_SCHEDULE_DESCRIPTION", "")
+    sched = {"id": schedule_id, "description": schedule}
+    if root.get("source") == "schedule":
+        sched = _schedule_of(client, project, pipeline_id, schedule_id, schedule)
+
+    pipeline_dir = output_dir / str(pipeline_id)
+    pipeline_dir.mkdir(parents=True, exist_ok=True)
+
+    result = {
+        "pipeline": {
+            **_pick(root, "id", "ref", "sha", "status", "source", "created_at", "web_url"),
+            "project": project,
+            "schedule": sched["description"],
+            "schedule_id": sched["id"],
+        },
+        "output_dir": str(pipeline_dir),
+        "failures": [],
+    }
+
+    for node in pipeline_tree(client, project, pipeline_id):
+        proj, pid = node["project"], node["id"]
+        failed = client.get_all(f"{project_path(proj)}/pipelines/{pid}/jobs", {"scope[]": "failed"})
+        log(f"Pipeline {proj} {pid}: {len(failed)} failed jobs")
+        if not failed:
+            continue
+
+        # Suites with failing tests, by job: a suite is named after its job and lists the jobs that fed it.
+        failing_builds = set()
+        for suite in client.get(f"{project_path(proj)}/pipelines/{pid}/test_report_summary")["test_suites"]:
+            if suite.get("failed_count") or suite.get("error_count"):
+                failing_builds.update(suite.get("build_ids") or [])
+
+        def fetch_one(job: dict) -> list[dict]:
+            return _fetch_job(client, node, job, job["id"] in failing_builds, pipeline_dir, log)
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for failures in pool.map(fetch_one, failed):
+                result["failures"] += failures
+
+    result["failures"] = [{"id": f"F{n}", **f} for n, f in enumerate(result["failures"], 1)]
+
+    (pipeline_dir / "fetch.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    return result
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Fetch a GitLab pipeline and failed job traces for triage")
+    parser = argparse.ArgumentParser(description="Fetch the failures of a GitLab pipeline for triage")
     parser.add_argument("url", help="GitLab job URL, pipeline URL, or schedule API URL")
-    parser.add_argument(
-        "-o", "--output-dir",
-        type=Path,
-        default=Path("/tmp/triage"),
-        help="Root output directory (default: /tmp/triage)",
-    )
-    parser.add_argument(
-        "--token",
-        default=os.environ.get("GITLAB_TOKEN", ""),
-        metavar="TOKEN",
-        help="GitLab personal/project access token (default: $GITLAB_TOKEN)",
-    )
-    parser.add_argument(
-        "--quiet", "-q",
-        action="store_true",
-        help="Suppress progress output (stderr). JSON result is always printed to stdout.",
-    )
+    parser.add_argument("-o", "--output-dir", type=Path, default=Path("/tmp/triage"),
+                        help="Root output directory (default: /tmp/triage)")
+    parser.add_argument("--token", default=os.environ.get("GITLAB_TOKEN", ""), metavar="TOKEN",
+                        help="GitLab personal/project access token (default: $GITLAB_TOKEN)")
+    parser.add_argument("--quiet", "-q", action="store_true",
+                        help="Suppress progress output (stderr). JSON result is always printed to stdout.")
     args = parser.parse_args()
 
     def log(*msg):
@@ -194,72 +255,14 @@ def main():
     base_url = re.match(r"https?://[^/]+", args.url)
     if not base_url:
         parser.error(f"Cannot extract base URL from: {args.url!r}")
-    client = _Client(base_url.group(), token=args.token)
+    client = Client(base_url.group(), token=args.token)
 
     try:
-        project, pipeline_id, extra = _resolve(client, args.url, log=log)
-    except (ValueError, urllib.error.HTTPError) as exc:
+        project, pipeline_id, schedule_id = _resolve(client, args.url, log)
+        result = fetch(client, project, pipeline_id, schedule_id, args.output_dir, log)
+    except (ValueError, GitLabError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
-
-    log(f"Fetching pipeline {pipeline_id} ...")
-    pipeline_data = client.pipeline(project, pipeline_id)
-
-    pipeline_dir = args.output_dir / str(pipeline_id)
-    pipeline_dir.mkdir(parents=True, exist_ok=True)
-
-    pipeline_json = _pick(pipeline_data, "id", "iid", "name", "ref", "status", "source", "sha",
-                          "created_at", "updated_at", "started_at", "finished_at", "web_url",
-                          "coverage", "duration")
-    pipeline_json.update(extra)
-    (pipeline_dir / "data.json").write_text(json.dumps(pipeline_json, indent=2), encoding="utf-8")
-
-    all_jobs = client.pipeline_jobs(project, pipeline_id)
-    failed_jobs = [j for j in all_jobs if j.get("status") == "failed"]
-    log(f"  {len(all_jobs)} total jobs, {len(failed_jobs)} failed")
-
-    result = {
-        "pipeline": pipeline_json,
-        "output_dir": str(pipeline_dir),
-        "failed_jobs": [],
-    }
-
-    for job in failed_jobs:
-        job_id = job["id"]
-        job_name = job.get("name", str(job_id))
-        log(f"  [{job_id}] {job_name} ...")
-
-        job_dir = pipeline_dir / str(job_id)
-        job_dir.mkdir(exist_ok=True)
-
-        job_json = _pick(job, "id", "name", "status", "stage", "ref", "duration",
-                         "queued_duration", "created_at", "started_at", "finished_at",
-                         "web_url", "tag", "allow_failure")
-        (job_dir / "data.json").write_text(json.dumps(job_json, indent=2), encoding="utf-8")
-
-        job_entry = {**job_json, "trace": None, "artifacts": []}
-
-        try:
-            trace = client.job_trace(project, job_id)
-            trace_path = job_dir / "trace.txt"
-            trace_path.write_text(trace, encoding="utf-8", errors="replace")
-            job_entry["trace"] = str(trace_path)
-            log(f"    trace: {len(trace):,} bytes")
-        except urllib.error.HTTPError as exc:
-            log(f"    trace: skipped ({exc})")
-
-        if _ARTIFACT_PATTERNS:
-            zip_bytes = client.artifacts_zip(project, job_id)
-            if zip_bytes:
-                for artifact_path, content in _extract_matching(zip_bytes, _ARTIFACT_PATTERNS):
-                    dest = job_dir / "artifacts" / artifact_path
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    dest.write_bytes(content)
-                    job_entry["artifacts"].append(str(dest))
-                    log(f"    artifact: {artifact_path}")
-
-        result["failed_jobs"].append(job_entry)
-
     print(json.dumps(result, indent=2))
 
 

@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "ci-triage",
-      "description": "Triage failed jobs in a GitLab CI pipeline — classify each failure and match it to known issues in the ocudu group.",
+      "description": "Triage failed jobs in a GitLab CI pipeline — match each failing test to one issue in the ocudu group, or flag it as new.",
       "source": "./skills/ci-triage"
     },
     {
