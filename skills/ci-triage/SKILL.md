@@ -12,7 +12,7 @@ user-invocable: true
 context: inline
 license: BSD-3-Clause-Open-MPI
 compatibility: Requires python3 (stdlib only) and jq. Set GITLAB_TOKEN to a personal access token with read_api scope for gitlab.com/ocudu.
-allowed-tools: Bash(python3 *ci-triage*), Bash(jq *), Read(/tmp/triage/*), Write(/tmp/triage/*)
+allowed-tools: Bash(python3 *ci-triage*), Bash(jq *), Read(//tmp/triage/**), Edit(//tmp/triage/**)
 ---
 
 # CI Job Failure Triage
@@ -115,8 +115,9 @@ line containing `section_start` and `after_script` (cleanup noise). Read more ar
 
 For each group, extract:
 
-1. **key_error** — the most specific diagnostic line (assertion message, sanitizer error, compiler error, failed
-   criterion).
+1. **key_error** — the most specific diagnostic line (assertion message, sanitizer error, compiler error). For an
+   E2E failed criterion, name the symptom too: the criterion says what was measured, the first `[ERROR]`/`[WARNING]`
+   of the gNB or UE says what happened (`Error Indications; RLF detected: MAC max consecutive CRC KOs reached`).
 2. **error_type** — one of `build | crash | assertion | timeout | setup | criteria`.
 3. **excerpt** — up to 30 lines around the key error, for a new issue's logs section.
 
@@ -131,7 +132,7 @@ more of its failures from `fetch.json` and decide those apart (Step 4).
    aside: addresses, IDs, timestamps, slot numbers) is a High candidate.
 2. **Open `bug::ci` issues** (in context, no command) — High: suite or test name, or the exact error phrase, in the
    **title**; Medium: key error phrase or component in the **description**. Prefer more recent `updated_at`.
-3. **All open issues** — only if no High candidate yet:
+3. **All open issues**, any label — only if no High candidate yet:
 
    ```bash
    python3 ${CLAUDE_SKILL_DIR}/scripts/query_issues.py --group ocudu --state opened --search "KEYWORD" --per-page 30
@@ -143,8 +144,10 @@ more of its failures from `fetch.json` and decide those apart (Step 4).
    python3 ${CLAUDE_SKILL_DIR}/scripts/query_issues.py --group ocudu --labels "bug::ci" --state closed --search "KEYWORD" --per-page 30
    ```
 
-Keywords (2–4 per group): suite name or fragments (`inter_du_ho`, `bands`), error phrase substrings, component
-labels (`CU-CP`, `open5gs`), failed criterion (`Error Indications`).
+Keywords (2–4 per group), one word or a short phrase each: GitLab matches whole words in titles and descriptions, so
+`coverage.uplink` finds nothing where `coverage` finds "RLFs in coverage test". Use words of the suite param
+(`coverage`, `inter_du_ho`, `bands`), of the symptom (`RLF`, `CRC KOs`), component labels (`CU-CP`, `open5gs`) and
+the failed criterion (`Error Indications`).
 
 ### 3b — Read the notes of the top candidates
 
@@ -221,6 +224,4 @@ per decision (a group, or a failure decided apart), with its jobs, tests, key fa
 failures. If it lists problems, fix `decisions.json` and
 run it again.
 
-Show the table as the result. Nothing is written to GitLab: in CI, the AI box posts `triage.json` with
-`post_triage.py`; to preview what it would write, run `tools/ai_box/bin/post_triage.py <output_dir>/triage.json` from
-an ocudu_tools checkout (dry run by default).
+Show the table as the result. Nothing is written to GitLab.
