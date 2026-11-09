@@ -22,6 +22,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 _NO_REDIRECT = urllib.request.build_opener(_NoRedirect)
+TIMEOUT = 60  # seconds without a byte from GitLab before a request fails
 
 
 class GitLabError(Exception):
@@ -41,13 +42,15 @@ class Client:
             headers["Content-Type"] = "application/json"
         req = urllib.request.Request(url, data=body, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req) as resp:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
                 return resp.read()
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode(errors="replace")[:500]
             raise GitLabError(f"HTTP {exc.code} {method} {url}: {detail}") from exc
         except urllib.error.URLError as exc:
             raise GitLabError(f"{method} {url}: {exc.reason}") from exc
+        except TimeoutError as exc:
+            raise GitLabError(f"{method} {url}: no response in {TIMEOUT} s") from exc
 
     def _url(self, path: str, params: dict | None = None) -> str:
         url = f"{self.base_url}/api/v4/{path.lstrip('/')}"
@@ -85,7 +88,7 @@ class Client:
         None if it doesn't exist. A redirect (to object storage) is followed without the token."""
         url, headers = self._url(path), dict(self._headers)
         try:
-            with _NO_REDIRECT.open(urllib.request.Request(url, headers=headers, method="HEAD")):
+            with _NO_REDIRECT.open(urllib.request.Request(url, headers=headers, method="HEAD"), timeout=TIMEOUT):
                 pass
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
@@ -93,15 +96,17 @@ class Client:
             if exc.code not in (301, 302, 303, 307, 308):
                 raise GitLabError(f"HTTP {exc.code} HEAD {url}") from exc
             url, headers = exc.headers["Location"], {}
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise GitLabError(f"HEAD {url}: {exc}") from exc
 
         def get(range_header: str) -> tuple[bytes, str]:
             req = urllib.request.Request(url, headers={**headers, "Range": range_header})
             try:
-                with urllib.request.urlopen(req) as resp:
+                with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
                     if resp.status != 206:
                         raise GitLabError(f"no range support at {url.split('?')[0]}")
                     return resp.read(), resp.headers["Content-Range"]
-            except urllib.error.URLError as exc:
+            except (urllib.error.URLError, TimeoutError) as exc:
                 raise GitLabError(f"GET {url.split('?')[0]}: {exc}") from exc
 
         data, content_range = get(f"bytes=-{tail}")

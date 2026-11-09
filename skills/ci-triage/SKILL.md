@@ -21,7 +21,8 @@ allowed-tools: Bash(python3 *ci-triage*), Bash(jq *), Read(/tmp/triage/*), Write
 
 Match every failure of a pipeline, child pipelines included, to **exactly one** issue in the `gitlab.com/ocudu`
 group, or flag it as new. A failure is one failing test of a failed job; a job whose test report has no failing test
-(build, setup) is one failure. Output is `decisions.json`, turned by a script into `triage.json` and a table.
+(build, setup) is one failure. Failures that are likely one problem come grouped, and you decide per group. Output is
+`decisions.json`, turned by a script into `triage.json` and a table.
 
 This skill only reads GitLab. Root-cause analysis is not its job: say which issue a failure belongs to, not why it
 happened.
@@ -41,47 +42,56 @@ happened.
 ## Step 1 — Fetch failures and known issues in parallel
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/fetch_pipeline.py --quiet "$url"
+python3 ${CLAUDE_SKILL_DIR}/scripts/fetch_pipeline.py --quiet "$url" | python3 ${CLAUDE_SKILL_DIR}/scripts/group_failures.py
 ```
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/query_issues.py --group ocudu --labels "bug::ci" --state opened --with-triage
 ```
 
-`fetch_pipeline.py` follows downstream pipelines and reads failing tests from the test reports. It prints, and saves
-as `<output_dir>/fetch.json`:
+`fetch_pipeline.py` follows downstream pipelines and reads failing tests from the test reports; it saves every
+failure, with its job, test output, trace and artifacts, to `<output_dir>/fetch.json`. `group_failures.py` groups the
+failures that are likely one problem, saves the groups to `<output_dir>/groups.json`, and prints a summary by group:
 
 ```json
 {
   "pipeline": {"id": 123, "project": "ocudu/ocudu", "ref": "dev", "schedule": "Nightly", "web_url": "...", ...},
   "output_dir": "/tmp/triage/123",
-  "failures": [
-    {"id": "F1", "test": "cu_du_test.when_x",
-     "job": {"id": 456, "name": "ubsan avx2", "stage": "...", "web_url": "...", "project": "ocudu/ocudu",
-             "allow_failure": false, "pipeline_id": 123, "via": null},
-     "output": "/tmp/triage/123/456/tests/1.txt", "trace": "/tmp/triage/123/456/trace.txt",
-     "artifacts": ["/tmp/triage/123/456/artifacts/Testing/Temporary/MemoryChecker.3.log"],
-     "recent_failures": {"count": 10, "branch": "dev"}},
-    {"id": "F2", "test": null, "job": {"id": 457, "name": "build", "via": "trigger deploy", ...},
-     "output": null, "trace": "/tmp/triage/124/457/trace.txt", "artifacts": [], "recent_failures": null}
+  "groups": [
+    {"id": "G1", "signature": "arm_neon.h:N:N: runtime error: store to misaligned address ADDR for type 'uintN_t' ...",
+     "count": 284, "jobs": [{"name": "sanitizers arm neon: [...]", "allow_failure": false, "via": null}, ...],
+     "tests": ["ofh_iq_compression_test/...", "..."], "more_tests": 137,
+     "example": {"id": "F4", "output": "/tmp/triage/123/456/tests/1.txt", "trace": "/tmp/triage/123/456/trace.txt",
+                 "artifacts": ["..."], "recent_failures": {"count": 10, "branch": "dev"}}},
+    {"id": "G2", "signature": null, "count": 1, "jobs": [{"name": "build", "via": "trigger deploy", ...}],
+     "tests": [], "more_tests": 0, "failures": ["F2"],
+     "example": {"id": "F2", "output": null, "trace": "/tmp/triage/124/457/trace.txt", ...}}
   ]
 }
 ```
 
-One entry per failing test; a failed job with no failing test in its report (build, setup) is one entry with
-`test: null`. `job.via` names the trigger job of a downstream pipeline. `artifacts` are the test's own logs when their
-path names the test (E2E), else all of the job's. `recent_failures` is GitLab's count of the test's failures on the
-default branch in the last 14 days, all pipelines mixed: a hint that the failure is known, not proof. A job allowed to fail is triaged like any other, with
-`job.allow_failure: true`. If `failures` is empty, report "No failed jobs in this pipeline" and stop.
+- A group is the failures with the same first error line in their test output (`signature`: paths, addresses and
+  numbers replaced), in any job; failures without a recognised error line are grouped by job and test suite.
+- An E2E (pytest) test is a group of its own: a test is a scenario, and the same failed criterion in another
+  scenario may be another problem. Give several such groups the same issue when they are one.
+- A failed job with no failing test in its report (build, setup) is a group of its own, with `example.output: null`.
+- `failures` lists the group's failure IDs when there are 10 or fewer; `groups.json` has them all, and `fetch.json`
+  every failure's detail. You rarely need either.
+- `job.via` names the trigger job of a downstream pipeline. A job allowed to fail is triaged like any other.
+- `artifacts` are the test's own logs when their path names the test (E2E), else all of the job's.
+- `recent_failures` is GitLab's count of the test's failures on the default branch in the last 14 days, all pipelines
+  mixed: a hint that the failure is known, not proof.
+
+If `groups` is empty, report "No failed jobs in this pipeline" and stop.
 
 The issues query returns `{"issues": [...], "total": N}`. Each issue has `ref` (`ocudu/ocudu#990`), `title`, `state`,
 `description` (clipped) and `triage`: the failures earlier triages matched to it (`job`, `test`, `key_error`,
 `pipeline`, `date`). Keep it in context; it is reused for every failure.
 
-## Step 2 — Read each failure
+## Step 2 — Read each group
 
-For a test failure, `Read` its `output` file: the test's own output, from the test report. For a job failure
-(`test: null`), `Read` its `trace`: start with the last 200 lines (`offset=-200`), and ignore everything after a
+`Read` the group's `example.output`: one test's own output, from the test report. For a job failure
+(`output: null`), `Read` its `trace`: start with the last 200 lines (`offset=-200`), and ignore everything after a
 line containing `section_start` and `after_script` (cleanup noise). Read more around error markers only if needed.
 
 **Formats:**
@@ -100,17 +110,17 @@ line containing `section_start` and `after_script` (cleanup noise). Read more ar
 - **"Emergency flush of the logger"** is never the root cause — the gNB crashed upstream. Read `agent-log*.log`
   artifacts first, then `*stdout*.log`.
 
-For each failure, extract:
+For each group, extract:
 
 1. **key_error** — the most specific diagnostic line (assertion message, sanitizer error, compiler error, failed
    criterion).
 2. **error_type** — one of `build | crash | assertion | timeout | setup | criteria`.
 3. **excerpt** — up to 30 lines around the key error, for a new issue's logs section.
 
-Failures with the same job and key error (E2E jobs often fail many tests the same way) can be read once and decided
-together, but each still gets its own decision.
+If the example shows the group mixes different problems (a signature too generic, or no signature), read a few
+more of its failures from `fetch.json` and decide those apart (Step 4).
 
-## Step 3 — Match each failure to one issue
+## Step 3 — Match each group to one issue
 
 ### 3a — Candidates
 
@@ -130,12 +140,12 @@ together, but each still gets its own decision.
    python3 ${CLAUDE_SKILL_DIR}/scripts/query_issues.py --group ocudu --labels "bug::ci" --state closed --search "KEYWORD" --per-page 30
    ```
 
-Keywords (2–4 per failure): suite name or fragments (`inter_du_ho`, `bands`), error phrase substrings, component
+Keywords (2–4 per group): suite name or fragments (`inter_du_ho`, `bands`), error phrase substrings, component
 labels (`CU-CP`, `open5gs`), failed criterion (`Error Indications`).
 
 ### 3b — Read the notes of the top candidates
 
-For the top 3 candidates of each failure, High ones included, get the issues with their comments, in one call:
+For the top 3 candidates of each group, High ones included, get the issues with their comments, in one call:
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/get_issue.py ocudu/ocudu#990 ocudu/ocudu#985 ocudu/ocudu#979
@@ -164,12 +174,13 @@ the top candidates of all failures and make one call.
 
 ## Step 4 — Write `decisions.json`
 
-`Write` `<output_dir>/decisions.json`, one entry per failure ID:
+`Write` `<output_dir>/decisions.json`, one entry per group. An entry for a failure ID overrides its group's decision
+for that failure only: use it to split a group.
 
 ```json
 {
-  "failures": {
-    "F1": {
+  "decisions": {
+    "G1": {
       "error_type": "crash",
       "key_error": "runtime error: reference binding to null pointer of type 'struct mac_pcap'",
       "excerpt": "...",
@@ -177,12 +188,12 @@ the top candidates of all failures and make one call.
       "issue": "ocudu/ocudu#962",
       "reason": "same test and UBSan error as the title"
     },
-    "F2": {
+    "G2": {
       "error_type": "criteria", "key_error": "...", "excerpt": "...",
       "verdict": "Check", "issue": "ocudu/ocudu#979", "reason": "...",
       "alternatives": [{"issue": "ocudu/ocudu#985", "reason": "..."}]
     },
-    "F3": {
+    "G3": {
       "error_type": "build", "key_error": "...", "excerpt": "...",
       "verdict": "No match", "new_issue": "A", "related": "ocudu/ocudu#900"
     }
@@ -199,7 +210,8 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/build_triage.py <output_dir>
 ```
 
 It checks `decisions.json` against `fetch.json`, writes `triage.json` and `triage.md`, and prints the table: one row
-per failure, with its job, test, key failure, issue, verdict and recent failures. If it lists problems, fix `decisions.json` and
+per decision (a group, or a failure decided apart), with its jobs, tests, key failure, issue, verdict and recent
+failures. If it lists problems, fix `decisions.json` and
 run it again.
 
 Show the table as the result. Nothing is written to GitLab: in CI, the AI box posts `triage.json` with

@@ -9,14 +9,15 @@ Merge a triage's decisions with the fetched data, check them, and render the tri
 Usage:
     build_triage.py <pipeline_dir>
 
-Reads fetch.json and decisions.json from <pipeline_dir>. Writes triage.json and triage.md
+Reads fetch.json, groups.json (group_failures.py) and decisions.json from <pipeline_dir>. Writes triage.json and triage.md
 there and prints the table. Exits 1, listing every problem, when decisions.json is incomplete or inconsistent, so it
 can be fixed and the script run again.
 
-decisions.json, written by the model, one entry per failure ID of fetch.json:
+decisions.json, written by the model, one entry per group of fetch.json; a failure ID entry overrides its group's
+decision for that failure:
 {
-  "failures": {
-    "F1": {
+  "decisions": {
+    "G1": {
       "error_type": "build | crash | assertion | timeout | setup | criteria",
       "key_error": "the most specific error line",
       "excerpt": "up to 30 lines of log around it",
@@ -25,8 +26,9 @@ decisions.json, written by the model, one entry per failure ID of fetch.json:
       "reason": "one line: why this issue",
       "alternatives": [{"issue": "group/project#iid", "reason": "..."}],   # Check only
       "related": "group/project#iid",            # optional: a new issue links to it
-      "new_issue": "A"                           # No match only: failures with the same key share one new issue
-    }
+      "new_issue": "A"                           # No match only: decisions with the same key share one new issue
+    },
+    "F7": {"...": "same fields, for failure F7 only"}
   }
 }
 """
@@ -52,41 +54,64 @@ def _check_ref(errors: list, fid: str, field: str, value) -> None:
         errors.append(f"{fid}: {field} must be 'group/project#iid', got {value!r}")
 
 
+def with_groups(fetched: dict, grouped: dict) -> dict:
+    """fetch.json with group_failures.py's groups, and each failure's group."""
+    groups = grouped.get("groups") or []
+    group_of = {fid: g["id"] for g in groups for fid in g["failures"]}
+    return {**fetched, "groups": groups,
+            "failures": [{**f, "group": group_of.get(f["id"])} for f in fetched["failures"]]}
+
+
+def _id_order(key: str) -> tuple:
+    return key[0], int(key[1:]) if key[1:].isdigit() else 0
+
+
 def validate(fetched: dict, decisions: dict) -> list[str]:
     errors = []
-    wanted = {f["id"] for f in fetched["failures"]}
-    given = decisions.get("failures") or {}
-    for fid in sorted(wanted - given.keys(), key=lambda x: int(x[1:])):
-        errors.append(f"{fid}: no decision")
-    for fid in sorted(given.keys() - wanted):
-        errors.append(f"{fid}: not a failure of fetch.json")
+    groups = {g["id"]: g for g in fetched["groups"]}
+    failures = {f["id"] for f in fetched["failures"]}
+    given = decisions.get("decisions") or {}
+    for key in sorted(given.keys() - groups.keys() - failures, key=_id_order):
+        errors.append(f"{key}: not a group or failure of fetch.json")
+    for gid, g in groups.items():
+        if gid in given:
+            continue
+        missing = [f for f in g["failures"] if f not in given]
+        if len(missing) == len(g["failures"]):
+            errors.append(f"{gid}: no decision")
+        elif missing:
+            errors.append(f"{gid}: no decision; {len(missing)} of its {len(g['failures'])} failures have none of their "
+                          f"own")
+    for f in fetched["failures"]:
+        if f["group"] is None and f["id"] not in given:
+            errors.append(f"{f['id']}: no decision (in no group of groups.json)")
 
-    for fid, d in given.items():
-        if fid not in wanted:
+    for key, d in given.items():
+        if key not in groups and key not in failures:
             continue
         verdict = d.get("verdict")
         if verdict not in VERDICTS:
-            errors.append(f"{fid}: verdict must be one of {sorted(VERDICTS)}, got {verdict!r}")
+            errors.append(f"{key}: verdict must be one of {list(VERDICTS)}, got {verdict!r}")
             continue
         if d.get("error_type") not in ERROR_TYPES:
-            errors.append(f"{fid}: error_type must be one of {sorted(ERROR_TYPES)}, got {d.get('error_type')!r}")
+            errors.append(f"{key}: error_type must be one of {sorted(ERROR_TYPES)}, got {d.get('error_type')!r}")
         if not (d.get("key_error") or "").strip():
-            errors.append(f"{fid}: key_error is empty")
-        _check_ref(errors, fid, "issue", d.get("issue"))
-        _check_ref(errors, fid, "related", d.get("related"))
+            errors.append(f"{key}: key_error is empty")
+        _check_ref(errors, key, "issue", d.get("issue"))
+        _check_ref(errors, key, "related", d.get("related"))
         for alt in d.get("alternatives") or []:
-            _check_ref(errors, fid, "alternatives[].issue", alt.get("issue"))
+            _check_ref(errors, key, "alternatives[].issue", alt.get("issue"))
 
         if verdict == "No match":
             if d.get("issue"):
-                errors.append(f"{fid}: No match has no issue; use related to link one")
+                errors.append(f"{key}: No match has no issue; use related to link one")
         else:
             if not d.get("issue"):
-                errors.append(f"{fid}: {verdict} needs an issue")
+                errors.append(f"{key}: {verdict} needs an issue")
             if d.get("new_issue"):
-                errors.append(f"{fid}: new_issue is only for No match")
+                errors.append(f"{key}: new_issue is only for No match")
         if verdict != "Check" and d.get("alternatives"):
-            errors.append(f"{fid}: alternatives are only for Check")
+            errors.append(f"{key}: alternatives are only for Check")
     return errors
 
 
@@ -96,11 +121,15 @@ def _excerpt(decision: dict) -> str:
 
 
 def build(fetched: dict, decisions: dict) -> dict:
+    given = decisions["decisions"]
     failures = []
     for f in fetched["failures"]:
-        d = decisions["failures"][f["id"]]
+        key = f["id"] if f["id"] in given else f["group"]
+        d = given[key]
         failures.append({
             "id": f["id"],
+            "group": f["group"],
+            "decision": key,
             "job": f["job"],
             "test": f.get("test"),
             "error_type": d["error_type"],
@@ -110,7 +139,7 @@ def build(fetched: dict, decisions: dict) -> dict:
             "issue": d.get("issue") and {"ref": d["issue"], "reason": d.get("reason", "")},
             "alternatives": d.get("alternatives") or [],
             "related": d.get("related"),
-            "new_issue": (d.get("new_issue") or f["id"]) if d["verdict"] == "No match" else None,
+            "new_issue": (d.get("new_issue") or key) if d["verdict"] == "No match" else None,
             "recent_failures": f.get("recent_failures"),
         })
     return {"pipeline": fetched["pipeline"], "failures": failures}
@@ -126,28 +155,41 @@ def _issue_url(pipeline: dict, ref: str) -> str:
     return f"{re.match(r'https?://[^/]+', pipeline['web_url']).group()}/{project}/-/issues/{iid}"
 
 
+_MAX_JOBS = 3
+
+
+def _more(items: list, limit: int, noun: str) -> list:
+    return items[:limit] + ([(f"+{len(items) - limit} more {noun}", None)] if len(items) > limit else [])
+
+
 def rows(triage: dict) -> list[dict]:
-    """One row per failure; cells are (text, url) pairs, url None when there is no link."""
+    """One row per decision: a group, or a failure decided on its own. A cell is a list of (text, url) parts."""
     p = triage["pipeline"]
-    shared = Counter(f["new_issue"] for f in triage["failures"] if not f["issue"])
-    out = []
+    by_decision: dict = {}
     for f in triage["failures"]:
-        job = f["job"]["name"] + (" (allowed to fail)" if f["job"].get("allow_failure") else "")
+        by_decision.setdefault(f["decision"], []).append(f)
+    shared = Counter(fs[0]["new_issue"] for fs in by_decision.values() if not fs[0]["issue"])
+    out = []
+    for members in by_decision.values():
+        f = members[0]
+        jobs = list({m["job"]["id"]: m["job"] for m in members}.values())
+        job_parts = [(j["name"] + (" (allowed to fail)" if j.get("allow_failure") else ""), j["web_url"]) for j in jobs]
+        tests = list(dict.fromkeys(m["test"] for m in members if m["test"]))
         if f["issue"]:
             ref = f["issue"]["ref"]
-            issue = (ref + ("; alt: " + ", ".join(a["issue"] for a in f["alternatives"]) if f["alternatives"] else ""),
-                     _issue_url(p, ref))
+            issue = [(ref, _issue_url(p, ref))] + [(f"alt: {a['issue']}", _issue_url(p, a["issue"]))
+                                                   for a in f["alternatives"]]
         else:
             text = "new" + (f" {f['new_issue']}" if shared[f["new_issue"]] > 1 else "")
-            text += f", related {f['related']}" if f["related"] else ""
-            issue = (text, _issue_url(p, f["related"]) if f["related"] else None)
+            issue = [(text, None)] + ([(f"related {f['related']}", _issue_url(p, f["related"]))] if f["related"] else [])
+        recent = next((m["recent_failures"] for m in members if m["recent_failures"]), None)
         out.append({
-            "Job": (job, f["job"]["web_url"]),
-            "Test": (f["test"] or "—", None),
-            "Key failure": (f["key_error"], None),
+            "Job": _more(job_parts, _MAX_JOBS, "jobs"),
+            "Test": _more([(t, None) for t in tests], 1, "tests") if tests else [("—", None)],
+            "Key failure": [(f["key_error"], None)],
             "Issue": issue,
-            "Verdict": (f["verdict"], None),
-            "Recent failures": (recent_text(f["recent_failures"]), None),
+            "Verdict": [(f["verdict"], None)],
+            "Recent failures": [(recent_text(recent), None)],
         })
     return out
 
@@ -167,15 +209,17 @@ def render(triage: dict) -> str:
         lines.append("No failed jobs in this pipeline.")
         return "\n".join(lines) + "\n"
 
-    def md(col: str, cell: tuple) -> str:
-        text, url = cell
-        text = text.replace("|", "\\|")
-        if col == "Test" and text != "—":
-            text = f"`{text}`"
-        if url and col == "Job":
-            name, _, rest = text.partition(" (")
-            return f"[{name}]({url})" + (f" ({rest}" if rest else "")
-        return text
+    def md(col: str, parts: list) -> str:
+        out = []
+        for text, url in parts:
+            text = text.replace("|", "\\|")
+            if col == "Test" and text != "—" and not text.startswith("+"):
+                text = f"`{text}`"
+            elif col == "Job" and url:
+                name, _, rest = text.partition(" (")
+                text = f"[{name}]({url})" + (f" ({rest}" if rest else "")
+            out.append(text)
+        return ", ".join(out)
 
     lines += ["| " + " | ".join(COLUMNS) + " |", "|" + " --- |" * len(COLUMNS)]
     lines += ["| " + " | ".join(md(c, r[c]) for c in COLUMNS) + " |" for r in rows(triage)]
@@ -193,19 +237,15 @@ def render_terminal(triage: dict, width: int, links: bool, color: bool) -> str:
     if not triage["failures"]:
         return "\n".join(out + ["No failed jobs in this pipeline."]) + "\n"
 
+    # A cell is a list of (text, url) parts; each part starts on its own line, a link gets a footnote number.
     notes: dict[str, int] = {}
     table = []
     for r in rows(triage):
-        row = {}
-        for c in COLUMNS:
-            text, url = r[c]
-            if url:
-                text += f" [{notes.setdefault(url, len(notes) + 1)}]"
-            row[c] = (text, url)
-        table.append(row)
+        table.append({c: [(text + (f" [{notes.setdefault(url, len(notes) + 1)}]" if url else ""), url)
+                          for text, url in r[c]] for c in COLUMNS})
 
     # Fixed columns keep their width (capped); Test and Key failure share what is left.
-    natural = {c: max(len(c), *(len(row[c][0]) for row in table)) for c in COLUMNS}
+    natural = {c: max(len(c), *(len(t) for row in table for t, _ in row[c])) for c in COLUMNS}
     widths = {c: min(natural[c], 40) for c in COLUMNS if c not in ("Test", "Key failure")}
     room = width - (3 * len(COLUMNS) + 1) - sum(widths.values())
     test, key = natural["Test"], natural["Key failure"]
@@ -214,16 +254,16 @@ def render_terminal(triage: dict, width: int, links: bool, color: bool) -> str:
         key = max(12, room - test)
     widths.update({"Test": test, "Key failure": key})
 
-    def cell_lines(col: str, text: str, url: str | None) -> list[str]:
-        wrapped = textwrap.wrap(text, widths[col], break_on_hyphens=False) or [""]
+    def cell_lines(col: str, parts: list) -> list[str]:
         styled = []
-        for line in wrapped:
-            pad = " " * (widths[col] - len(line))
-            if url and links:
-                line = f"\x1b]8;;{url}\x1b\\{line}\x1b]8;;\x1b\\"
-            if col == "Verdict":
-                line = sgr(_VERDICT_COLOR.get(text, "0"), line)
-            styled.append(line + pad)
+        for text, url in parts:
+            for line in textwrap.wrap(text, widths[col], break_on_hyphens=False) or [""]:
+                pad = " " * (widths[col] - len(line))
+                if url and links:
+                    line = f"\x1b]8;;{url}\x1b\\{line}\x1b]8;;\x1b\\"
+                if col == "Verdict":
+                    line = sgr(_VERDICT_COLOR.get(text, "0"), line)
+                styled.append(line + pad)
         return styled
 
     def rule(left: str, mid: str, right: str) -> str:
@@ -233,7 +273,7 @@ def render_terminal(triage: dict, width: int, links: bool, color: bool) -> str:
     out.append("│ " + " │ ".join(sgr("1", c.ljust(widths[c])) for c in COLUMNS) + " │")
     for row in table:
         out.append(rule("├", "┼", "┤"))
-        cells = [cell_lines(c, *row[c]) for c in COLUMNS]
+        cells = [cell_lines(c, row[c]) for c in COLUMNS]
         for i in range(max(map(len, cells))):
             out.append("│ " + " │ ".join(cell[i] if i < len(cell) else " " * widths[c]
                                           for c, cell in zip(COLUMNS, cells)) + " │")
@@ -266,7 +306,10 @@ def main():
         return json.loads(path.read_text(encoding="utf-8"))
 
     fetched = load("fetch.json")
-    decisions = load("decisions.json") if fetched["failures"] else {"failures": {}}
+    if fetched["failures"]:
+        fetched, decisions = with_groups(fetched, load("groups.json")), load("decisions.json")
+    else:
+        fetched, decisions = with_groups(fetched, {}), {"decisions": {}}
 
     errors = validate(fetched, decisions)
     if errors:
