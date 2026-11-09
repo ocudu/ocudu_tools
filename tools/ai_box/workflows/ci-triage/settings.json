@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill",
+      "Bash(python3 /home/ai/.claude/skills/ci-triage/scripts/*)",
+      "Bash(python3 /opt/ocudu_tools/skills/ci-triage/scripts/*)",
+      "Bash(jq *)",
+      "Read(//tmp/triage/**)",
+      "Edit(//tmp/triage/**)",
+      "Read(//home/ai/.claude/skills/**)",
+      "Read(//opt/ocudu_tools/skills/**)"
+    ],
+    "deny": [
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(glab *)",
+      "Bash(git *)",
+      "Bash(python3 -c *)",
+      "Bash(python3 /opt/ocudu_tools/tools/*)",
+      "WebFetch",
+      "WebSearch"
+    ]
+  }
+}
