@@ -75,6 +75,9 @@ failures that are likely one problem, saves the groups to `<output_dir>/groups.j
 - An E2E (pytest) test is a group of its own: a test is a scenario, and the same failed criterion in another
   scenario may be another problem. Give several such groups the same issue when they are one.
 - A failed job with no failing test in its report (build, setup) is a group of its own, with `example.output: null`.
+- `infra` is set when GitLab failed the job for a reason other than its script (`runner_system_failure`,
+  `stuck_or_timeout_failure`, `scheduler_failure`...): the runner or the cluster, not the code. Such groups are
+  decided `Infra` automatically and never matched to issues; skip them, or only give a better `key_error` (Step 4).
 - `failures` lists the group's failure IDs when there are 10 or fewer; `groups.json` has them all, and `fetch.json`
   every failure's detail. You rarely need either.
 - `job.via` names the trigger job of a downstream pipeline. A job allowed to fail is triaged like any other.
@@ -200,6 +203,10 @@ for that failure only: use it to split a group.
   }
 }
 ```
+
+For an `infra` group, an entry is optional. `{"verdict": "Infra", "key_error": "timed out waiting for pod to start"}`
+replaces the default key error (`job failed: <reason>`). No other verdict is accepted for it, and `Infra` for no
+other group.
 
 `issue`, `alternatives[].issue` and `related` are full references (`group/project#iid`). Do not copy URLs or IDs: the script takes them from `fetch.json`.
 

@@ -9,8 +9,8 @@ Merge a triage's decisions with the fetched data, check them, and render the tri
 Usage:
     build_triage.py <pipeline_dir>
 
-Reads fetch.json, groups.json (group_failures.py) and decisions.json from <pipeline_dir>. Writes triage.json and triage.md
-there and prints the table. Exits 1, listing every problem, when decisions.json is incomplete or inconsistent, so it
+Reads fetch.json, groups.json (group_failures.py) and decisions.json from <pipeline_dir>. Writes triage.json and
+triage.md there and prints the table. Exits 1, listing every problem, when decisions.json is incomplete or inconsistent, so it
 can be fixed and the script run again.
 
 decisions.json, written by the model, one entry per group of fetch.json; a failure ID entry overrides its group's
@@ -21,7 +21,7 @@ decision for that failure:
       "error_type": "build | crash | assertion | timeout | setup | criteria",
       "key_error": "the most specific error line",
       "excerpt": "up to 30 lines of log around it",
-      "verdict": "Matched | Check | No match",
+      "verdict": "Matched | Check | No match | Infra",   # Infra: only, and always, for groups marked infra
       "issue": "group/project#iid",              # null for No match
       "reason": "one line: why this issue",
       "alternatives": [{"issue": "group/project#iid", "reason": "..."}],   # Check only
@@ -44,7 +44,7 @@ from collections import Counter
 from pathlib import Path
 
 ERROR_TYPES = {"build", "crash", "assertion", "timeout", "setup", "criteria"}
-VERDICTS = ("Matched", "Check", "No match")
+VERDICTS = ("Matched", "Check", "No match", "Infra")
 _ISSUE_REF_RE = re.compile(r"^[\w.\-/]+#\d+$")
 _MAX_EXCERPT_LINES = 30
 
@@ -60,6 +60,16 @@ def with_groups(fetched: dict, grouped: dict) -> dict:
     group_of = {fid: g["id"] for g in groups for fid in g["failures"]}
     return {**fetched, "groups": groups,
             "failures": [{**f, "group": group_of.get(f["id"])} for f in fetched["failures"]]}
+
+
+def with_infra(fetched: dict, decisions: dict) -> dict:
+    """Decisions with one for every infra group: verdict Infra, and the model's key_error if it gave one."""
+    given = dict(decisions.get("decisions") or {})
+    for g in fetched["groups"]:
+        if g.get("infra"):
+            given[g["id"]] = {"error_type": "setup", "key_error": f"job failed: {g['infra']}", "verdict": "Infra",
+                              **given.get(g["id"], {})}
+    return {**decisions, "decisions": given}
 
 
 def _id_order(key: str) -> tuple:
@@ -86,12 +96,24 @@ def validate(fetched: dict, decisions: dict) -> list[str]:
         if f["group"] is None and f["id"] not in given:
             errors.append(f"{f['id']}: no decision (in no group of groups.json)")
 
+    group_of = {f["id"]: f["group"] for f in fetched["failures"]}
     for key, d in given.items():
         if key not in groups and key not in failures:
             continue
         verdict = d.get("verdict")
         if verdict not in VERDICTS:
             errors.append(f"{key}: verdict must be one of {list(VERDICTS)}, got {verdict!r}")
+            continue
+        infra = (groups.get(key) or groups.get(group_of.get(key)) or {}).get("infra")
+        if infra and verdict != "Infra":
+            errors.append(f"{key}: GitLab failed it for {infra}, not its script: verdict must be Infra")
+            continue
+        if verdict == "Infra":
+            if not infra:
+                errors.append(f"{key}: Infra is only for groups marked infra")
+            for field in ("issue", "alternatives", "related", "new_issue"):
+                if d.get(field):
+                    errors.append(f"{key}: Infra has no {field}")
             continue
         if d.get("error_type") not in ERROR_TYPES:
             errors.append(f"{key}: error_type must be one of {sorted(ERROR_TYPES)}, got {d.get('error_type')!r}")
@@ -168,20 +190,24 @@ def rows(triage: dict) -> list[dict]:
     by_decision: dict = {}
     for f in triage["failures"]:
         by_decision.setdefault(f["decision"], []).append(f)
-    shared = Counter(fs[0]["new_issue"] for fs in by_decision.values() if not fs[0]["issue"])
+    shared = Counter(fs[0]["new_issue"] for fs in by_decision.values() if fs[0]["new_issue"])
     out = []
     for members in by_decision.values():
         f = members[0]
         jobs = list({m["job"]["id"]: m["job"] for m in members}.values())
         job_parts = [(j["name"] + (" (allowed to fail)" if j.get("allow_failure") else ""), j["web_url"]) for j in jobs]
         tests = list(dict.fromkeys(m["test"] for m in members if m["test"]))
-        if f["issue"]:
+        if f["verdict"] == "Infra":
+            issue = [("— (retry the job)", None)]
+        elif f["issue"]:
             ref = f["issue"]["ref"]
             issue = [(ref, _issue_url(p, ref))] + [(f"alt: {a['issue']}", _issue_url(p, a["issue"]))
                                                    for a in f["alternatives"]]
         else:
             text = "new" + (f" {f['new_issue']}" if shared[f["new_issue"]] > 1 else "")
-            issue = [(text, None)] + ([(f"related {f['related']}", _issue_url(p, f["related"]))] if f["related"] else [])
+            issue = [(text, None)]
+            if f["related"]:
+                issue.append((f"related {f['related']}", _issue_url(p, f["related"])))
         recent = next((m["recent_failures"] for m in members if m["recent_failures"]), None)
         out.append({
             "Job": _more(job_parts, _MAX_JOBS, "jobs"),
@@ -226,7 +252,7 @@ def render(triage: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-_VERDICT_COLOR = {"Matched": "32", "Check": "33", "No match": "31"}
+_VERDICT_COLOR = {"Matched": "32", "Check": "33", "No match": "31", "Infra": "36"}
 
 
 def render_terminal(triage: dict, width: int, links: bool, color: bool) -> str:
@@ -307,9 +333,12 @@ def main():
 
     fetched = load("fetch.json")
     if fetched["failures"]:
-        fetched, decisions = with_groups(fetched, load("groups.json")), load("decisions.json")
+        fetched = with_groups(fetched, load("groups.json"))
+        only_infra = all(g.get("infra") for g in fetched["groups"])
+        decisions = load("decisions.json", required=not only_infra) or {"decisions": {}}
     else:
         fetched, decisions = with_groups(fetched, {}), {"decisions": {}}
+    decisions = with_infra(fetched, decisions)
 
     errors = validate(fetched, decisions)
     if errors:

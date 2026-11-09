@@ -13,7 +13,9 @@ Usage:
 Reads fetch_pipeline.py's JSON from stdin, or <output_dir>/fetch.json. A group is the failures with the same first
 error line in their test output (paths, addresses and numbers replaced), in any job; else the same job and test
 suite. An E2E (pytest) test is a group of its own: there a test is a scenario, and the same failed criterion in
-another scenario may be another problem. So is a job failure.
+another scenario may be another problem. So is a job failure, except an infrastructure one: a job that GitLab says
+failed for a reason other than its script (the runner, the scheduler, a timeout), grouped by that reason and marked
+`infra`.
 
 Writes <output_dir>/groups.json, every group with all its failure IDs, and prints a summary: per group, its jobs, a
 few tests, and one example failure to read.
@@ -31,6 +33,8 @@ _ERROR_PATTERNS = [re.compile(p) for p in (
     r"Assertion .* failed|assertion failed|terminate called|Segmentation fault|Aborted|SIG(SEGV|ABRT|BUS|FPE)",
     r"\bFailure\b|didn't pass|Traceback|Exception|\berror:|\bERROR\b|timed out|Timeout",
 )]
+# GitLab's failure_reason of a job that failed by its own script; any other reason is the infrastructure's.
+_SCRIPT_REASONS = {None, "script_failure"}
 _PYTEST_RE = re.compile(r"^E {2,}\S", re.M)
 _MAX_SIGNATURE = 160
 _SAMPLE_TESTS = 5
@@ -50,8 +54,15 @@ def error_signature(text: str) -> str | None:
     return None
 
 
+def infra_reason(failure: dict) -> str | None:
+    reason = failure["job"].get("failure_reason")
+    return None if failure["test"] is not None or reason in _SCRIPT_REASONS else reason
+
+
 def _group_key(failure: dict) -> tuple[tuple, str | None]:
     """(grouping key, error signature)."""
+    if infra_reason(failure):
+        return ("infra", infra_reason(failure)), None
     if failure["test"] is None:
         return ("job", failure["job"]["id"]), None
     text = Path(failure["output"]).read_text(encoding="utf-8", errors="replace")
@@ -66,7 +77,8 @@ def _group_key(failure: dict) -> tuple[tuple, str | None]:
 
 def group_failures(failures: list[dict]) -> list[dict]:
     """Failures that are likely one problem: the same error line in their test output, in any job; else the same job
-    and test suite. An E2E (pytest) test and a job failure are groups of their own."""
+    and test suite. An E2E (pytest) test and a job failure are groups of their own, unless the infrastructure failed
+    the job."""
     groups: dict = {}
     signatures: dict = {}
     for f in failures:
@@ -80,6 +92,7 @@ def group_failures(failures: list[dict]) -> list[dict]:
         out.append({
             "id": gid,
             "signature": signatures[members[0]["id"]],
+            "infra": key[1] if key[0] == "infra" else None,
             "count": len(members),
             "jobs": [{k: j.get(k) for k in ("name", "allow_failure", "via")} for j in jobs],
             "tests": tests[:_SAMPLE_TESTS],
@@ -97,7 +110,7 @@ def summary(fetched: dict, grouped: list[dict]) -> dict:
     for g in grouped:
         ex = by_id[g["example"]]
         groups.append({
-            **{k: g[k] for k in ("id", "signature", "count", "jobs", "tests", "more_tests")},
+            **{k: g[k] for k in ("id", "signature", "infra", "count", "jobs", "tests", "more_tests")},
             **({"failures": g["failures"]} if g["count"] <= _LIST_FAILURES else {}),
             "example": {k: ex[k] for k in ("id", "output", "trace", "recent_failures")} |
                        {"artifacts": ex["artifacts"][:_SAMPLE_TESTS]},

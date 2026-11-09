@@ -135,7 +135,8 @@ def _artifacts_of(artifacts: list[str], test: str | None) -> list[str]:
 
 
 def _job_info(job: dict, node: dict) -> dict:
-    return {**_pick(job, "id", "name", "stage", "web_url"), "allow_failure": bool(job.get("allow_failure")),
+    return {**_pick(job, "id", "name", "stage", "web_url", "failure_reason"),
+            "allow_failure": bool(job.get("allow_failure")),
             "project": node["project"], "pipeline_id": node["id"], "via": node["bridge"]}
 
 
