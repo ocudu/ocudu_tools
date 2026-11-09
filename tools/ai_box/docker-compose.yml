@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+# Developer mode of the AI box: the image CI uses, built from this checkout.
+#   docker compose run --rm --build ai-box ai-run ci-triage <pipeline-url> [--post]
+#   docker compose run --rm --build ai-box bash
+# Export HOST_UID/HOST_GID if yours are not 1000, so results/ stays yours.
+
+name: ai-box
+
+services:
+  ai-box:
+    image: ai-box:local
+    build:
+      context: ../..
+      dockerfile: tools/ai_box/Dockerfile
+      target: base
+      args:
+        HOST_UID: "${HOST_UID:-1000}"
+        HOST_GID: "${HOST_GID:-1000}"
+    init: true
+    environment:
+      # Passed through from the shell: ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN, and GITLAB_TOKEN.
+      - ANTHROPIC_API_KEY
+      - CLAUDE_CODE_OAUTH_TOKEN
+      - GITLAB_TOKEN
+      - ISSUE_PROJECT=${ISSUE_PROJECT:-ocudu/ocudu}
+      - AI_MAX_BUDGET_USD=${AI_MAX_BUDGET_USD:-5}
+    volumes:
+      - ./results:/home/ai/results

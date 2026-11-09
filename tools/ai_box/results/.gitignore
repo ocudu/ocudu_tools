@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+# Run results; the directory is kept so Docker does not create it as root.
+*
+!.gitignore

@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+*
+!skills/
+!tools/ai_box/
+tools/ai_box/results/
+**/__pycache__
