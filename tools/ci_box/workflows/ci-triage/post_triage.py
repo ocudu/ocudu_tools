@@ -50,6 +50,7 @@ THREAD_HEADER = (
 _REF_RE = re.compile(r"^(.+)#(\d+)$")
 _MAX_TITLE = 200
 _RECENT_NEW_ISSUE = timedelta(days=2)
+OPENED_BY = "Opened by the AI triage of a scheduled pipeline."   # in every new issue; found by search
 _MAX_TESTS = 500    # tests in a collapsed list
 _MAX_MARKED = 50    # failures kept in a reply's hidden marker
 
@@ -152,7 +153,7 @@ def fill_template(template: str, failures: list[dict]) -> str:
     """Fill the triage template's sections; unknown sections are kept as they are."""
     first = failures[0]
     summary = "\n".join(failures_table(failures, ""))
-    summary += "\n\nOpened by the AI triage of a scheduled pipeline."
+    summary += f"\n\n{OPENED_BY}"
     if first.get("related"):
         summary += f" Related to {first['related']}."
     logs = "````text\n" + (first.get("excerpt") or first["key_error"]) + "\n````"
@@ -181,7 +182,7 @@ class Planner:
         self.home = issue_project
         self._issues: dict = {}
         self._discussions: dict = {}
-        self._bot_issues: list | None = None
+        self._recent_new: list | None = None
 
     def issue(self, ref: str) -> dict:
         if ref not in self._issues:
@@ -205,22 +206,23 @@ class Planner:
         closed_at, started = issue.get("closed_at"), self.pipeline.get("created_at")
         return not (closed_at and started and _parse_time(closed_at) > _parse_time(started))
 
-    def recent_bot_issue(self, failures: list[dict]) -> str | None:
-        """An issue this bot opened lately for one of the same job and test: another pipeline got there first."""
-        if self._bot_issues is None:
-            me = self.client.get("user")["username"]
+    def recent_triage_issue(self, failures: list[dict]) -> str | None:
+        """An issue the triage opened lately, with any token, for one of the same job and test: another pipeline got
+        there first."""
+        if self._recent_new is None:
             since = datetime.now(timezone.utc) - _RECENT_NEW_ISSUE
             candidates = self.client.get(f"{project_path(self.home)}/issues", {
-                "author_username": me, "state": "opened", "created_after": since.isoformat(), "per_page": 100})
-            self._bot_issues = []
+                "search": OPENED_BY, "in": "description", "state": "opened", "created_after": since.isoformat(),
+                "per_page": 100})
+            self._recent_new = []
             for issue in candidates:
                 ref = issue["references"]["full"]
                 self._issues.setdefault(ref, issue)
                 seen = {(f.get("job"), f.get("test")) for run in triage_runs(self.thread(ref))
                         for f in run.get("failures", [])}
-                self._bot_issues.append((ref, seen))
+                self._recent_new.append((ref, seen))
         wanted = {(f["job"]["name"], f["test"]) for f in failures}
-        return next((ref for ref, seen in self._bot_issues if seen & wanted), None)
+        return next((ref for ref, seen in self._recent_new if seen & wanted), None)
 
     def plan(self) -> list[dict]:
         replies: dict = {}       # ref -> failures
@@ -242,7 +244,7 @@ class Planner:
             else:
                 unmatched.setdefault(f["new_issue"], []).append(f)
         for key, failures in unmatched.items():
-            existing = self.recent_bot_issue(failures)
+            existing = self.recent_triage_issue(failures)
             if existing:
                 replies.setdefault(existing, []).extend(failures)
             else:
