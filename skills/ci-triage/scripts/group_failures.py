@@ -13,9 +13,10 @@ Usage:
 Reads fetch_pipeline.py's JSON from stdin, or <output_dir>/fetch.json. A group is the failures with the same first
 error line in their test output (paths, addresses and numbers replaced), in any job; else the same job and test
 suite. An E2E (pytest) test is a group of its own: there a test is a scenario, and the same failed criterion in
-another scenario may be another problem. So is a job failure, except an infrastructure one: a job that GitLab says
-failed for a reason other than its script (the runner, the scheduler, a timeout), grouped by that reason and marked
-`infra`.
+another scenario may be another problem. So is a job failure, except an infrastructure one, grouped by its reason
+and marked `infra`: a job that GitLab says failed for a reason other than its script (the runner, the scheduler, a
+timeout), or a test or job whose output has a known cluster error (INFRA_PATTERNS: a pod not created, not enough
+resources).
 
 Writes <output_dir>/groups.json, every group with all its failure IDs, and prints a summary: per group, its jobs, a
 few tests, and one example failure to read.
@@ -35,6 +36,14 @@ _ERROR_PATTERNS = [re.compile(p) for p in (
 )]
 # GitLab's failure_reason of a job that failed by its own script; any other reason is the infrastructure's.
 _SCRIPT_REASONS = {None, "script_failure"}
+# Errors of the cluster, not of the code under test, found in a test's output or a job's log: (pattern, reason).
+INFRA_PATTERNS = [(re.compile(p), reason) for p, reason in (
+    (r"Pod was rejected|Node didn't have enough resource|Insufficient (cpu|memory)", "k8s: not enough resources"),
+    (r"timed out waiting for pod to start|waiting for pods to be ready", "k8s: pod did not start"),
+    (r"ImagePullBackOff|ErrImagePull", "k8s: image pull failed"),
+    (r"Error creating the pod", "k8s: pod not created"),
+)]
+_TRACE_TAIL = 300   # lines of a job's log searched for infra errors
 _PYTEST_RE = re.compile(r"^E {2,}\S", re.M)
 _MAX_SIGNATURE = 160
 _SAMPLE_TESTS = 5
@@ -54,18 +63,33 @@ def error_signature(text: str) -> str | None:
     return None
 
 
-def infra_reason(failure: dict) -> str | None:
+def _read(path: str | None, tail: int = 0) -> str:
+    if not path:
+        return ""
+    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    return "\n".join(text.splitlines()[-tail:]) if tail else text
+
+
+def infra_reason(failure: dict, text: str) -> str | None:
+    """Why the infrastructure, not the code, failed it: GitLab's failure_reason of a job that failed for anything but
+    its script, else a known cluster error in `text`."""
     reason = failure["job"].get("failure_reason")
-    return None if failure["test"] is not None or reason in _SCRIPT_REASONS else reason
+    if failure["test"] is None and reason not in _SCRIPT_REASONS:
+        return reason
+    return next((why for pattern, why in INFRA_PATTERNS if pattern.search(text)), None)
 
 
 def _group_key(failure: dict) -> tuple[tuple, str | None]:
     """(grouping key, error signature)."""
-    if infra_reason(failure):
-        return ("infra", infra_reason(failure)), None
+    if failure["test"] is None:
+        text = _read(failure.get("trace"), _TRACE_TAIL)
+    else:
+        text = _read(failure["output"])
+    infra = infra_reason(failure, text)
+    if infra:
+        return ("infra", infra), None
     if failure["test"] is None:
         return ("job", failure["job"]["id"]), None
-    text = Path(failure["output"]).read_text(encoding="utf-8", errors="replace")
     signature = error_signature(text)
     if _PYTEST_RE.search(text):
         # E2E: a test is a scenario; the same failed criterion in another scenario may be another problem.

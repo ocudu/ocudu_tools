@@ -67,7 +67,7 @@ def with_infra(fetched: dict, decisions: dict) -> dict:
     given = dict(decisions.get("decisions") or {})
     for g in fetched["groups"]:
         if g.get("infra"):
-            given[g["id"]] = {"error_type": "setup", "key_error": f"job failed: {g['infra']}", "verdict": "Infra",
+            given[g["id"]] = {"error_type": "setup", "key_error": f"infra: {g['infra']}", "verdict": "Infra",
                               **given.get(g["id"], {})}
     return {**decisions, "decisions": given}
 
