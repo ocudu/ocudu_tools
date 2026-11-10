@@ -2,18 +2,18 @@
 # SPDX-License-Identifier: BSD-3-Clause-Open-MPI
 
 # Developer mode of the AI box: the image CI uses, built from this checkout.
-#   docker compose run --rm --build ai-box ai-run ci-triage <pipeline-url> [--post]
-#   docker compose run --rm --build ai-box bash
+#   docker compose run --rm --build ci-box run.sh ci-triage <pipeline-url> [--post]
+#   docker compose run --rm --build ci-box bash
 # Export HOST_UID/HOST_GID if yours are not 1000, so results/ stays yours.
 
-name: ai-box
+name: ci-box
 
 services:
-  ai-box:
-    image: ai-box:local
+  ci-box:
+    image: ci-box:local
     build:
       context: ../..
-      dockerfile: tools/ai_box/Dockerfile
+      dockerfile: tools/ci_box/Dockerfile
       target: base
       args:
         HOST_UID: "${HOST_UID:-1000}"

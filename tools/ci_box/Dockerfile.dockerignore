@@ -3,6 +3,6 @@
 
 *
 !skills/
-!tools/ai_box/
-tools/ai_box/results/
+!tools/ci_box/
+tools/ci_box/results/
 **/__pycache__

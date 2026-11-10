@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
 # SPDX-License-Identifier: BSD-3-Clause-Open-MPI
 
-# Last step of the ci-triage workflow, run by ai-run once the model is done:
+# Last step of the ci-triage workflow, run by run.sh once the model is done:
 #   post.sh <run_dir> <since> [--post]
 # Takes the triage.json the run wrote (newer than <since>), shows the table, and plans the GitLab writes; makes them
 # only with --post.
@@ -24,7 +24,9 @@ cp -r "$(dirname "${found[0]}")" "$run_dir/triage"
 
 python3 "$SKILL/build_triage.py" "$run_dir/triage" --show
 
-python3 "$HERE/post_triage.py" "$run_dir/triage/triage.json" --actions "$run_dir/actions.json" "$@" > /dev/null
+dry_run=(--dry-run)
+[ "${1:-}" = --post ] && dry_run=()
+python3 "$HERE/post_triage.py" "$run_dir/triage/triage.json" --actions "$run_dir/actions.json" "${dry_run[@]}" > /dev/null
 echo
-echo "GitLab actions ($([ "${1:-}" = --post ] && echo "posted" || echo "dry run, not posted")):"
+echo "GitLab actions ($([ ${#dry_run[@]} -eq 0 ] && echo "posted" || echo "dry run, not posted")):"
 jq -r '.[] | "  \(.action) \(.issue)\(if .title then ": " + .title else "" end)"' "$run_dir/actions.json"

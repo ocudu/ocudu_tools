@@ -7,9 +7,9 @@
 Turn a triage.json into GitLab writes: replies in issue triage threads, reopened issues, new issues.
 
 Usage:
-    post_triage.py <triage.json> [--post] [--issue-project PROJECT] [--actions FILE]
+    post_triage.py <triage.json> [--dry-run] [--issue-project PROJECT] [--actions FILE]
 
-Without --post, nothing is written: the planned actions are printed (and saved with --actions). Planning reads
+With --dry-run, nothing is written: the planned actions are only printed (and saved with --actions). Planning reads
 GitLab either way: issue states, triage threads, the issue template.
 
 Per failure:
@@ -332,9 +332,9 @@ def execute(client: Client, actions: list[dict], log) -> list[dict]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Write a triage to GitLab issues (dry run unless --post)")
+    parser = argparse.ArgumentParser(description="Write a triage to GitLab issues")
     parser.add_argument("triage", type=Path, help="triage.json from build_triage.py")
-    parser.add_argument("--post", action="store_true", help="Write to GitLab; without it, only print the plan")
+    parser.add_argument("--dry-run", action="store_true", help="Only print the plan; write nothing")
     parser.add_argument("--issue-project", default=os.environ.get("ISSUE_PROJECT", "ocudu/ocudu"),
                         help="Project new issues are opened in (default: $ISSUE_PROJECT, else ocudu/ocudu)")
     parser.add_argument("--actions", type=Path, help="Also save the actions as JSON to this file")
@@ -350,7 +350,7 @@ def main():
     client = Client(args.base_url, args.token)
     try:
         actions = Planner(client, triage, args.issue_project).plan()
-        if args.post:
+        if not args.dry_run:
             execute(client, actions, log)
     except GitLabError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

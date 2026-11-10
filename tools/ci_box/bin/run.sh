@@ -5,7 +5,7 @@
 
 # The box's only entry point: runs a workflow headless, the same way in CI and on a developer's machine.
 #
-#   ai-run <workflow> <url> [--post] [--out DIR]
+#   run.sh <workflow> <url> [--post] [--out DIR]
 #
 # A workflow is a directory under workflows/: prompt.md (the prompt; {URL} is filled in), settings.json (allow- and
 # deny-list), and post.sh, run once the model is done to collect, show and post its output (writes only with
@@ -15,7 +15,7 @@ set -euo pipefail
 
 BOX=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 
-die() { echo "ai-run: $*" >&2; exit 1; }
+die() { echo "run.sh: $*" >&2; exit 1; }
 
 usage() {
     sed -n 's/^#   //p' "$0"
@@ -51,7 +51,7 @@ fi
 id=$(grep -oE '[0-9]+' <<< "$url" | tail -1 || true)
 run_dir="$out/${workflow}-${id:-run}-$(date -u +%Y%m%d-%H%M%S)"
 mkdir -p "$run_dir"
-echo "ai-run: $workflow $url → $run_dir" >&2
+echo "run.sh: $workflow $url → $run_dir" >&2
 
 # Outputs older than this mark belong to an earlier run; post.sh ignores them.
 since="$run_dir/.started"
@@ -76,7 +76,7 @@ set -e
 
 jq -c 'select(.type == "result") | {is_error, num_turns, total_cost_usd, duration_ms}' \
     "$run_dir/transcript.jsonl" > "$run_dir/summary.json" || true
-echo "ai-run: claude exit $claude_rc, $(cat "$run_dir/summary.json" 2>/dev/null)" >&2
+echo "run.sh: claude exit $claude_rc, $(cat "$run_dir/summary.json" 2>/dev/null)" >&2
 
 "$wf/post.sh" "$run_dir" "$since" "${post[@]}"
 echo "Results: $run_dir"
