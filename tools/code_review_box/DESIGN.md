@@ -72,6 +72,9 @@ in the README.
   between runs.
 - Permissions are an allow-list (`image/headless-settings.json`), passed with `--settings`: nobody can approve a tool,
   so anything not on the list is refused. The deny rules still apply on top. Skipping permissions is not used.
+- Each review has a spending cap, `claude -p --max-budget-usd`: $5 by default, `REVIEW_MAX_BUDGET_USD` or
+  `--max-budget` to change it. A review that reaches it fails, like any other failed run, so its partial output is
+  never posted or picked as the previous report. The cap is checked between API calls, so a run can exceed it by one.
 - The workspace is the MR head, fetched from origin inside the box (`review-workspace init --mr`), so the developer's
   checkout needs no fetch and is never written to. The base is the MR's target branch.
 - Paths in what the developer reads are relative: source files to the ocudu root, result files to `~/results`. The

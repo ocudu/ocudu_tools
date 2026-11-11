@@ -7,8 +7,9 @@
 #
 #   review-box.sh run [--glab-comment] [--ref <ref>] <name> [command...]
 #                                           build if needed, then enter a review box
-#   review-box.sh review --mr <iid|url> [--prompt <file>] [--post] [--glab-comment]
-#                                           unattended review of a GitLab MR; prints the report
+#   review-box.sh review --mr <iid|url> [--prompt <file>] [--post] [--glab-comment] [--max-budget <usd>]
+#                                           unattended review of a GitLab MR; prints the report. Stops once
+#                                           it spends <usd> (default REVIEW_MAX_BUDGET_USD, else 5)
 #   --glab-comment lets Claude post MR notes, with GITLAB_WRITE_TOKEN (api scope)
 #   review-box.sh build                     (re)build the image
 #   review-box.sh ls                        running boxes, images, volumes
@@ -28,7 +29,7 @@ CONTAINER_SUFFIX=".${CONTAINER_SUFFIX//[^a-zA-Z0-9_.-]/-}"
 COMPOSE=(docker compose --project-directory "${BOX_DIR}" -f "${BOX_DIR}/docker-compose.yml")
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
-usage() { sed -n '8,17s/^# \{0,1\}//p' "$0" >&2; exit 1; }
+usage() { sed -n '8,18s/^# \{0,1\}//p' "$0" >&2; exit 1; }
 
 export HOST_UID="$(id -u)" HOST_GID="$(id -g)"
 
@@ -165,18 +166,20 @@ cmd_run() {
 # than asked for. The box only reads GitLab; the report is posted from the host.
 cmd_review() {
     load_secrets
-    local mr="" prompt_file="${BOX_DIR}/prompts/mr-review.md" post=0 comment=0
+    local mr="" prompt_file="${BOX_DIR}/prompts/mr-review.md" post=0 comment=0 budget=${REVIEW_MAX_BUDGET_USD:-5}
     while [[ $# -gt 0 ]]; do
         case $1 in
             --mr) mr=${2:?}; shift 2 ;;
             --prompt) prompt_file=${2:?}; shift 2 ;;
             --post) post=1; shift ;;
             --glab-comment) comment=1; shift ;;
+            --max-budget) budget=${2:?}; shift 2 ;;
             *) usage ;;
         esac
     done
     [[ -n "${mr}" ]] || usage
     [[ -r "${prompt_file}" ]] || die "cannot read prompt ${prompt_file}"
+    [[ ${budget} =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "invalid budget ${budget}; give it in USD, e.g. 5 or 2.5"
     command -v glab >/dev/null || die "glab not found"
     command -v jq >/dev/null || die "jq not found"
 
@@ -209,8 +212,11 @@ cmd_review() {
     report="${BOX_DIR}/results/${name}/$(date +%Y-%m-%d-%H%M%S)-report.md"
     printf 'reviewing %s (base %s)%s\n' "${url}" "${REVIEW_BASE}" "${previous:+, after ${previous}}" >&2
     if ! "${COMPOSE[@]}" run --rm -T --label "${USER_LABEL}" --name "${name}${CONTAINER_SUFFIX}" review-box \
-        claude -p "${prompt}" --settings /home/dev/.claude/headless-settings.json > "${report}"; then
+        claude -p "${prompt}" --settings /home/dev/.claude/headless-settings.json --max-budget-usd "${budget}" \
+        > "${report}"; then
         mv "${report}" "${report%.md}.failed.md"
+        grep -q '^Error: Exceeded USD budget' "${report%.md}.failed.md" &&
+            die "review stopped at the \$${budget} budget; output in ${report%.md}.failed.md"
         die "review failed; output in ${report%.md}.failed.md"
     fi
     if [[ ! -s "${report}" ]]; then

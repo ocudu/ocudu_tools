@@ -34,6 +34,7 @@ report. `--post` posts it on the MR from the host; the box itself never writes t
 ./review-box.sh review --mr 1234 --post              # also post the report as an MR note
 ./review-box.sh review --mr 1234 --prompt my.md      # another prompt; {MR_URL}, {BASE}, {IID}, {PROJECT}, {PREVIOUS_REPORT} are filled in
 ./review-box.sh review --mr 1234 --glab-comment --prompt inline.md   # Claude may post MR notes itself
+./review-box.sh review --mr 1234 --max-budget 10     # stop once it spends $10 (default REVIEW_MAX_BUDGET_USD, else $5)
 ```
 
 The report is also kept in `results/<project>-mr-<iid>/` (e.g. `results/ocudu-ocudu-mr-1234/`); the next review of the
