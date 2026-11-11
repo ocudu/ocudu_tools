@@ -124,10 +124,85 @@ Allow rules match the literal command line. `cd X && python3 scripts/foo.py` is 
   - `review` (later): `FROM base`, plus the OCUDU toolchain, clang tools and iwyu, for reviews that build.
 - **Contents.** The skills and `tools/ci_box` are copied in (nothing is bind-mounted in CI or Duo). Each skill is
   linked into `~/.claude/skills/`. `bin/` is on the `PATH`.
-- **Tag.** `${OCUDU_REGISTRY_SERVER}/ocudu/ocudu_tools/ci-box:<CI_BOX_VERSION>`, from `tools/ci_box/ci/version.yml`.
+- **Tag.** `${OCUDU_REGISTRY_SERVER}/${OCUDU_TOOLS_PROJECT}/ci-box:<CI_BOX_VERSION>`, from `tools/ci_box/ci/version.yml`.
 - **Versioning.** The image carries the skills, so an image change can come from `skills/` or from `tools/ci_box/`.
 
 ## Runtimes
+
+### CI: the template
+
+Other projects include `.gitlab/ci/ci-box.yml` and extend its jobs:
+
+```yaml
+include:
+  - project: $OCUDU_TOOLS_PROJECT
+    ref: main                 # branch, tag or commit: also picks the image version
+    file: .gitlab/ci/ci-box.yml
+    inputs:                   # all optional
+      post: false             # dry run while trying it out
+
+ci-triage:
+  extends: .ci-triage
+```
+
+- **`OCUDU_TOOLS_PROJECT`** is a project, group or instance CI/CD variable holding ocudu_tools' path. GitLab doesn't
+  expand YAML-defined variables in `include`, so it can't be set in the YAML. The include uses it, and so does the
+  template for its image, `${OCUDU_REGISTRY_SERVER}/${OCUDU_TOOLS_PROJECT}/ci-box`. A fork or a self-hosted copy only
+  sets the variable. Leaving it unset drops the AI jobs, if the include has `rules: - if: $OCUDU_TOOLS_PROJECT`.
+  ocudu_tools' own pipeline sets it to `$CI_PROJECT_PATH`.
+- **`.ci-box`** runs any workflow from the job variables `AI_WORKFLOW`, `AI_URL` and `AI_POST` (`"true"` adds
+  `--post`). It also sets:
+  - `GIT_STRATEGY: none`, `interruptible: false`, a 1 h timeout;
+  - `ci_box_results/` as artifacts, kept 30 days, also when the job fails.
+- **One job per workflow** extends it with its trigger. `.ci-triage` runs in `.post`, only on schedules, `when: on_failure`.
+  - With `trigger: strategy: mirror`, a failed child pipeline fails its trigger job, so child failures count.
+  - A pipeline where only allowed-to-fail jobs failed passes, so it isn't triaged.
+- **Version.** The template includes `version.yml` with `local:`, which resolves in ocudu_tools at the included ref. The
+  include's `ref` therefore picks both the template and the image. Use `main` to follow releases, or pin a tag or
+  commit.
+- **Inputs:**
+
+  | Input | Default | Use |
+  | --- | --- | --- |
+  | `gitlab_token_variable` | `AI_GITLAB_TOKEN` | The CI/CD variable holding the token. |
+  | `post` | `true` | `false` makes `.ci-triage` a dry run. |
+  | `issue_project` | `ocudu/ocudu` | Where new issues are opened. |
+  | `max_budget_usd` | `5` | The model's spending limit per run. |
+
+- **Never changes the pipeline result.** It runs after everything else, in `.post`. A failed triage shows as a failed
+  `.post` job, which doesn't change what already failed.
+
+### CI: on demand
+
+ocudu_tools' own pipeline has a `ci-box run` job. It runs any workflow on any URL, from "Run pipeline" (web), the API,
+or a trigger from another pipeline. Its inputs:
+
+- `ai_workflow`: a workflow from `workflows/`, offered as a list;
+- `ai_url`: what to run it on;
+- `ai_post`: off by default.
+
+A new workflow is added to `ai_workflow`'s options.
+
+### Duo (planned)
+
+The same image and command, from a Duo flow:
+
+```yaml
+image: ${OCUDU_REGISTRY_SERVER}/${OCUDU_TOOLS_PROJECT}/ci-box:<version>
+injectGatewayToken: true
+commands:
+  - run.sh <workflow> <url-from-the-event> --post
+```
+
+Still to do or to find out:
+
+- **Gateway credentials.** run.sh must use them: `AI_FLOW_AI_GATEWAY_TOKEN` for Claude, `AI_FLOW_GITLAB_TOKEN` for
+  GitLab. The flow's service account replaces the bot.
+- **The URL.** It comes from `AI_FLOW_CONTEXT`. What that holds for a pipeline event isn't documented.
+- **Triggers.** Duo only starts flows on human actions, so a scheduled pipeline's "Failed" event may not count. A
+  scheduled Duo trigger (beta) is the fallback. Duo disables a schedule after 3 failed runs in a row.
+
+Until then, the CI template is the main path. Both can run side by side, because writes are idempotent.
 
 ### Developer
 

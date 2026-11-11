@@ -51,6 +51,7 @@ fi
 id=$(grep -oE '[0-9]+' <<< "$url" | tail -1 || true)
 run_dir="$out/${workflow}-${id:-run}-$(date -u +%Y%m%d-%H%M%S)"
 mkdir -p "$run_dir"
+run_dir=$(cd "$run_dir" && pwd)
 echo "run.sh: $workflow $url → $run_dir" >&2
 
 # Outputs older than this mark belong to an earlier run; post.sh ignores them.
@@ -59,9 +60,20 @@ touch "$since"
 
 prompt=$(sed "s|{URL}|${url//|/\\|}|g" "$wf/prompt.md")
 
+# From $HOME, as on a developer's machine: CI starts in the project dir.
+cd "$HOME"
+
+# The model and post.sh get only these variables, not the rest of the CI job's (tokens, CI_JOB_TOKEN...).
+KEEP=(HOME PATH LANG USER SHELL TMPDIR HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy
+      ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN GITLAB_TOKEN ISSUE_PROJECT)
+clean_env=()
+for v in "${KEEP[@]}"; do
+    [ -z "${!v:-}" ] || clean_env+=("$v=${!v}")
+done
+
 # One line per tool call while it runs; the full stream is kept as the transcript.
 set +e
-claude -p "$prompt" \
+env -i "${clean_env[@]}" claude -p "$prompt" \
     --settings "$wf/settings.json" \
     --permission-mode dontAsk \
     --output-format stream-json --verbose \
@@ -78,5 +90,5 @@ jq -c 'select(.type == "result") | {is_error, num_turns, total_cost_usd, duratio
     "$run_dir/transcript.jsonl" > "$run_dir/summary.json" || true
 echo "run.sh: claude exit $claude_rc, $(cat "$run_dir/summary.json" 2>/dev/null)" >&2
 
-"$wf/post.sh" "$run_dir" "$since" "${post[@]}"
+env -i "${clean_env[@]}" "$wf/post.sh" "$run_dir" "$since" "${post[@]}"
 echo "Results: $run_dir"

@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+# Jobs that run a ci_box workflow: `run.sh <AI_WORKFLOW> <AI_URL> [--post]` in the ci-box image.
+#
+#   include:
+#     - project: $OCUDU_TOOLS_PROJECT
+#       ref: main                    # a branch, tag or commit: also picks the image version
+#       file: .gitlab/ci/ci-box.yml
+#
+#   ci-triage:
+#     extends: .ci-triage            # triage this pipeline: last, on schedules, if a job failed
+#
+# .ci-box runs any workflow from the job variables AI_WORKFLOW, AI_URL and AI_POST ("true" to write to GitLab).
+# Needs the CI/CD variables AI_GITLAB_TOKEN (see the gitlab_token_variable input), CLAUDE_CODE_OAUTH_TOKEN or
+# ANTHROPIC_API_KEY, OCUDU_TOOLS_PROJECT (this project's path, also the image's) and OCUDU_REGISTRY_SERVER
+# (ocudu's workflow.yml).
+
+spec:
+  inputs:
+    gitlab_token_variable:
+      type: string
+      default: AI_GITLAB_TOKEN
+      description: "CI/CD variable holding the GitLab token the workflows read and post with."
+    post:
+      type: boolean
+      default: true
+      description: "Whether .ci-triage writes to GitLab issues; false for a dry run."
+    issue_project:
+      type: string
+      default: ocudu/ocudu
+      description: "Project new issues are opened in."
+    max_budget_usd:
+      type: string
+      default: "5"
+      description: "Most the model may spend per run, in USD."
+---
+include:
+  # Resolved in ocudu_tools at the included ref.
+  - local: tools/ci_box/ci/version.yml
+
+.ci-box:
+  image: ${OCUDU_REGISTRY_SERVER}/${OCUDU_TOOLS_PROJECT}/ci-box:${CI_BOX_VERSION}
+  interruptible: false
+  timeout: 1h
+  dependencies: []  # inputs come from the GitLab API
+  variables:
+    GIT_STRATEGY: none
+    ISSUE_PROJECT: $[[ inputs.issue_project ]]
+    AI_MAX_BUDGET_USD: $[[ inputs.max_budget_usd ]]
+    AI_RESULTS_DIR: ${CI_PROJECT_DIR}/ci_box_results
+  script:
+    # In the script: a GITLAB_TOKEN set in the project's CI/CD settings would override job variables.
+    - export GITLAB_TOKEN="$(printenv "$[[ inputs.gitlab_token_variable ]]" || true)"
+    - '[ -n "$GITLAB_TOKEN" ] || { echo "ci-box: set the CI/CD variable $[[ inputs.gitlab_token_variable ]]" >&2; exit 1; }'
+    - '[ -n "$AI_WORKFLOW" ] && [ -n "$AI_URL" ] || { echo "ci-box: set AI_WORKFLOW and AI_URL" >&2; exit 1; }'
+    - post=$([ "$AI_POST" = "true" ] && echo --post || true)
+    - run.sh "$AI_WORKFLOW" "$AI_URL" $post
+  artifacts:
+    paths:
+      - ci_box_results/
+    when: always
+    expire_in: 30 days
+
+.ci-triage:
+  extends: .ci-box
+  stage: .post
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: on_failure
+  variables:
+    AI_WORKFLOW: ci-triage
+    AI_URL: ${CI_PIPELINE_URL}
+    AI_POST: "$[[ inputs.post ]]"

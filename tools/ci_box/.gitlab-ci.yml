@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+.ci-box changes: &ci_box_changes
+  paths:
+    - skills/**/*
+    - tools/ci_box/**/*
+
+.ci-box image:
+  extends: .docker-builder
+  stage: build
+  variables:
+    NAME: ci-box
+    CONTEXT: ${CI_PROJECT_DIR}
+    DOCKERFILE: ${CI_PROJECT_DIR}/tools/ci_box
+    DOCKER_TARGET: base
+    VERSION: ${CI_BOX_VERSION}
+    PLATFORM: amd64
+
+ci-box version increased:
+  extends: .version increased
+  stage: static
+  rules:
+    # The template fetches the MR source branch from origin, not available for forks
+    - if: $ON_MR_FORK
+      when: never
+    - if: $ON_MR
+      changes: *ci_box_changes
+  variables:
+    FILE_PATH: tools/ci_box/ci/version.yml
+    VARIABLE_NAME: CI_BOX_VERSION
+
+ci-box image test:
+  extends: .ci-box image
+  rules:
+    - if: $ON_MR
+      changes: *ci_box_changes
+  variables:
+    MODE: test
+
+ci-box image publish:
+  extends: .ci-box image
+  rules:
+    - if: $ON_DEFAULT_BRANCH
+      changes: *ci_box_changes
+    - if: $ON_MR
+      changes: *ci_box_changes
+      when: manual
+      allow_failure: true
+  variables:
+    MODE: publish

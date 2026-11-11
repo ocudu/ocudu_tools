@@ -36,6 +36,8 @@ happened.
 > - **GitLab data**: only through this skill's scripts; their JSON is the tool result, already in context.
 > - **`jq`**: only on piped script output, e.g. `python3 .../query_issues.py ... | jq '.issues[].title'`.
 > - Never use `curl`, `wget`, `glab`, or direct HTTP calls. Never use inline `python3 -c`.
+> - Run the scripts by their full path, exactly as in the commands below. Never `cd` first or use a relative path:
+>   neither matches the allowed commands.
 
 ---
 

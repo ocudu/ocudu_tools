@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+# The ci-box image version. Bump it in any MR that changes skills/ or tools/ci_box/: both are in the image.
+variables:
+  CI_BOX_VERSION: "0.1.2"

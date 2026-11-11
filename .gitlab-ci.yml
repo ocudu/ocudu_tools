@@ -11,10 +11,19 @@ spec:
       type: string
       default: dev
       description: "OCUDU reference branch or tag."
-    ocudu_oran_apps_path:
+    ai_workflow:
       type: string
-      default: ocudu/ocudu_elements/ocudu_oran_apps
-      description: "OCUDU ORAN Apps reference branch or tag."
+      default: ""
+      options: ["", "ci-triage"]
+      description: "ci_box workflow to run on ai_url (tools/ci_box/workflows/). Empty: no workflow run."
+    ai_url:
+      type: string
+      default: ""
+      description: "What to run the workflow on: a pipeline, MR or issue URL."
+    ai_post:
+      type: boolean
+      default: false
+      description: "Let the workflow write to GitLab; false for a dry run."
 ---
 include:
   - project: $[[ inputs.ocudu_path ]]
@@ -25,15 +34,36 @@ include:
     file: .gitlab/ci-shared/static.yml
   - project: $[[ inputs.ocudu_path ]]
     ref: $[[ inputs.ocudu_ref ]]
+    file: .gitlab/ci-shared/docker.yml
+  - project: $[[ inputs.ocudu_path ]]
+    ref: $[[ inputs.ocudu_ref ]]
+    file: .gitlab/ci-shared/version_check.yml
+  - project: $[[ inputs.ocudu_path ]]
+    ref: $[[ inputs.ocudu_ref ]]
     file: .gitlab/ci-shared/gitlab_settings/.gitlab-ci.yml
     inputs:
       ocudu_path: $[[ inputs.ocudu_path ]]
       ocudu_ref: $[[ inputs.ocudu_ref ]]
+  - local: .gitlab/ci/ci-box.yml
+  - local: tools/ci_box/.gitlab-ci.yml
+
+variables:
+  OCUDU_TOOLS_PROJECT: $CI_PROJECT_PATH
 
 stages:
   - ci
   - static
   - build
+
+ci-box run:
+  extends: .ci-box
+  stage: ci
+  variables:
+    AI_WORKFLOW: $[[ inputs.ai_workflow ]]
+    AI_URL: $[[ inputs.ai_url ]]
+    AI_POST: "$[[ inputs.ai_post ]]"
+  rules:
+    - if: ($ON_WEB || $ON_API || $CI_PIPELINE_SOURCE == "pipeline") && $AI_WORKFLOW && $AI_URL
 
 headers:
   stage: ci
