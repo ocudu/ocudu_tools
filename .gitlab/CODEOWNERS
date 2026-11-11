@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+# One section per area; a section's owners on its header apply to its paths.
+# A file matched in several sections needs approval from each of them.
+# Files matched by no section need no code owner approval.
+# See https://docs.gitlab.com/user/project/codeowners/
+
+[CI][1] @asaezper @falkenberg
+/.gitlab-ci.yml
+/.gitlab/
+/tools/ci_box/
+
+[General][1] @frankist @asaezper
+*
