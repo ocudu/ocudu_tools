@@ -38,10 +38,11 @@ _ERROR_PATTERNS = [re.compile(p) for p in (
 _SCRIPT_REASONS = {None, "script_failure"}
 # Errors of the cluster, not of the code under test, found in a test's output or a job's log: (pattern, reason).
 INFRA_PATTERNS = [(re.compile(p), reason) for p, reason in (
-    (r"Pod was rejected|Node didn't have enough resource|Insufficient (cpu|memory)", "k8s: not enough resources"),
+    (r"Pod was rejected|Node didn't have enough resource", "k8s: not enough resources"),
     (r"timed out waiting for pod to start|waiting for pods to be ready", "k8s: pod did not start"),
     (r"ImagePullBackOff|ErrImagePull", "k8s: image pull failed"),
     (r"Error creating the pod", "k8s: pod not created"),
+    (r"Uploading artifacts for successful job[\s\S]*FATAL: .*artifacts", "runner: artifact upload failed"),
 )]
 _TRACE_TAIL = 300   # lines of a job's log searched for infra errors
 _PYTEST_RE = re.compile(r"^E {2,}\S", re.M)

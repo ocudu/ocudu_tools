@@ -173,6 +173,8 @@ the top candidates of all failures and make one call.
   pick the most likely one and list the others as `alternatives`. Never more than one issue for one failure.
 - **A different key error is a different issue.** Same test, but a key error that doesn't match what the candidate
   describes or what its earlier occurrences show: `No match`, with `related` set to that candidate.
+- **A test's history is not evidence by itself.** Earlier occurrences of the same test count only if their key error
+  matches this one; a test that failed for this issue before can fail for another reason today.
 - **Verdicts:**
   - `Matched` — you are confident it is this issue.
   - `Check` — plausible but uncertain: the best of the candidates; say why in `reason` and give `alternatives`.
@@ -203,11 +205,18 @@ for that failure only: use it to split a group.
     },
     "G3": {
       "error_type": "build", "key_error": "...", "excerpt": "...",
-      "verdict": "No match", "new_issue": "A", "related": "ocudu/ocudu#900"
+      "verdict": "No match", "new_issue": "A", "related": "ocudu/ocudu#900",
+      "title": "fapi_adaptor build fails: undefined slot_point"
     }
   }
 }
 ```
+
+A `No match` needs a `title` for the new issue, up to 80 characters: the problem in a few
+words, not where it showed up, since other jobs and tests may hit it too. Name a component or scenario only when it
+is part of the problem; no job or test names, numbers, paths or log details: `UE->5GC ping fails, 5GC->UE fine`,
+`SMF NGAP error on PDU session setup`. The test is appended when it fits (`… - ping.drx`). Decisions sharing a
+`new_issue` use the first one's.
 
 For an `infra` group, an entry is optional. `{"verdict": "Infra", "key_error": "timed out waiting for pod to start"}`
 replaces the default key error (`infra: <reason>`). No other verdict is accepted for it, and `Infra` for no

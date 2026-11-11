@@ -48,7 +48,7 @@ THREAD_HEADER = (
     "Reply here if a match is wrong; the next triage reads the replies."
 )
 _REF_RE = re.compile(r"^(.+)#(\d+)$")
-_MAX_TITLE = 200
+_MAX_TITLE = 120
 _RECENT_NEW_ISSUE = timedelta(days=2)
 OPENED_BY = "Opened by the AI triage of a scheduled pipeline."   # in every new issue; found by search
 _MAX_TESTS = 500    # tests in a collapsed list
@@ -57,6 +57,39 @@ _MAX_MARKED = 50    # failures kept in a reply's hidden marker
 
 def _parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def short_test(failure: dict) -> str:
+    """test_gnb[singleue.ping.drx] -> ping.drx; the job name when there is no test."""
+    test = failure["test"]
+    if not test:
+        return failure["job"]["name"]
+    m = re.search(r"\[(.+)\]$", test)
+    parts = (m.group(1) if m else test).split(".")
+    return ".".join(parts[1:] if len(parts) > 2 else parts)
+
+
+def tests_label(tests: list[str]) -> str:
+    """One test as is; several by their common part (paging.a, paging.b -> paging), else the first and a count."""
+    tests = list(dict.fromkeys(tests))
+    if len(tests) == 1:
+        return tests[0]
+    common = []
+    for parts in zip(*(t.split(".") for t in tests)):
+        if len(set(parts)) > 1:
+            break
+        common.append(parts[0])
+    return ".".join(common) if common else f"{tests[0]} and {len(tests) - 1} more"
+
+
+def issue_title(failures: list[dict]) -> str:
+    """<problem> - <test>, the test left out when it doesn't fit."""
+    first = failures[0]
+    title = first.get("title") or first["key_error"]
+    where = " - " + tests_label([short_test(f) for f in failures])
+    if len(title) + len(where) <= _MAX_TITLE:
+        return title + where
+    return title if len(title) <= _MAX_TITLE else title[:_MAX_TITLE - 1].rstrip() + "…"
 
 
 def split_ref(ref: str) -> tuple[str, int]:
@@ -276,12 +309,11 @@ class Planner:
                                   {"ref": project["default_branch"]}).decode()
         template, labels, assignees = parse_quick_actions(raw)
         first = failures[0]
-        title = f"[CI] {first['job']['name']}: {first['key_error']}"
         actions = [{
             "action": "create_issue",
             "issue": key,
             "project": self.home,
-            "title": title if len(title) <= _MAX_TITLE else title[:_MAX_TITLE - 1] + "…",
+            "title": issue_title(failures),
             "description": fill_template(template, failures),
             "labels": labels,
             "assignees": assignees,

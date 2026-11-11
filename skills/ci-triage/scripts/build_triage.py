@@ -26,7 +26,8 @@ decision for that failure:
       "reason": "one line: why this issue",
       "alternatives": [{"issue": "group/project#iid", "reason": "..."}],   # Check only
       "related": "group/project#iid",            # optional: a new issue links to it
-      "new_issue": "A"                           # No match only: decisions with the same key share one new issue
+      "new_issue": "A",                          # No match only: decisions with the same key share one new issue
+      "title": "UE->5GC ping fails"             # No match only: the new issue's title, the problem, not the job
     },
     "F7": {"...": "same fields, for failure F7 only"}
   }
@@ -47,6 +48,7 @@ ERROR_TYPES = {"build", "crash", "assertion", "timeout", "setup", "criteria"}
 VERDICTS = ("Matched", "Check", "No match", "Infra")
 _ISSUE_REF_RE = re.compile(r"^[\w.\-/]+#\d+$")
 _MAX_EXCERPT_LINES = 30
+_MAX_TITLE = 80
 
 
 def _check_ref(errors: list, fid: str, field: str, value) -> None:
@@ -111,7 +113,7 @@ def validate(fetched: dict, decisions: dict) -> list[str]:
         if verdict == "Infra":
             if not infra:
                 errors.append(f"{key}: Infra is only for groups marked infra")
-            for field in ("issue", "alternatives", "related", "new_issue"):
+            for field in ("issue", "alternatives", "related", "new_issue", "title"):
                 if d.get(field):
                     errors.append(f"{key}: Infra has no {field}")
             continue
@@ -127,11 +129,16 @@ def validate(fetched: dict, decisions: dict) -> list[str]:
         if verdict == "No match":
             if d.get("issue"):
                 errors.append(f"{key}: No match has no issue; use related to link one")
+            title = (d.get("title") or "").strip()
+            if not title or len(title) > _MAX_TITLE:
+                errors.append(f"{key}: No match needs a title of up to {_MAX_TITLE} characters, got {len(title)}")
         else:
             if not d.get("issue"):
                 errors.append(f"{key}: {verdict} needs an issue")
             if d.get("new_issue"):
                 errors.append(f"{key}: new_issue is only for No match")
+            if d.get("title"):
+                errors.append(f"{key}: title is only for No match")
         if verdict != "Check" and d.get("alternatives"):
             errors.append(f"{key}: alternatives are only for Check")
     return errors
@@ -162,6 +169,7 @@ def build(fetched: dict, decisions: dict) -> dict:
             "alternatives": d.get("alternatives") or [],
             "related": d.get("related"),
             "new_issue": (d.get("new_issue") or key) if d["verdict"] == "No match" else None,
+            "title": (d.get("title") or "").strip() or None,
             "recent_failures": f.get("recent_failures"),
         })
     return {"pipeline": fetched["pipeline"], "failures": failures}
