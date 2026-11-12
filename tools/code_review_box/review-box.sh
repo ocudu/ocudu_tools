@@ -45,17 +45,17 @@ SECRETS_FILE=${REVIEW_BOX_SECRETS:-${XDG_CONFIG_HOME:-${HOME}/.config}/review-bo
 SECRET_NAMES=(CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY GITLAB_TOKEN GITLAB_WRITE_TOKEN)
 
 # Exports the secrets of SECRETS_FILE that the environment does not already set. The values reach only the compose
-# call; compose passes the box the ones docker-compose.yml lists.
+# call; compose passes the box the ones docker-compose.yml lists. Names outside SECRET_NAMES are skipped.
 load_secrets() {
     [[ -e "${SECRETS_FILE}" ]] || return 0
     [[ -O "${SECRETS_FILE}" ]] || die "${SECRETS_FILE} is not owned by you"
     local mode line name value
-    mode=$(stat -c %a "${SECRETS_FILE}")
+    mode=$(stat -L -c %a "${SECRETS_FILE}")
     [[ ${mode} == [4-6]00 ]] || die "${SECRETS_FILE} is mode ${mode}; chmod 600 it"
     while IFS= read -r line || [[ -n ${line} ]]; do
         [[ ${line} =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
         name=${BASH_REMATCH[2]} value=${BASH_REMATCH[3]}
-        [[ " ${SECRET_NAMES[*]} " == *" ${name} "* ]] || die "${SECRETS_FILE}: unknown variable ${name}"
+        [[ " ${SECRET_NAMES[*]} " == *" ${name} "* ]] || continue
         [[ ${value} =~ ^\"(.*)\"$ || ${value} =~ ^\'(.*)\'$ ]] && value=${BASH_REMATCH[1]}
         [[ -v ${name} ]] || export "${name}=${value}"
     done < "${SECRETS_FILE}"
