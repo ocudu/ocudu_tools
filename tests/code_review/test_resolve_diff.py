@@ -19,8 +19,9 @@ TEST_DIR = Path(__file__).resolve().parent
 SCRIPT = TEST_DIR.parents[1] / "skills" / "ocudu-code-review" / "scripts" / "resolve_diff.sh"
 NUMBERED_DIFF = SCRIPT.parent / "numbered_diff.sh"
 
+# Git hooks export GIT_INDEX_FILE and the like, which would point the test repos at the caller's.
 GIT_ENV = {
-    **os.environ,
+    **{k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
     "GIT_AUTHOR_NAME": "t",
     "GIT_AUTHOR_EMAIL": "t@example.com",
     "GIT_COMMITTER_NAME": "t",
@@ -325,6 +326,27 @@ class ResolveDiffTest(unittest.TestCase):
         self.assertTrue((state / "mr-7.stamp").exists())
         # glab answered, so its empty error output is not kept.
         self.assertFalse((state / "mr-7-comments.err").exists())
+
+    # Worktrees share the MR refs, so a review in one must see the stamps of reviews in another.
+    def test_merge_request_review_keeps_reviews_of_other_worktrees(self):
+        url, _ = self.make_mr(iid=7)
+        head = git(self.root, "rev-parse", "HEAD").strip()
+        git(self.root, "update-ref", "refs/ocudu-code-review/mr-2", head)
+        state = Path(self.root) / ".git" / "ocudu-code-review"
+        state.mkdir(parents=True)
+        (state / "mr-2.stamp").touch()
+        worktree = Path(self.root) / "wt"
+        git(self.root, "worktree", "add", "-q", "--detach", str(worktree))
+
+        env = self.make_glab('{"target_branch":"dev"}')
+        result = subprocess.run(
+            ["bash", str(SCRIPT), url], cwd=worktree, env=env,
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        refs = git(self.root, "for-each-ref", "--format=%(refname)", "refs/ocudu-code-review/").split()
+        self.assertEqual(sorted(refs), ["refs/ocudu-code-review/mr-2", "refs/ocudu-code-review/mr-7"])
+        self.assertTrue((state / "mr-7.stamp").exists())
 
     def test_merge_request_url_resolves_to_its_head(self):
         url, mr_head = self.make_mr(iid=7)

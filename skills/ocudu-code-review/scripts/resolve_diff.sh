@@ -182,8 +182,9 @@ mr_target_branch() {
         head -n 1 | sed -E 's/.*"([^"]+)"$/\1/'
 }
 
-# Per-checkout scratch of MR reviews: thread digests and the stamps that date the MR refs.
-state_dir="$(git rev-parse --absolute-git-dir)/ocudu-code-review"
+# Per-repo scratch of MR reviews: thread digests and the stamps that date the MR refs. Shared by worktrees, as the
+# MR refs are.
+state_dir="$(git rev-parse --path-format=absolute --git-common-dir)/ocudu-code-review"
 
 # Classify the target first, so a malformed one is reported before anything
 # is fetched.
