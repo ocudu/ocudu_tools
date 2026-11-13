@@ -22,6 +22,8 @@ Per failure:
 
 Failures are listed as a table, one row per decision and job; a long test list is collapsed under it.
 
+Every issue replied to or opened gets the label bug::ci, so CI failures can be found by label.
+
 Each issue has one triage thread, found by its first note's marker; each pipeline adds one reply, whose hidden marker
 holds the pipeline ID and its failures. A pipeline already replied to is skipped, so running twice is harmless.
 """
@@ -50,6 +52,7 @@ THREAD_HEADER = (
 _REF_RE = re.compile(r"^(.+)#(\d+)$")
 _MAX_TITLE = 120
 _RECENT_NEW_ISSUE = timedelta(days=2)
+CI_LABEL = "bug::ci"
 OPENED_BY = "Opened by the AI triage of a scheduled pipeline."   # in every new issue; found by search
 _MAX_TESTS = 500    # tests in a collapsed list
 _MAX_MARKED = 50    # failures kept in a reply's hidden marker
@@ -297,6 +300,8 @@ class Planner:
         actions = []
         if reopened:
             actions.append({"action": "reopen", "issue": ref})
+        if CI_LABEL not in self.issue(ref).get("labels", []):
+            actions.append({"action": "label", "issue": ref, "label": CI_LABEL})
         if not thread:
             actions.append({"action": "create_thread", "issue": ref, "body": THREAD_HEADER})
         actions.append({"action": "reply", "issue": ref, "discussion": thread["id"] if thread else None,
@@ -308,6 +313,7 @@ class Planner:
         raw = self.client.get_raw(f"{project_path(self.home)}/repository/files/{TEMPLATE_PATH.replace('/', '%2F')}/raw",
                                   {"ref": project["default_branch"]}).decode()
         template, labels, assignees = parse_quick_actions(raw)
+        labels = labels if CI_LABEL in labels else labels + [CI_LABEL]
         first = failures[0]
         actions = [{
             "action": "create_issue",
@@ -350,6 +356,8 @@ def execute(client: Client, actions: list[dict], log) -> list[dict]:
         base = f"{project_path(project)}/issues/{iid}"
         if a["action"] == "reopen":
             client.put(base, {"state_event": "reopen"})
+        elif a["action"] == "label":
+            client.put(base, {"add_labels": a["label"]})
         elif a["action"] == "link":
             target_project, target_iid = split_ref(a["related"])
             target = client.get(f"{project_path(target_project)}/issues/{target_iid}")
