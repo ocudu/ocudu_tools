@@ -6,10 +6,10 @@
 # Files matched by no section need no code owner approval.
 # See https://docs.gitlab.com/user/project/codeowners/
 
-[CI][1] @asaezper @falkenberg
+[CI][1] @asaezper @Falkenber9
 /.gitlab-ci.yml
 /.gitlab/
 /tools/ci_box/
 
-[General][1] @frankist @asaezper @falkenberg
+[General][1] @frankist @asaezper @Falkenber9
 *
