@@ -3,4 +3,4 @@
 
 # The ci-box image version. Bump it in any MR that changes skills/ or tools/ci_box/: both are in the image.
 variables:
-  CI_BOX_VERSION: "0.1.2"
+  CI_BOX_VERSION: "0.1.3"

@@ -13,7 +13,9 @@
 #   build   the CMake targets of every edited source file and of every source file that includes an edited header
 #           (`cmake --build`, so any generator works).
 #   test    ctest over the tests run by the test executables among those targets.
-# Writes <results-dir>/validation/{format,build,test}.log and summary.md (the report's Validation row). Exits 1 when
+#   style   the lines added since the baseline are searched for violations a regular expression finds (`const` on a
+#           local of value type, `\param` without a direction): fixers write code no reviewer read.
+# Writes <results-dir>/validation/{format,style,build,test}.log and summary.md (the report's Validation row). Exits 1 when
 # formatting, the build or a test fails.
 
 set -euo pipefail
@@ -75,6 +77,30 @@ else
         { finish "failed: formatting, see validation/format.log"; exit 1; }
 fi
 mapfile -t formatted < <(diff <(printf '%s\n' "${before}") <(sha1sum -- "${edited[@]}") | sed -n 's/^> [0-9a-f]*  //p')
+
+# --- style -----------------------------------------------------------------------------------------------------------
+
+# Violations a regular expression finds, in the lines added since the baseline. Fixers write code that no reviewer
+# read, so these are the rules their fixes most often break. Data members declared `const T x = ...;` match the first
+# pattern too; they are fine, so reword or restructure them rather than ignore the check.
+git_added() {
+    GIT_INDEX_FILE=${idx} git diff --cached -U0 --no-color "${BASELINE}" -- "${edited[@]}" | awk '
+        /^\+\+\+ /      { file = substr($2, 3); next }
+        /^@@/            { split($3, a, ","); n = substr(a[1], 2) - 1; next }
+        /^\+/            { n++; print file ":" n ":" substr($0, 2) }'
+}
+{
+    printf '# lines added since the baseline that break a rule of the code guide\n'
+    git_added | grep -E ':[[:space:]]+const[[:space:]]+(bool|int|unsigned|float|double|size_t|u?int(8|16|32|64)_t|auto)[[:space:]]+[A-Za-z_][A-Za-z_0-9]*[[:space:]]*(=|\{)' |
+        sed 's/$/   <- const on a local of value type (5_recommendations § Const Correctness)/' || true
+    git_added | grep -E '\\param[[:space:]]+[A-Za-z_]' |
+        sed 's/$/   <- \\param without a direction (5_recommendations § Function signatures)/' || true
+} > "${out}/style.log"
+if [[ $(wc -l < "${out}/style.log") -gt 1 ]]; then
+    cat "${out}/style.log" >&2
+    finish "failed: style check, see validation/style.log"
+    exit 1
+fi
 
 # --- build -----------------------------------------------------------------------------------------------------------
 

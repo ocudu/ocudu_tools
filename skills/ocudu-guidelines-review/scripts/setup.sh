@@ -6,7 +6,10 @@
 # Set up a guidelines review: find the checkout, its build tree and the code guide, list the scope, record the tree as
 # the review's baseline, and print the results directory.
 #
-#   setup.sh [diff [BASE] | path <dir>... | all]     default: diff
+#   setup.sh [--exhaustive] [diff [BASE] | path <dir>... | all]     default: diff
+#
+#   --exhaustive   record EXHAUSTIVE=1 in review.env: the review is split into work items for subagents and checked
+#                  for coverage by exhaustive.py (see SKILL.md)
 #
 #   diff [BASE]    C/C++ files changed since merge-base(BASE, HEAD), uncommitted and untracked ones included;
 #                  BASE defaults to $REVIEW_BASE, else origin/dev
@@ -31,6 +34,12 @@ here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib.sh
 source "${here}/lib.sh"
 
+exhaustive=0
+args=()
+for a in "$@"; do
+    if [[ ${a} == --exhaustive ]]; then exhaustive=1; else args+=("${a}"); fi
+done
+set -- "${args[@]+"${args[@]}"}"
 [[ $# -ge 1 ]] || set -- diff
 scope="$*"
 
@@ -99,6 +108,7 @@ printf '%s\n' "${files}" > "${d}/scope.txt"
     printf 'GUIDE=%s\n' "${guide}"
     printf 'SCOPE=%s\n' "${scope}"
     printf 'MODE=%s\n' "${mode}"
+    printf 'EXHAUSTIVE=%s\n' "${exhaustive}"
     printf 'BASE=%s\n' "${base}"
     printf 'MERGE_BASE=%s\n' "${mb}"
     printf 'COMMIT=%s\n' "$(git rev-parse HEAD)"
@@ -107,7 +117,8 @@ printf '%s\n' "${files}" > "${d}/scope.txt"
     printf 'CREATED=%s\n' "$(date -Iseconds)"
 } > "${d}/review.env"
 
-printf 'scope: %s, %d files\n' "${scope}" "$(wc -l < "${d}/scope.txt")" >&2
+printf 'scope: %s, %d files%s\n' "${scope}" "$(wc -l < "${d}/scope.txt")" \
+    "$([[ ${exhaustive} == 1 ]] && printf ', exhaustive')" >&2
 if [[ -n $(git status --porcelain) ]]; then
     printf 'note: %s has uncommitted changes; the fixes go on top of them, and review.patch holds only the fixes\n' \
         "${repo}" >&2

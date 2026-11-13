@@ -5,10 +5,10 @@ description: >
   violations in the checkout. Writes a report plus a patch. Use for "guidelines review",
   "apply the code guide", "check this branch/folder against the code guide",
   "/ocudu-guidelines-review".
-argument-hint: "[diff [BASE] | path <dir>... | all]"
+argument-hint: "[--exhaustive] [diff [BASE] | path <dir>... | all]"
 user-invocable: true
 metadata:
-  version: 0.1.0
+  version: 0.2.0
 license: BSD-3-Clause-Open-MPI
 compatibility: >
   Run from an OCUDU checkout. Needs git, cmake, jq, include-what-you-use, clang-format-21 and
@@ -20,7 +20,11 @@ compatibility: >
 
 # OCUDU code-guide review
 
-**Usage:** `/ocudu-guidelines-review [diff [BASE] | path <dir>... | all]` — default `diff`.
+**Usage:** `/ocudu-guidelines-review [--exhaustive] [diff [BASE] | path <dir>... | all]` — default `diff`.
+
+`--exhaustive` splits the review into small work items (a few guide sections × a few files) done by subagents, and
+scripts check that every (guide section, file) pair was reviewed and every finding was dealt with (§2E). It is slower
+and costs more; use it when nothing may be missed.
 
 The SRS code guide is the rulebook; this skill holds no rules of its own. It checks every rule of the guide over every
 scoped file and fixes every violation it finds. Every step that needs no judgement is a script in this skill's
@@ -69,11 +73,69 @@ check's result (e.g. a file not in `compile_commands.json`); report it and go on
 
 ## 2. Code guide
 
+If `EXHAUSTIVE=1` in `$d/review.env`, do §2E instead of this section.
+
 The rulebook is the directory `GUIDE` in `$d/review.env`. Read its `index.md`, then every numbered `.md` file, in
 full, before touching code. Every rule in them applies to every scoped file. Fix every violation in the checkout; §3
 lists the only exceptions.
 When a fix needs a choice (a name, how to split parameters, a doc sentence), follow the conventions of the surrounding
 module and record the choice in the report.
+
+## 2E. Code guide, exhaustive mode
+
+Only when `EXHAUSTIVE=1` in `$d/review.env`. Subagents review and fix the scoped files; you plan, dispatch, check and
+merge. Do not review or fix the scoped files yourself, and do not read the ledgers: the scripts check them. §3, §4 and
+§5 still apply.
+
+The subagent prompts below are exact. Do not add to them, summarise rules in them, or narrow them: each brief already
+holds the rules verbatim and the instructions. Start subagents in parallel, several per message; each replies with one
+line.
+
+1. **Your own part.** Apply the iwyu suggestions (§1); read the guide's include sections for that. Guide files whose name
+   contains "commit" are yours too (diff scope only, as in §3).
+2. **Plan.**
+   ```sh
+   python3 "${CLAUDE_SKILL_DIR}/scripts/exhaustive.py" plan "$d"
+   ```
+   It writes one brief per work item and lists the items in `$d/exhaustive/items.txt`. If it fails because there are
+   too many items, stop and tell the user its message.
+3. **Review.** For each item in `items.txt`, start a general-purpose subagent with the prompt:
+   `Read <d>/exhaustive/review/<item>.md and do exactly what it says. Reply only with the line it asks for.`
+4. **Check the review.**
+   ```sh
+   python3 "${CLAUDE_SKILL_DIR}/scripts/exhaustive.py" review "$d"
+   ```
+   For each item it names as failing, start a new subagent with the same prompt, then run it again; repeat until it
+   passes. An item that fails three times you do yourself, following its brief. Once it passes it numbers the findings
+   and writes one fixer brief per batch with findings, listed in `$d/exhaustive/fix-batches.txt`.
+5. **Fix.** For each batch in `fix-batches.txt`, start a general-purpose subagent with the prompt:
+   `Read <d>/exhaustive/fix/<batch>.md and do exactly what it says. Reply only with the line it asks for.`
+   Batches hold disjoint files, so fixers run in parallel safely. Start them without worktree isolation: they must
+   edit this checkout, since `review.patch` is the diff of its working tree.
+6. **Check the fixes.**
+   ```sh
+   python3 "${CLAUDE_SKILL_DIR}/scripts/exhaustive.py" fixes "$d"
+   ```
+   Re-run failing batches as in step 4. Once it passes it writes `report-rows.md`, `findings.md` and
+   `outside-edits.md` in `$d/exhaustive/`.
+7. **Edits outside the batches.** Make every edit in `outside-edits.md` yourself (§0: fixes that reach outside the
+   scope).
+7b. **Recheck the fixes.** Fixers write code that no reviewer read, and a fix can break a rule other than the one it
+   fixes. Review that code:
+   ```sh
+   python3 "/home/dev/.claude/skills/ocudu-guidelines-review/scripts/exhaustive.py" recheck "$d"
+   ```
+   It plans a diff-scope review, in `$d/recheck`, of every C/C++ line changed since the baseline (the fixers' and your
+   own edits). Do steps 3 to 7 on `$d/recheck` instead of `$d`, with the same subagent prompts (their paths start with
+   `<d>/recheck/`). If it finds nothing, go on. Otherwise its findings are fixed in the checkout and recheck again
+   (`rm -r "$d/recheck"` first), at most twice; a finding left after that goes in the report as report-only, with why.
+   Its `findings.md` and `outside-edits.md` are part of the report's Findings and out-of-scope files.
+8. **Validate** (§4). When you revert a fix because it breaks the build or a test, set its status in
+   `$d/exhaustive/fix/<batch>.json` to `report-only` with the error as its `note`, and run step 6 again so the report
+   files match the patch.
+9. **Report** (§5). The guide rows of the table are `report-rows.md` as it is, filling in the rows it leaves to you; the
+   Findings are `findings.md` as it is, plus your own; the out-of-scope files are those of `outside-edits.md` and
+   your own. A `rejected` finding is one a fixer judged not to break the rule; it stays in the report, with why.
 
 ## 3. Report-only cases
 
@@ -97,7 +159,8 @@ bash "${CLAUDE_SKILL_DIR}/scripts/validate.sh" "$d"
 ```
 
 It finds the edited files itself (the tree against the baseline, out-of-scope files included), formats them (diff
-scope: only the changed lines), builds the CMake targets of every edited source and of every source that includes an
+scope: only the changed lines), searches the added lines for violations a regular expression finds (`const` on a
+local of value type, `\param` without a direction; it fails when it finds one), builds the CMake targets of every edited source and of every source that includes an
 edited header, directly or not, and runs the tests of the test executables among them and of those linking them.
 Formatting runs after all fixes so it also covers the code the fixes added. Logs go to `$d/validation/`; `summary.md` there holds the report's Validation row.
 

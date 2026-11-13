@@ -18,6 +18,7 @@ install -Dm600 /dev/null ~/.config/review-box/secrets.env   # then add tokens th
 # inside the container: the workspace is already made, so you can just start a claude session and use the skills:
 claude
 > /ocudu-guidelines-review diff
+> /ocudu-guidelines-review --exhaustive diff       # slower: subagents per guide section × file batch, coverage-checked
 > /ocudu-review-expert path lib/scheduler
 > /ocudu-review-concurrency path lib/scheduler
 > /ocudu-review-testing path lib/scheduler

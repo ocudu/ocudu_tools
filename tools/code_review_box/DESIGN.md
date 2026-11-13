@@ -133,3 +133,10 @@ in the README.
 - Validation formats the edited files (diff scope: only changed lines), builds every source that includes an edited
   header directly or not, and runs the test executables built from or linking an edited target.
 - The baseline is a ref under `refs/review/`, deleted once the patch is written.
+- `--exhaustive` does not ask the model to try harder; it changes how the work is split. `exhaustive.py plan` cuts
+  the guide into sections and the scope into batches of a few files, and writes one brief per (section group, batch)
+  with the guide text verbatim. Reviewer subagents write a JSON ledger with one entry per (section, file) pair, each
+  saying what was examined; `exhaustive.py review` refuses a missing pair or a bare "clean". Fixer subagents, one per
+  batch (disjoint files, so they run in parallel), give every finding a status, which `exhaustive.py fixes` checks
+  before validation. Small items keep each subagent's attention on a few rules, and the checks make a skipped pair a
+  failure instead of a silent gap. It costs many subagents, so it is opt-in and `REVIEW_MAX_ITEMS` caps it.
