@@ -27,7 +27,9 @@ decision for that failure:
       "alternatives": [{"issue": "group/project#iid", "reason": "..."}],   # Check only
       "related": "group/project#iid",            # optional: a new issue links to it
       "new_issue": "A",                          # No match only: decisions with the same key share one new issue
-      "title": "UE->5GC ping fails"             # No match only: the new issue's title, the problem, not the job
+      "title": "UE->5GC ping fails",            # No match only: the new issue's title, the problem, not the job
+      "cause": "code | test"                    # No match only (default code): where the new issue is opened, in the
+                                                # issue project (code under test) or the job's project (the test)
     },
     "F7": {"...": "same fields, for failure F7 only"}
   }
@@ -46,6 +48,7 @@ from pathlib import Path
 
 ERROR_TYPES = {"build", "crash", "assertion", "timeout", "setup", "criteria"}
 VERDICTS = ("Matched", "Check", "No match", "Infra")
+CAUSES = ("code", "test")
 _ISSUE_REF_RE = re.compile(r"^[\w.\-/]+#\d+$")
 _MAX_EXCERPT_LINES = 30
 _MAX_TITLE = 80
@@ -99,6 +102,7 @@ def validate(fetched: dict, decisions: dict) -> list[str]:
             errors.append(f"{f['id']}: no decision (in no group of groups.json)")
 
     group_of = {f["id"]: f["group"] for f in fetched["failures"]}
+    new_issues: dict = {}   # new_issue key -> (cause, job projects)
     for key, d in given.items():
         if key not in groups and key not in failures:
             continue
@@ -113,7 +117,7 @@ def validate(fetched: dict, decisions: dict) -> list[str]:
         if verdict == "Infra":
             if not infra:
                 errors.append(f"{key}: Infra is only for groups marked infra")
-            for field in ("issue", "alternatives", "related", "new_issue", "title"):
+            for field in ("issue", "alternatives", "related", "new_issue", "title", "cause"):
                 if d.get(field):
                     errors.append(f"{key}: Infra has no {field}")
             continue
@@ -132,6 +136,19 @@ def validate(fetched: dict, decisions: dict) -> list[str]:
             title = (d.get("title") or "").strip()
             if not title or len(title) > _MAX_TITLE:
                 errors.append(f"{key}: No match needs a title of up to {_MAX_TITLE} characters, got {len(title)}")
+            cause = d.get("cause") or "code"
+            if cause not in CAUSES:
+                errors.append(f"{key}: cause must be one of {list(CAUSES)}, got {cause!r}")
+            projects = {f["job"]["project"] for f in fetched["failures"]
+                        if f["id"] == key or (f["group"] == key and f["id"] not in given)}
+            if cause == "test" and len(projects) > 1:
+                errors.append(f"{key}: cause test opens the issue in the job's project, but its failures come from "
+                              f"{sorted(projects)}: split it")
+            target = (cause, tuple(sorted(projects)) if cause == "test" else ())
+            shared = new_issues.setdefault(d.get("new_issue") or key, target)
+            if shared != target:
+                errors.append(f"{key}: decisions sharing new_issue {d.get('new_issue')!r} must open it in the same "
+                              f"project: same cause, and for test the same job project")
         else:
             if not d.get("issue"):
                 errors.append(f"{key}: {verdict} needs an issue")
@@ -139,6 +156,8 @@ def validate(fetched: dict, decisions: dict) -> list[str]:
                 errors.append(f"{key}: new_issue is only for No match")
             if d.get("title"):
                 errors.append(f"{key}: title is only for No match")
+            if d.get("cause"):
+                errors.append(f"{key}: cause is only for No match")
         if verdict != "Check" and d.get("alternatives"):
             errors.append(f"{key}: alternatives are only for Check")
     return errors
@@ -170,6 +189,7 @@ def build(fetched: dict, decisions: dict) -> dict:
             "related": d.get("related"),
             "new_issue": (d.get("new_issue") or key) if d["verdict"] == "No match" else None,
             "title": (d.get("title") or "").strip() or None,
+            "cause": (d.get("cause") or "code") if d["verdict"] == "No match" else None,
             "recent_failures": f.get("recent_failures"),
         })
     return {"pipeline": fetched["pipeline"], "failures": failures}

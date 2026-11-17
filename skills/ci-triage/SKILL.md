@@ -208,7 +208,7 @@ for that failure only: use it to split a group.
     "G3": {
       "error_type": "build", "key_error": "...", "excerpt": "...",
       "verdict": "No match", "new_issue": "A", "related": "ocudu/ocudu#900",
-      "title": "fapi_adaptor build fails: undefined slot_point"
+      "title": "fapi_adaptor build fails: undefined slot_point", "cause": "code"
     }
   }
 }
@@ -219,6 +219,19 @@ words, not where it showed up, since other jobs and tests may hit it too. Name a
 is part of the problem; no job or test names, numbers, paths or log details: `UE->5GC ping fails, 5GC->UE fine`,
 `SMF NGAP error on PDU session setup`. The test is appended when it fits (`… - ping.drx`). Decisions sharing a
 `new_issue` use the first one's.
+
+A `No match` also says where the problem is, in `cause`, which picks the project the new issue is opened in:
+
+- `code` (default): the OCUDU code under test misbehaved. Opened in the issue project (`ocudu/ocudu`). In an E2E test
+  that includes failed criteria, warnings or errors in the gNB, CU or DU logs, crashes and sanitizer reports of
+  OCUDU binaries.
+- `test`: the job's own project is at fault, not the code it tests: its framework, configs, scripts or setup.
+  Opened in that project (the failure's `job.project`). For `ocudu_infra_srs`: a Retina exception or traceback in
+  Python, a broken test or config, an agent or deployment error that is not a pod or runner failure. For other
+  projects, the same idea: a failure in the project's own code rather than in OCUDU's.
+
+When unsure, use `code`. In jobs of `ocudu/ocudu` itself both are the same project. Decisions sharing a `new_issue`
+must share the `cause` too.
 
 For an `infra` group, an entry is optional. `{"verdict": "Infra", "key_error": "timed out waiting for pod to start"}`
 replaces the default key error (`infra: <reason>`). No other verdict is accepted for it, and `Infra` for no

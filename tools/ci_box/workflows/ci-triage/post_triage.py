@@ -17,7 +17,9 @@ Per failure:
   Matched, issue closed    reopen, then reply (an issue closed after the pipeline started counts as open)
   Check, issue open        reply, marked uncertain, with the alternatives
   Check, issue closed      new issue, related to the closed one
-  No match                 new issue (related to `related` if set); failures with the same new_issue key share it
+  No match                 new issue (related to `related` if set); failures with the same new_issue key share it.
+                           Opened in --issue-project for cause code (the code under test), in the job's project for
+                           cause test (its framework or setup), with that project's triage template, else a default
   Infra                    nothing: the runner or the cluster failed the job, retrying it is the fix
 
 Failures are listed as a table, one row per decision and job; a long test list is collapsed under it.
@@ -44,6 +46,8 @@ from gitlab_api import (  # noqa: E402
 )
 
 TEMPLATE_PATH = ".gitlab/issue_templates/triage.md"
+# For a project without the triage template; its sections are the ones fill_template fills.
+DEFAULT_TEMPLATE = "## Summary\n\n## Relevant logs\n\n## CI Links\n"
 THREAD_HEADER = (
     f"{THREAD_MARKER}\n## AI triage: CI occurrences\n\n"
     "Failures of scheduled pipelines matched to this issue are added as replies to this thread. "
@@ -218,7 +222,7 @@ class Planner:
         self.home = issue_project
         self._issues: dict = {}
         self._discussions: dict = {}
-        self._recent_new: list | None = None
+        self._recent_new: dict = {}   # project -> [(ref, {(job, test)})]
 
     def issue(self, ref: str) -> dict:
         if ref not in self._issues:
@@ -242,29 +246,33 @@ class Planner:
         closed_at, started = issue.get("closed_at"), self.pipeline.get("created_at")
         return not (closed_at and started and _parse_time(closed_at) > _parse_time(started))
 
-    def recent_triage_issue(self, failures: list[dict]) -> str | None:
-        """An issue the triage opened lately, with any token, for one of the same job and test: another pipeline got
-        there first."""
-        if self._recent_new is None:
+    def new_issue_project(self, failure: dict) -> str:
+        """The issue project for a problem in the code under test; the job's own project for one in the test."""
+        return failure["job"]["project"] if failure.get("cause") == "test" else self.home
+
+    def recent_triage_issue(self, project: str, failures: list[dict]) -> str | None:
+        """An issue the triage opened lately in `project`, with any token, for one of the same job and test: another
+        pipeline got there first."""
+        if project not in self._recent_new:
             since = datetime.now(timezone.utc) - _RECENT_NEW_ISSUE
-            candidates = self.client.get(f"{project_path(self.home)}/issues", {
+            candidates = self.client.get(f"{project_path(project)}/issues", {
                 "search": OPENED_BY, "in": "description", "state": "opened", "created_after": since.isoformat(),
                 "per_page": 100})
-            self._recent_new = []
+            self._recent_new[project] = []
             for issue in candidates:
                 ref = issue["references"]["full"]
                 self._issues.setdefault(ref, issue)
                 seen = {(f.get("job"), f.get("test")) for run in triage_runs(self.thread(ref))
                         for f in run.get("failures", [])}
-                self._recent_new.append((ref, seen))
+                self._recent_new[project].append((ref, seen))
         wanted = {(f["job"]["name"], f["test"]) for f in failures}
-        return next((ref for ref, seen in self._recent_new if seen & wanted), None)
+        return next((ref for ref, seen in self._recent_new[project] if seen & wanted), None)
 
     def plan(self) -> list[dict]:
         replies: dict = {}       # ref -> failures
         reopen: set = set()
-        new: dict = {}           # key -> failures
-        unmatched: dict = {}     # new_issue key -> failures
+        new: dict = {}           # (key, project) -> failures
+        unmatched: dict = {}     # (new_issue key, project) -> failures
         for f in self.triage["failures"]:
             if f["verdict"] == "Infra":
                 continue
@@ -272,25 +280,25 @@ class Planner:
                 ref = f["issue"]["ref"]
                 closed = self.closed_before_pipeline(ref)
                 if f["verdict"] == "Check" and closed:
-                    new.setdefault(f"check:{ref}", []).append({**f, "related": ref})
+                    new.setdefault((f"check:{ref}", split_ref(ref)[0]), []).append({**f, "related": ref})
                     continue
                 if closed:
                     reopen.add(ref)
                 replies.setdefault(ref, []).append(f)
             else:
-                unmatched.setdefault(f["new_issue"], []).append(f)
-        for key, failures in unmatched.items():
-            existing = self.recent_triage_issue(failures)
+                unmatched.setdefault((f["new_issue"], self.new_issue_project(f)), []).append(f)
+        for (key, project), failures in unmatched.items():
+            existing = self.recent_triage_issue(project, failures)
             if existing:
                 replies.setdefault(existing, []).extend(failures)
             else:
-                new[f"new:{key}"] = failures
+                new[(f"new:{key}", project)] = failures
 
         actions = []
         for ref, failures in replies.items():
             actions += self._reply_actions(ref, failures, ref in reopen)
-        for key, failures in new.items():
-            actions += self._new_issue_actions(key, failures)
+        for (key, project), failures in new.items():
+            actions += self._new_issue_actions(key, project, failures)
         return actions
 
     def _reply_actions(self, ref: str, failures: list[dict], reopened: bool) -> list[dict]:
@@ -308,17 +316,25 @@ class Planner:
                         "body": reply_body(self.pipeline, failures, self.home, "reopen" if reopened else "reply")})
         return actions
 
-    def _new_issue_actions(self, key: str, failures: list[dict]) -> list[dict]:
-        project = self.client.get(project_path(self.home))
-        raw = self.client.get_raw(f"{project_path(self.home)}/repository/files/{TEMPLATE_PATH.replace('/', '%2F')}/raw",
-                                  {"ref": project["default_branch"]}).decode()
-        template, labels, assignees = parse_quick_actions(raw)
+    def template(self, project: str) -> str:
+        """The project's triage template, from its default branch; the default one if it has none."""
+        branch = self.client.get(project_path(project))["default_branch"]
+        try:
+            return self.client.get_raw(f"{project_path(project)}/repository/files/{TEMPLATE_PATH.replace('/', '%2F')}"
+                                       "/raw", {"ref": branch}).decode()
+        except GitLabError as exc:
+            if "HTTP 404" not in str(exc):
+                raise
+            return DEFAULT_TEMPLATE
+
+    def _new_issue_actions(self, key: str, project: str, failures: list[dict]) -> list[dict]:
+        template, labels, assignees = parse_quick_actions(self.template(project))
         labels = labels if CI_LABEL in labels else labels + [CI_LABEL]
         first = failures[0]
         actions = [{
             "action": "create_issue",
             "issue": key,
-            "project": self.home,
+            "project": project,
             "title": issue_title(failures),
             "description": fill_template(template, failures),
             "labels": labels,
@@ -328,7 +344,7 @@ class Planner:
             actions.append({"action": "link", "issue": key, "related": first["related"]})
         actions.append({"action": "create_thread", "issue": key, "body": THREAD_HEADER})
         actions.append({"action": "reply", "issue": key, "discussion": None,
-                        "body": reply_body(self.pipeline, failures, self.home, "new")})
+                        "body": reply_body(self.pipeline, failures, project, "new")})
         return actions
 
 
