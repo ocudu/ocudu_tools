@@ -44,6 +44,8 @@ ci-box image publish:
   rules:
     - if: $ON_DEFAULT_BRANCH
       changes: *ci_box_changes
+    - if: $ON_MR_TRAIN
+      changes: *ci_box_changes
     - if: $ON_MR
       changes: *ci_box_changes
       when: manual
